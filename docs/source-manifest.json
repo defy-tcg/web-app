@@ -1,0 +1,219 @@
+{
+  "deploymentId": "dpl_HZ3Mac1a42BBAJNxdRTAnqGwZjrf",
+  "projectId": "prj_w0T4Hb5I16foQdScNfzAFleDfJqy",
+  "teamId": "team_wzdwPQJhmFHMtIY4tjtG4Y3v",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "03f58c2b44e0d469c8e36614a3665db89f331fd614401e0094a4ffbc2451db22"
+    },
+    {
+      "path": ".npmrc",
+      "sha256": "f883dfa69cdc45930ef23e090c7d59cba6b43572f448fc5582039de72af166d4"
+    },
+    {
+      "path": "DEPLOY_HANDOFF.md",
+      "sha256": "a6054b65facc506553a1df5297ace4db33be712dc58d7c1be5650904c876dd2e"
+    },
+    {
+      "path": "README.md",
+      "sha256": "fe31db526a78b30598383d92e6023cb3e62073533306ec9c8427fd4786996992"
+    },
+    {
+      "path": "app/api/auth/[...path]/route.ts",
+      "sha256": "71d43077ef1a359afc6af87500fce5b70cd93cc11e233778306acad0b7070c5a"
+    },
+    {
+      "path": "app/api/inventory/route.ts",
+      "sha256": "28756e729634bde1539d489a67ae046e4c26152bd1d08a43ef6b99076dfd6992"
+    },
+    {
+      "path": "app/api/inventory/sheet-sync/route.ts",
+      "sha256": "6cc9e0a6a0395d078ef07b9bc0f1ca736ddbab2a88ba4938f6a886fc9357d178"
+    },
+    {
+      "path": "app/api/prices/refresh/route.ts",
+      "sha256": "20aafc47bc3bc9c9fb06f36b08b6f9a9629a73349cf8b998e18106381959ab7d"
+    },
+    {
+      "path": "app/api/store/route.ts",
+      "sha256": "1c0efdd10ba12ad9c7d61798c108e059f0a86b22b30dd0985c855d21daa5ec04"
+    },
+    {
+      "path": "app/api/tcgplayer-sales/route.ts",
+      "sha256": "d321663067b2b0e5266b0163ee82e3e10d260b5a8b9b286507b1cb8b6dd4fe82"
+    },
+    {
+      "path": "app/auth/sign-in/actions.ts",
+      "sha256": "9e4ed7e4c800df31d64dfe9f3de66623235856463c12e645d02ad9f26487039d"
+    },
+    {
+      "path": "app/auth/sign-in/page.tsx",
+      "sha256": "d81e6c472f86b08c7265a1ea2633f29cab72af82acfc02247c5c32ad1db5cd8d"
+    },
+    {
+      "path": "app/auth/sign-in/sign-in-form.tsx",
+      "sha256": "06ca5ab94439190f90086d28060427ab2471ef44831379f990f8699c8ea5a451"
+    },
+    {
+      "path": "app/auth/sign-up/actions.ts",
+      "sha256": "faf86bde44c8dbebd18cf3f9517057ce8d698e0fc60a54357a983eb97867e613"
+    },
+    {
+      "path": "app/auth/sign-up/page.tsx",
+      "sha256": "07479911836a540fd9513fc20184fd57a6700d705ffc442bfbcdddca4626ecbb"
+    },
+    {
+      "path": "app/auth/sign-up/sign-up-form.tsx",
+      "sha256": "0ac669a3af542ce1ac670a11417a6e7428fb3c370bcc3912c72277c9c379d138"
+    },
+    {
+      "path": "app/auth/unauthorized/actions.ts",
+      "sha256": "4363a10e40c618d27cbd0035d759eb4a28a46bffa8265f586f639729c7e188cc"
+    },
+    {
+      "path": "app/auth/unauthorized/page.tsx",
+      "sha256": "201c5187695e2e98fa50752f0a9969e4d84b8b824789c15df77c4dd54c2cd01c"
+    },
+    {
+      "path": "app/globals.css",
+      "sha256": "62aad00330cdb6021528442da77937c137e6eae131512a11f3b9b24540bdc08e"
+    },
+    {
+      "path": "app/layout.tsx",
+      "sha256": "63212ce66b4553f0c294fe7e90f532f9a990aade284a1d000b3c94d78d212969"
+    },
+    {
+      "path": "app/page.tsx",
+      "sha256": "fe99cb11cc2f7a1a755f763561d555ad72bc83bee22ee15899967d72b622eb57"
+    },
+    {
+      "path": "app/store-client.tsx",
+      "sha256": "6bcc029d720a8800ee150b1f991f2bab07a67ab8a86480312db21be0724fc3bb"
+    },
+    {
+      "path": "app/tcgplayer-sales-import-modal.tsx",
+      "sha256": "5b30dbda3b1b7cc7599e5f1a867094e7d0cef7334ae6dd64dac61592aeea7341"
+    },
+    {
+      "path": "app/theme-toggle.tsx",
+      "sha256": "c43ea46d86bcac97cd681c86433a240cb15161026d7040a15dedc2c7fc9848da"
+    },
+    {
+      "path": "db/index.ts",
+      "sha256": "97782aa231b390d321c42247f54eb980ccb348096dca621ff5a18f8051d29abc"
+    },
+    {
+      "path": "db/schema.ts",
+      "sha256": "45fffb8d0b3be206848d349f9acd5662aa8aebb760dc53e6f90c3cfb18ff0353"
+    },
+    {
+      "path": "drizzle.config.ts",
+      "sha256": "2ff88d914c1b4949b41045b09e8290cc5d99267125374ba245bd91b0b3a10f1c"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "sha256": "8610feac371952a933ef065bdfc557ac11221ea09e75c0c2ab70b0c62fd50ade"
+    },
+    {
+      "path": "lib/auth/authorization.ts",
+      "sha256": "03eabf720588f0f2f91d78d411d6ac2c6de3f33acd07a11341dc8890ec1e45bd"
+    },
+    {
+      "path": "lib/auth/server.ts",
+      "sha256": "7051261ab75d571075eb506216409c3865e1d7a64f7a711fbbcd2ff08ec49163"
+    },
+    {
+      "path": "lib/catalog-image.ts",
+      "sha256": "332d4eec75b4853e81d39de89a81ff6eb4f9f020399c58811ef44972e052b459"
+    },
+    {
+      "path": "lib/catalog-match.ts",
+      "sha256": "d1d225b1095c2f498e07f4b133311622922d9d92b2265a24b75fc7d6a4016bd7"
+    },
+    {
+      "path": "lib/inventory-csv.ts",
+      "sha256": "72f163d420b7f0d749216c59ed9e46d9c108857e391e96ccda9cce2131704d83"
+    },
+    {
+      "path": "lib/inventory-identity.ts",
+      "sha256": "9d27137cf7203a5efb9a0fc3c1e0a7ec82dba04e4fdd56623dbb58c382591f5d"
+    },
+    {
+      "path": "lib/master-inventory-sheet.ts",
+      "sha256": "44e36c8d5c5b021d97c48dcb6163f87c6cf88366076bc65f19590698a7bec281"
+    },
+    {
+      "path": "lib/product-sku.ts",
+      "sha256": "e787f140505422a978eae47391620da9e65362fdf401398e2ed1aa937f2ae84b"
+    },
+    {
+      "path": "lib/tcg-games.ts",
+      "sha256": "8875758dd96a2540d5bbd8f5b13e0286a67ab5b9da4ea09cca1f9b1266ccf535"
+    },
+    {
+      "path": "lib/tcgplayer-sales-csv.ts",
+      "sha256": "393a82280921a39c55dcfbc4767fa327f31ff229bda22e7a42bebf052f3a1eb3"
+    },
+    {
+      "path": "lib/tcgplayer-sales-file.ts",
+      "sha256": "465c6ba02b0ab05c788749a1d13e0eff10c729133dc18bda6cc065364d0efebc"
+    },
+    {
+      "path": "lib/tcgplayer-sales-import.ts",
+      "sha256": "d78d94f9210e66a2b14f8e9cda6045e6ae764e33d9928dd5aca69f682a94358f"
+    },
+    {
+      "path": "next.config.ts",
+      "sha256": "fc5c356fa4728835a62876dcc34db002202cbe2f1e13bf35cd9780f6abd91f08"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "52ae3d458fd5399d888e21278d6c43fb0c4593ec6371b0bf85d6c9801a2f0da0"
+    },
+    {
+      "path": "package.json",
+      "sha256": "80a26fa43d313855091f2ecc716ed444a08e002d77baac7a09ec9f97421e70cf"
+    },
+    {
+      "path": "postcss.config.mjs",
+      "sha256": "a9543088acd44a3dc63c6d9171fe32cf2480fa89345e05bf27435b3a527e7cec"
+    },
+    {
+      "path": "proxy.ts",
+      "sha256": "ed6d8f4de194eeba7be1123bfc8c72d5567f939ab837c79bc05eeb5e456bc7a5"
+    },
+    {
+      "path": "public/favicon.svg",
+      "sha256": "81e33930db33e75d53721acae92508228327d1b0b96b8d4abd1cd2f6c7d62672"
+    },
+    {
+      "path": "public/file.svg",
+      "sha256": "2b67812c325c199a02536cdbeea0c593a72f707d323b72ee3e08dbab06753bd4"
+    },
+    {
+      "path": "public/globe.svg",
+      "sha256": "b614b9bf183925957661ac851498fe1d8029fd43a62fbfed86f9e2624a57e7cf"
+    },
+    {
+      "path": "public/window.svg",
+      "sha256": "644768c4aaeb4767bce293344eeb0c125fb804a94d801440424072202d85e3a1"
+    },
+    {
+      "path": "tests/tcg-inventory.test.ts",
+      "sha256": "9c8ca637449910a5e290bcd84ad493cc3ead8437c9bd113362348588ee2841f8"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "6fae60e19a2677b367a000bdea3ef98182ffe1a96b1967a429d37fdd0681d192"
+    }
+  ],
+  "pendingOriginalAssets": [
+    "public/defy-os-app-icon-source.png",
+    "public/defy-os-app-icon.png",
+    "public/defy-os-icon-source.png",
+    "public/defy-os-icon.png",
+    "public/defy-os-logo.png"
+  ],
+  "recreatedTemplate": ".env.example"
+}
