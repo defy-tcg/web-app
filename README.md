@@ -11,10 +11,11 @@ the Vercel GitHub app needs access to this repository before Git deployment can
 be connected. See [recovery status](docs/RECOVERY.md) before the first release.
 
 ```text
-Local ChatGPT/Codex changes → your GitHub commit and push → Vercel → Neon Postgres
+Local ChatGPT/Codex changes and commits → your GitHub push → Vercel → Neon Postgres
 ```
 
-You review, commit, and push to [defy-tcg/web-app](https://github.com/defy-tcg/web-app).
+ChatGPT/Codex automatically commits its completed, validated changes locally.
+You review those commits and push to [defy-tcg/web-app](https://github.com/defy-tcg/web-app).
 The existing Vercel project is [defy-store-os](https://vercel.com/defy3/defy-store-os),
 and the production app is [defy-store-os.vercel.app](https://defy-store-os.vercel.app).
 Follow [the setup and release workflow](docs/WORKFLOW.md) to connect GitHub and

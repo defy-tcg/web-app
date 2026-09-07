@@ -1,9 +1,10 @@
 # Local development, GitHub, Vercel, and Neon
 
-ChatGPT/Codex edits and tests this checkout. You review and commit the changes,
-then push them to [defy-tcg/web-app](https://github.com/defy-tcg/web-app). Vercel's
-Git connection builds that commit. The application reads and writes its data
-through Neon Postgres.
+ChatGPT/Codex edits and tests this checkout, then automatically commits its
+completed, validated task changes locally. You review the commit and push it to
+[defy-tcg/web-app](https://github.com/defy-tcg/web-app). Vercel's Git connection
+builds that commit. The application reads and writes its data through Neon
+Postgres.
 
 ## Connect the existing project
 
@@ -69,7 +70,8 @@ npm run dev
 Open the local URL printed by Next.js. Use the development Neon Auth endpoint
 with the local origin configured and sign in with an authorized account.
 
-Before committing:
+Before its automatic local commit, ChatGPT/Codex runs the applicable checks
+(`npm test` for application changes) and reviews the diff and working tree:
 
 ```bash
 npm test
@@ -88,22 +90,29 @@ The original Neon Auth dependency graph has peer-version conflicts. The project
 `.npmrc` uses `legacy-peer-deps=true` so `npm ci` installs the recovered lock
 without changing framework or dependency versions.
 
-## Your commit and release
+## Automatic local commits and your release
 
-After reviewing the diff and confirming that secrets and generated files are
-ignored, run these commands yourself or use GitHub Desktop:
+After completing and validating a task, ChatGPT/Codex reviews the diff, confirms
+that secrets and generated files are ignored, and automatically creates a local
+commit. It stages only its task changes, selecting specific files or hunks so
+unrelated edits and previously staged work stay out of the commit. It reports
+the commit hash and validation results when finished.
+
+Review the resulting commit and working tree, then push when you are ready.
+For a commit on `main`, run these commands yourself or use GitHub Desktop:
 
 ```bash
-git add -A
-git commit -m "Describe the change"
+git show --stat --oneline HEAD
+git show HEAD
+git status --short
 git push origin main
 ```
 
 Once the repository connection is active, check the Vercel **Deployments** page
 for the matching commit and a successful build. Verify the updated production
 app after the deployment becomes ready. This workflow uses your GitHub pushes
-for releases; ChatGPT/Codex leaves committing and pushing to you. No separate
-CLI production deployment is needed.
+for releases. ChatGPT/Codex does not push, merge, or trigger a deployment unless
+you explicitly request it. No separate CLI production deployment is needed.
 
 For changes that need a deployed preview, push a feature branch, verify its
 preview with its Neon branch, then merge it into `main` yourself.

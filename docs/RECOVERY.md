@@ -45,7 +45,10 @@ the code. Fill an ignored `.env.local` with development values to run locally.
 
 Vercel's Git settings request GitHub app installation; the repository connection
 has not been made. Authorize that app for `defy-tcg/web-app`, then connect the
-existing project. No commits, pushes, deployments, or database changes were made.
+existing project. No commits, pushes, deployments, or database changes were made
+during the initial recovery. The recovered files were subsequently committed in
+`cdfb430` (`Program Commit`). The current commit and release policy is documented
+in `WORKFLOW.md`.
 
 ## Local setup additions
 
