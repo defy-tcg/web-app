@@ -3,11 +3,13 @@
 - Make and validate application changes locally in this repository.
 - Preserve the existing Next.js, React, Tailwind, TypeScript, Drizzle, Neon Auth,
   and Neon Postgres architecture and the complete store functionality.
-- Automatically commit completed task changes locally after appropriate
-  validation. Stage only changes made for the task; leave unrelated user work
-  untouched. Report the commit hash and any remaining limitations.
-- The user reviews commits and pushes to GitHub manually. Do not push, merge,
-  or trigger a deployment unless the user explicitly requests it.
+- Automatically commit and push completed task changes after appropriate
+  validation. The user has given standing permission for these GitHub pushes
+  and the Vercel deployments they trigger. Stage only changes made for the task;
+  leave unrelated user work untouched. Report the commit hash, push result, and
+  any remaining limitations.
+- Do not force-push, merge, or trigger a separate manual deployment unless the
+  user explicitly requests it.
 - Vercel deploys from the connected `defy-tcg/web-app` repository. Use the
   existing `defy3/defy-store-os` project and its existing production data.
 - Keep secrets in ignored `.env.local` locally and in Vercel environment

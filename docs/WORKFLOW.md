@@ -1,10 +1,11 @@
 # Local development, GitHub, Vercel, and Neon
 
-ChatGPT/Codex edits and tests this checkout, then automatically commits its
-completed, validated task changes locally. You review the commit and push it to
-[defy-tcg/web-app](https://github.com/defy-tcg/web-app). Vercel's Git connection
-builds that commit. The application reads and writes its data through Neon
-Postgres.
+ChatGPT/Codex edits and tests this checkout, then automatically commits and
+pushes its completed, validated task changes to
+[defy-tcg/web-app](https://github.com/defy-tcg/web-app). The user has given standing
+permission for these commits and pushes, including the Vercel deployments those
+pushes trigger. Vercel's Git connection builds the pushed commit. The application
+reads and writes its data through Neon Postgres.
 
 ## Connect the existing project
 
@@ -70,7 +71,7 @@ npm run dev
 Open the local URL printed by Next.js. Use the development Neon Auth endpoint
 with the local origin configured and sign in with an authorized account.
 
-Before its automatic local commit, ChatGPT/Codex runs the applicable checks
+Before its automatic commit and push, ChatGPT/Codex runs the applicable checks
 (`npm test` for application changes) and reviews the diff and working tree:
 
 ```bash
@@ -90,16 +91,18 @@ The original Neon Auth dependency graph has peer-version conflicts. The project
 `.npmrc` uses `legacy-peer-deps=true` so `npm ci` installs the recovered lock
 without changing framework or dependency versions.
 
-## Automatic local commits and your release
+## Automatic commits, pushes, and Git deployments
 
 After completing and validating a task, ChatGPT/Codex reviews the diff, confirms
 that secrets and generated files are ignored, and automatically creates a local
-commit. It stages only its task changes, selecting specific files or hunks so
-unrelated edits and previously staged work stay out of the commit. It reports
-the commit hash and validation results when finished.
+commit and pushes it to the corresponding branch on `origin`. It stages only
+its task changes, selecting specific files or hunks so unrelated edits and
+previously staged work remain untouched and stay out of the commit. Before
+pushing, it checks the commits being sent and does not include unrelated local
+commits without explicit authorization. No additional permission is needed for
+these task commits, pushes, or the Vercel deployments those pushes trigger.
 
-Review the resulting commit and working tree, then push when you are ready.
-For a commit on `main`, run these commands yourself or use GitHub Desktop:
+For a completed task on `main`, the review and push sequence includes:
 
 ```bash
 git show --stat --oneline HEAD
@@ -108,14 +111,18 @@ git status --short
 git push origin main
 ```
 
-Once the repository connection is active, check the Vercel **Deployments** page
-for the matching commit and a successful build. Verify the updated production
-app after the deployment becomes ready. This workflow uses your GitHub pushes
-for releases. ChatGPT/Codex does not push, merge, or trigger a deployment unless
-you explicitly request it. No separate CLI production deployment is needed.
+Once the repository connection is active, ChatGPT/Codex checks the Vercel
+**Deployments** page for the matching commit and a successful build. It verifies
+the affected app behavior after the deployment becomes ready, using a development
+Neon branch for interactive tests that write data. It reports the commit hash,
+validation results, push and deployment status, and any remaining limitations.
+If the Git connection is unavailable, it reports that the push has not produced
+a verified deployment.
 
-For changes that need a deployed preview, push a feature branch, verify its
-preview with its Neon branch, then merge it into `main` yourself.
+This workflow uses GitHub pushes for releases. Force pushes, merges, and separate
+manual or CLI deployments require an explicit request. For changes that need a
+deployed preview, ChatGPT/Codex pushes a feature branch and verifies its preview
+with its Neon branch. Merging that branch into `main` remains a separate action.
 
 ## Database and schema changes
 
