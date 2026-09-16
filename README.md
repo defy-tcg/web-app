@@ -58,6 +58,17 @@ The scanner accepts USB scanner input or typed SKUs/barcodes. Its modes support
 lookup, receiving, removal, and checkout. Checkout supports inventory and custom
 items, price overrides, discounts, tax, payment methods, and sales channels.
 
+## Riftbound singles
+
+The new `/singles` workspace provides an English reference catalog, including
+alternate art and promos, with exact-finish search and batch CSV intake. Enter
+condition, quantity received, cost, and selling price, then review the batch.
+Shopify stores these singles and their receipt history, with optional Online
+Store/POS publishing. The legacy Neon checkout does not sell these Shopify
+singles. See [singles setup and operations](docs/SINGLES.md) for connection,
+catalog coverage, and retry handling. This feature still requires the release
+setup listed there before it is available on the live website.
+
 ## Master inventory sync
 
 Defy reads the public `Inventory` tab in the configured master spreadsheet on

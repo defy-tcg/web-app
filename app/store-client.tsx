@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tcgplayerProductUrl } from "@/lib/catalog-image";
 import { parseInventoryCsv } from "@/lib/inventory-csv";
@@ -2195,6 +2196,9 @@ export default function StoreOS() {
             </p>
           </div>
           <div className="header-actions">
+            <Link className="secondary-button" href="/singles">
+              Riftbound singles
+            </Link>
             <button
               className="secondary-button sheet-sync-button"
               disabled={sheetSyncing}
