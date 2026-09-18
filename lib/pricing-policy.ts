@@ -1,11 +1,23 @@
+import { gameFromAlias } from "./tcg-games.ts";
+
 export const SCRYDEX_PRICE_SOURCE = "scrydex";
 
-/** The store rule is a 10% markup, rounded half-up to the nearest USD cent. */
-export function scrydexSellPriceCents(marketCents: number): number {
+export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
+
+/** Only Riftbound singles receive the customer selling-price increase. */
+export function isRiftboundSinglePricingProduct(product: PricingProduct): boolean {
+  return gameFromAlias(product.game)?.key === "riftbound"
+    && product.productType.trim().toLowerCase() === "single";
+}
+
+/** Eligible singles add 10%, rounded half-up; every other product stays at market. */
+export function scrydexSellPriceCents(marketCents: number, product: PricingProduct): number {
   if (!Number.isSafeInteger(marketCents) || marketCents <= 0 || marketCents > 100_000_000) {
     throw new Error("Scrydex must provide a positive USD market price within the supported range.");
   }
-  return Math.floor((marketCents * 110 + 50) / 100);
+  return isRiftboundSinglePricingProduct(product)
+    ? Math.floor((marketCents * 110 + 50) / 100)
+    : marketCents;
 }
 
 export type StoredPricing = {
@@ -35,12 +47,12 @@ export function samePricingIdentity(left: PricingIdentity, right: PricingIdentit
 }
 
 /** Sheet/CSV edits cannot overwrite a verified Scrydex quote with another feed. */
-export function preserveScrydexPricing<T extends StoredPricing>(current: StoredPricing, incoming: T): T {
+export function preserveScrydexPricing<T extends StoredPricing>(current: StoredPricing & PricingProduct, incoming: T): T {
   if (current.priceSource !== SCRYDEX_PRICE_SOURCE) return incoming;
   return {
     ...incoming,
     marketPriceCents: current.marketPriceCents,
-    listPriceCents: scrydexSellPriceCents(current.marketPriceCents),
+    listPriceCents: scrydexSellPriceCents(current.marketPriceCents, current),
     priceSource: current.priceSource,
     priceUpdatedAt: current.priceUpdatedAt,
   };

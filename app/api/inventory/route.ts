@@ -70,7 +70,7 @@ function valuesFrom(input: ProductInput, resolvedSku?: string) {
   const sku = validateSku(resolvedSku ?? input.sku);
   const name = cleanText(input.name);
   if (!sku || !name) throw new Error("SKU and product name are required");
-  const productType = input.productType === "Sealed" ? "Sealed" : "Single";
+  const productType = cleanText(input.productType).toLowerCase() === "sealed" ? "Sealed" : "Single";
   const tcgplayerUrl = cleanHttpsUrl(input.tcgplayerUrl);
   const linkedProductId = tcgplayerProductIdFromUrl(tcgplayerUrl);
   const incomingPriceSource = cleanText(input.priceSource, "manual") || "manual";
@@ -122,7 +122,7 @@ async function pricingForIdentityChange(current: typeof products.$inferSelect, n
     const quote = await resolveScrydexPrice(next);
     return {
       marketPriceCents: quote.cents,
-      listPriceCents: scrydexSellPriceCents(quote.cents),
+      listPriceCents: scrydexSellPriceCents(quote.cents, next),
       priceSource: SCRYDEX_PRICE_SOURCE,
       priceUpdatedAt: new Date().toISOString(),
     };

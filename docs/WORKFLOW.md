@@ -62,9 +62,11 @@ Development, and changes apply to subsequent deployments.
 
 The master spreadsheet ID/tab are in `lib/master-inventory-sheet.ts`; image
 matching and the bundled Riftbound catalog use public TCGCSV/TCGplayer resources.
-Price refreshes and singles intake use Scrydex's raw USD market prices with a
-10% selling-price markup. Both Scrydex credentials are required; never expose
-them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price
+Price refreshes and singles intake use Scrydex's raw USD market prices. Only
+Riftbound singles receive a 10% customer selling-price markup; other games and
+product types, including Riftbound sealed products, sell at the raw market price.
+Intake review shows unmarked market prices. Both Scrydex credentials are required;
+never expose them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price
 data for 24 hours. A failed or ambiguous match never substitutes another feed.
 The existing Shopify retry cron uses the server-only `CRON_SECRET`.
 Authenticated app startup

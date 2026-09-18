@@ -13,10 +13,11 @@ const row: SinglesIntakeRow = { cardKey: "101:Normal", condition: "Near Mint", q
 const quote = (cents: number) => ({ cents, scrydexId: "ogn-001", variation: "normal-NM", url: "https://scrydex.com/" });
 
 test("Scrydex selling prices add 10% and round to the nearest cent", () => {
-  assert.equal(scrydexSellPriceCents(1000), 1100);
-  assert.equal(scrydexSellPriceCents(105), 116);
-  assert.equal(scrydexSellPriceCents(104), 114);
-  assert.equal(scrydexSellPriceCents(29), 32);
+  const product = { game: "Riftbound", productType: "Single" };
+  assert.equal(scrydexSellPriceCents(1000, product), 1100);
+  assert.equal(scrydexSellPriceCents(105, product), 116);
+  assert.equal(scrydexSellPriceCents(104, product), 114);
+  assert.equal(scrydexSellPriceCents(29, product), 32);
 });
 
 test("single review uses the exact catalog identity and selected finish/condition, replacing client and catalog prices", async () => {
@@ -32,6 +33,7 @@ test("single review uses the exact catalog identity and selected finish/conditio
   assert.equal(inputs[0].tcgplayerUrl, catalog.cards[0].productUrl);
   assert.equal(inputs[0].cardNumber, "001");
   assert.equal(inputs[0].game, "Riftbound");
+  assert.equal(inputs[0].productType, "Single");
   assert.deepEqual(reviewed.rows.map((item) => item.priceCents), [1100, 116]);
   assert.deepEqual(reviewed.rows.map((item) => item.pricing.marketCents), [1000, 105]);
   assert.equal(reviewed.rows[0].pricing.source, "scrydex");

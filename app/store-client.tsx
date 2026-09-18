@@ -1266,7 +1266,7 @@ export default function StoreOS() {
     if (product.priceSource.startsWith("scrydex") && (
       Object.hasOwn(changes, "marketPriceCents") || Object.hasOwn(changes, "listPriceCents")
     )) {
-      notify("Scrydex manages this market price and its 10% markup. Refresh prices to update them.");
+      notify("Scrydex manages these market and list prices. Refresh prices to update them.");
       return false;
     }
     const marksManual = Object.prototype.hasOwnProperty.call(
@@ -1352,7 +1352,7 @@ export default function StoreOS() {
     if (priceSyncBusy.current) return product;
     priceSyncBusy.current = true;
     setPriceSyncing(true);
-    setScanPriceStatus("Checking Scrydex and setting the sticker price 10% above market…");
+    setScanPriceStatus("Checking Scrydex and updating the market and sticker prices…");
     setScanPriceError(false);
     try {
       const response = await fetch("/api/prices/refresh", {
@@ -1373,7 +1373,7 @@ export default function StoreOS() {
       );
       setScanResult(updated);
       setScanPriceStatus(
-        `Scrydex market ${dollars(updated.marketPriceCents)} · Sticker ${dollars(updated.listPriceCents)} (market + 10%, rounded to the nearest cent)${data.match?.matchedName ? ` · ${data.match.matchedName}` : ""}`,
+        `Scrydex market ${dollars(updated.marketPriceCents)} · Sticker ${dollars(updated.listPriceCents)}${data.match?.matchedName ? ` · ${data.match.matchedName}` : ""}`,
       );
       return updated;
     } catch (caught) {
@@ -1420,7 +1420,7 @@ export default function StoreOS() {
           throw new Error("The price refresh could not continue. Refresh prices again to retry.");
         afterId = data.nextAfterId;
       }
-      const message = `Scrydex refresh complete: ${updated} updated · ${failed} need review. Updated list prices are market + 10%, rounded to the nearest cent.`;
+      const message = `Scrydex refresh complete: ${updated} updated · ${failed} need review.`;
       setBulkPriceStatus(message);
       notify(message);
     } catch (caught) {
@@ -2015,8 +2015,7 @@ export default function StoreOS() {
                       `Market price ${scanResult.priceUpdatedAt ? "last updated " + new Date(scanResult.priceUpdatedAt).toLocaleString() : "has not synced yet"}`}
                   </span>
                   <small>
-                    Scrydex refresh sets the sticker price to market + 10%,
-                    rounded to the nearest cent.
+                    Scrydex refresh updates the market and sticker prices.
                     {scanPriceError && " The current price is unchanged. Check the card details before retrying."}
                   </small>
                   <div>
@@ -2053,8 +2052,7 @@ export default function StoreOS() {
                 <p>
                   Scan the Defy SKU barcode on a sleeve, top loader, or sealed
                   product. Lookup and Checkout scans refresh Scrydex market
-                  prices and set the sticker price 10% higher, rounded to the
-                  nearest cent.
+                  and sticker prices.
                 </p>
               </div>
             )}
@@ -2264,8 +2262,7 @@ export default function StoreOS() {
               <span className="sheet-sync-status">{sheetSyncStatus}</span>
             </p>
             <p>
-              Scrydex controls refreshed market and list prices. List prices are
-              market + 10%, rounded to the nearest cent.
+              Scrydex controls refreshed market and list prices.
             </p>
           </div>
           <div className="header-actions">
@@ -2429,7 +2426,7 @@ export default function StoreOS() {
                     <td>
                       <EditableNumber
                         key={`list-${product.id}-${product.listPriceCents}`}
-                        label={`${product.priceSource.startsWith("scrydex") ? "Scrydex market plus 10% list" : "List"} price for ${product.name}`}
+                        label={`${product.priceSource.startsWith("scrydex") ? "Scrydex list" : "List"} price for ${product.name}`}
                         value={product.listPriceCents}
                         money
                         readOnly={product.priceSource.startsWith("scrydex") || bulkPriceSyncing || priceSyncing}

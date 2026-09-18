@@ -48,7 +48,7 @@ async function pricePreview(preview: SinglesPreview, resolve: SinglesPriceResolv
         failure = new SinglesError("SCRYDEX_PRICE_UNAVAILABLE", `No supported Scrydex price is available for ${card.name} (${card.finish}, ${row.condition}). This row cannot be received until its price can be confirmed.`);
         return;
       }
-      rows[index] = { ...row, priceCents: scrydexSellPriceCents(quote.cents),
+      rows[index] = { ...row, priceCents: scrydexSellPriceCents(quote.cents, { game: "Riftbound", productType: "Single" }),
         pricing: { source: SCRYDEX_PRICE_SOURCE, marketCents: quote.cents, scrydexId: quote.scrydexId, url: quote.url, variation: quote.variation } };
     }
   }));
