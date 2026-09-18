@@ -69,6 +69,22 @@ singles. See [singles setup and operations](docs/SINGLES.md) for connection,
 catalog coverage, and retry handling. This feature still requires the release
 setup listed there before it is available on the live website.
 
+## Riftbound Swiss randomizer
+
+Open **Events → Riftbound Swiss randomizer**. Enter 2–64 distinct player names,
+one per line, then randomize the first round. Record a win or draw for every
+match before generating the next round. Later rounds prefer similar match
+points and avoid repeat opponents where possible; repeat pairings are marked.
+Odd rosters receive an automatic bye, prioritizing fewer previous byes and
+lower points. Wins and byes give 3 points, draws 1, and losses 0.
+
+Progress saves on the current browser only and is independent of event
+accounting. Download results for a separate record. Undo the latest round to
+correct earlier results before regenerating pairings. New tournament clears
+the saved tournament after confirmation. Standings share places for tied
+match points; game-level tournament tiebreakers are not calculated. The pairing
+search is bounded for responsiveness and may fall back to repeat opponents.
+
 ## Master inventory sync
 
 Defy reads the public `Inventory` tab in the configured master spreadsheet on

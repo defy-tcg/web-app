@@ -19,6 +19,7 @@ import TcgplayerSalesImportModal, {
   type TcgplayerImportResult,
 } from "./tcgplayer-sales-import-modal";
 import ThemeToggle from "./theme-toggle";
+import RiftboundSwiss from "./riftbound-swiss";
 
 type Product = {
   id: number;
@@ -2504,6 +2505,7 @@ export default function StoreOS() {
     );
     return (
       <>
+        <RiftboundSwiss />
         <section className="mini-kpis">
           <article>
             <span>Event revenue</span>
