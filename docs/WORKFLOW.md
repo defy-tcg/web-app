@@ -7,15 +7,20 @@ permission for these commits and pushes, including the Vercel deployments those
 pushes trigger. Vercel's Git connection builds the pushed commit. The application
 reads and writes its data through Neon Postgres.
 
-## Connect the existing project
+## Existing project connection
 
 The destination is Vercel team `defy3`, project `defy-store-os`. Its existing
-Neon database is already linked. The remaining connection is the GitHub
-repository; establish it in the existing project's
-[Settings → Git](https://vercel.com/defy3/defy-store-os/settings/git).
-Vercel currently shows no available GitHub namespace and requests installation
-of its GitHub application. Authorize it for `defy-tcg/web-app`, then connect
-that repository here. Once connected, confirm `defy-tcg/web-app` appears as the repository.
+Neon database and GitHub repository `defy-tcg/web-app` are linked. The Git
+connection was verified on September 18, 2026, with `main` as the production
+branch. Check the existing project's
+[Settings → Git](https://vercel.com/defy3/defy-store-os/settings/git) if a push
+does not produce a deployment.
+
+If repository access needs repair, authorize the Vercel GitHub application for
+`defy-tcg/web-app` and verify the correct GitHub account is connected under
+[Vercel Account → Authentication](https://vercel.com/account/settings/authentication).
+Both the app's repository access and the Vercel user's GitHub connection must be
+in place before reconnecting the repository in the existing project.
 [Vercel GitHub documentation](https://vercel.com/docs/git/vercel-for-github)
 
 Use the repository root, the **Next.js** framework preset, `npm ci` for install,
