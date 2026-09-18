@@ -18,8 +18,11 @@ stock quantities, sales, authentication records, or Shopify receipt journals.
 
 The migration was applied to the development branch using a direct connection.
 Neon's schema comparison against the parent confirmed only the six new tables,
-their primary keys, and four indexes were added. Production application remains
-a separate release step after integration validation and a fresh schema check.
+their primary keys, and four indexes were added. After integration validation,
+a fresh comparison again confirmed these were the only differences. The same
+reviewed migration was applied to production on September 18, 2026. The schema
+comparison is now empty, and all six new production tables are empty. Legacy
+tables and their records were not modified. Sync activation is still pending.
 
 Keep this additive migration immutable after production application. Future
 changes must add a new reviewed migration; the schema baseline is evidence,
