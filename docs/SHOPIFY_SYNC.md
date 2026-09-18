@@ -7,6 +7,10 @@ the same Shopify products. Sync never adjusts Shopify stock, creates sales in th
 legacy POS ledger, or changes spreadsheet inventory. Receiving remains the only
 workflow in this integration that adds stock.
 
+The separate [Scrydex pricing refresh](SHOPIFY_PRICING.md) updates existing
+Shopify selling prices for POS and online use. It has its own daily schedule,
+manual refresh panel, and durable progress; stock/order projection stays read-only.
+
 ## Configure and enable
 
 1. Review the current database baseline. Apply `db/migrations/shopify-sync.sql`

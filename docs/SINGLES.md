@@ -68,7 +68,9 @@ provider requests. Before a new receipt starts, the server verifies the submitte
 sale price against the current quote. A changed price requires another review.
 Saved receipts resume their original price even when the provider is unavailable,
 preserving inventory idempotency. This updates the selected received variant;
-it does not automatically reprice every existing Shopify listing.
+it does not itself reprice every existing Shopify listing. The separate
+[Shopify pricing refresh](SHOPIFY_PRICING.md) checks existing POS listings daily
+and can be run from the Shopify dashboard.
 
 TCGCSV does not expose language-level SKUs. English is the configured intake
 scope; the operator must confirm the physical card's language. Explicit foreign

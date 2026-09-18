@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { cronAuthorized, pricingIdentity, updateVariantPrice, type LegacyPricingProduct, type PricingVariant } from "../lib/shopify/price-sync-core.ts";
+import { runPricePage, type PriceJournal, type PriceSyncState } from "../lib/shopify/price-sync-runner.ts";
+import type { Catalog } from "../lib/singles/types.ts";
+import type { SinglesGraphQL } from "../lib/singles/shopify.ts";
+import type { ScrydexPrice } from "../lib/scrydex.ts";
+
+const catalog: Catalog = { fetchedAt: "2026-09-18", sourceUpdatedAt: "2026-09-18", warnings: [], cards: [
+  { key: "101:Normal", productId: 101, groupId: 7, name: "Test Card", setName: "Origins", setCode: "OGN", number: "001", rarity: "Rare", finish: "Normal", language: "English", imageUrl: "", productUrl: "https://www.tcgplayer.com/product/101", marketCents: 99999 },
+  { key: "101:Foil", productId: 101, groupId: 7, name: "Test Card", setName: "Origins", setCode: "OGN", number: "001", rarity: "Rare", finish: "Foil", language: "English", imageUrl: "", productUrl: "https://www.tcgplayer.com/product/101", marketCents: 99999 },
+] };
+const single = (): PricingVariant => ({ id: "gid://shopify/ProductVariant/1", sku: "DEFY-RFB-101-FOIL-EN-LP", barcode: "DEFY-RFB-101-FOIL-EN-LP", price: "25.00",
+  selectedOptions: [{ name: "Condition", value: "Lightly Played" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }],
+  product: { id: "gid://shopify/Product/1", title: "Test Card — Origins", status: "ACTIVE", productType: "Riftbound single", catalogId: { value: "single:riftbound:printing:101" }, storefrontCatalogId: { value: "101" }, game: { value: "Riftbound" }, cardName: { value: "Test Card" }, setName: { value: "Origins" }, cardNumber: { value: "001" } } });
+const sealedProduct: LegacyPricingProduct = { id: 5, sku: "DEFY-PKM-000005", barcode: "123456789012", name: "Test Booster Box", game: "Pokemon", setName: "Test Set", cardNumber: "", productType: "Sealed", condition: "", finish: "", tcgplayerId: 205 };
+const sealed = (): PricingVariant => ({ ...single(), sku: sealedProduct.sku, barcode: sealedProduct.barcode, selectedOptions: [{ name: "Title", value: "Default Title" }], product: { ...single().product, productType: "Sealed", catalogId: null, storefrontCatalogId: null, game: null, cardName: null, setName: null, cardNumber: null } });
+const quote: ScrydexPrice = { cents: 105, matchedName: "Test Card", groupName: "Origins", variation: "foil LP", scrydexId: "OGN-001", url: "https://api.scrydex.com/riftbound/v1/cards/OGN-001" };
+
+function shopify(variant: PricingVariant, options: { duplicates?: boolean; changed?: boolean; rejected?: boolean; uncertain?: boolean } = {}) {
+  const writes: Record<string, unknown>[] = [];
+  const graphql: SinglesGraphQL = async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
+    if (query.includes("PriceScanCodes")) return { productVariants: { nodes: [variant, ...(options.duplicates ? [{ ...variant, id: "gid://shopify/ProductVariant/99" }] : [])], pageInfo: { hasNextPage: false } } } as T;
+    if (query.includes("PriceVariantCheck")) return { productVariant: options.changed ? { ...variant, sku: "CHANGED" } : variant } as T;
+    assert.match(query, /mutation PosScrydexPrice/);
+    writes.push(variables);
+    const change = (variables.variants as { id: string; price: string }[])[0];
+    return { productVariantsBulkUpdate: { productVariants: options.uncertain ? [] : [{ id: change.id, price: change.price }], userErrors: options.rejected ? [{ message: "Permission denied" }] : [] } } as T;
+  };
+  return { graphql, writes };
+}
+
+test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 10%", async () => {
+  const variant = single(); const client = shopify(variant);
+  const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async identity => {
+    assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); assert.equal(identity.finish, "Foil"); return quote;
+  } });
+  assert.equal(result.priceCents, 116); assert.equal(result.marketCents, 105);
+  const variants = client.writes[0].variants as Record<string, unknown>[];
+  assert.deepEqual(Object.keys(variants[0]).sort(), ["id", "metafields", "price"]);
+  assert.equal(variants.length, 1); assert.equal(variants[0].price, "1.16");
+  assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+});
+
+test("sealed products match registered codes and keep raw market pricing", async () => {
+  const variant = sealed(); const client = shopify(variant);
+  const result = await updateVariantPrice({ variant, legacy: [sealedProduct], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async identity => {
+    assert.equal(identity.productType, "Sealed"); assert.equal(identity.game, "Pokemon"); return { ...quote, cents: 12999 };
+  } });
+  assert.equal(result.priceCents, 12999);
+});
+
+test("unmapped/ambiguous codes, conflicting catalog data, foreign language and sibling conditions never get prices", () => {
+  assert.throws(() => pricingIdentity(sealed(), [], catalog), /Add this product/);
+  assert.throws(() => pricingIdentity(sealed(), [sealedProduct, { ...sealedProduct, id: 6 }], catalog), /multiple/);
+  for (const change of [
+    (v: PricingVariant) => { v.product.storefrontCatalogId = { value: "999" }; },
+    (v: PricingVariant) => { v.selectedOptions[0].value = "Near Mint"; },
+    (v: PricingVariant) => { v.selectedOptions[1].value = "Nonfoil"; },
+    (v: PricingVariant) => { v.selectedOptions[2].value = "Japanese"; },
+    (v: PricingVariant) => { v.barcode = "DEFY-RFB-101-NORMAL-EN-NM"; },
+    (v: PricingVariant) => { v.product.game = { value: "Pokemon" }; },
+    (v: PricingVariant) => { v.product.status = "DRAFT"; },
+  ]) { const variant = single(); change(variant); assert.throws(() => pricingIdentity(variant, [], catalog)); }
+});
+
+test("duplicate Shopify codes and concurrent identity changes prevent mutations", async () => {
+  for (const options of [{ duplicates: true }, { changed: true }]) {
+    const variant = single(); const client = shopify(variant, options);
+    await assert.rejects(updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async () => quote }));
+    assert.equal(client.writes.length, 0);
+  }
+});
+
+test("missing or invalid provider prices preserve Shopify price; rejected/unconfirmed writes are failures", async () => {
+  for (const cents of [0, -1, NaN, 1.2, 100_000_001]) {
+    const variant = single(); const client = shopify(variant);
+    await assert.rejects(updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async () => ({ ...quote, cents }) }));
+    assert.equal(client.writes.length, 0);
+  }
+  for (const options of [{ rejected: true }, { uncertain: true }]) {
+    const variant = single(); const client = shopify(variant, options);
+    await assert.rejects(updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async () => quote }), { code: "UPDATE_UNCONFIRMED" });
+  }
+});
+
+function journal() {
+  let value: PriceSyncState | null = null; let revision = 0;
+  const store: PriceJournal = {
+    read: async () => ({ value: structuredClone(value), digest: revision ? String(revision) : null }),
+    cas: async (snapshot, next) => { if (snapshot.digest !== (revision ? String(revision) : null)) return false; value = structuredClone(next); revision++; return true; },
+  };
+  return store;
+}
+const firstPage = { checked: 1, results: [], issues: [{ sku: "UNKNOWN", title: "Unmapped", message: "Map first" }], nextCursor: "page-2" };
+const lastPage = { checked: 0, results: [], issues: [], nextCursor: null };
+
+test("pricing journal persists pagination, resumes failures and deduplicates completed automatic runs", async () => {
+  const store = journal(); const now = () => Date.parse("2026-09-18T12:00:00Z");
+  const first = await runPricePage({ journal: store, now, page: async after => { assert.equal(after, null); return firstPage; } });
+  assert.equal(first.after, "page-2"); assert.equal(first.skipped, 1);
+  await assert.rejects(runPricePage({ journal: store, now, runId: first.runId, page: async () => { throw new Error("upstream down"); } }));
+  assert.equal((await store.read()).value?.after, "page-2");
+  assert.equal((await store.read()).value?.lease, null);
+  const complete = await runPricePage({ journal: store, now, runId: first.runId, page: async after => { assert.equal(after, "page-2"); return lastPage; } });
+  assert.ok(complete.finishedAt); assert.equal(complete.checked, 1);
+  const duplicate = await runPricePage({ journal: store, now, automatic: true, page: async () => { assert.fail("Do not reprice a completed daily run"); } });
+  assert.equal(duplicate.runId, first.runId);
+  await assert.rejects(runPricePage({ journal: store, now, runId: "different", page: async () => lastPage }), { code: "RUN_CHANGED" });
+});
+
+test("a concurrent manual/cron refresh cannot acquire the same lease", async () => {
+  const store = journal(); const now = () => Date.now();
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  let begun!: () => void;
+  const began = new Promise<void>(resolve => { begun = resolve; });
+  const running = runPricePage({ journal: store, now, page: async () => { begun(); await wait; return lastPage; } });
+  await began;
+  await assert.rejects(runPricePage({ journal: store, now, page: async () => lastPage }), { code: "SYNC_BUSY" });
+  release(); await running;
+});
+
+test("broken pagination cannot advance the pricing checkpoint", async () => {
+  const store = journal(); const now = () => Date.now();
+  const first = await runPricePage({ journal: store, now, page: async () => firstPage });
+  await assert.rejects(runPricePage({ journal: store, now, runId: first.runId, page: async () => firstPage }), { code: "PAGINATION_INVALID" });
+  assert.equal((await store.read()).value?.after, "page-2");
+});
+
+test("cron requires the configured secret and rejects absent/incorrect credentials", () => {
+  const request = (authorization?: string) => new Request("https://defy.example/api/shopify/pricing/cron", { headers: authorization ? { authorization } : {} });
+  assert.equal(cronAuthorized(request("Bearer test-only-secret"), "test-only-secret"), true);
+  for (const value of [undefined, "test-only-secret", "Bearer incorrect-secret"]) assert.equal(cronAuthorized(request(value), "test-only-secret"), false);
+  assert.equal(cronAuthorized(request("Bearer "), ""), false);
+});

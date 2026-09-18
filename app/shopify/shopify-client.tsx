@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ThemeToggle from "../theme-toggle";
+import PricingPanel from "./pricing-panel";
 
 type InventoryRow = {
   variantId: string;
@@ -366,6 +367,8 @@ export default function ShopifyClient() {
             ＋ Receive singles
           </Link>
         </section>
+
+        <PricingPanel />
 
         <div className="shopify-boundary">
           <span aria-hidden="true">↔</span>

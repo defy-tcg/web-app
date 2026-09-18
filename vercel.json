@@ -7,6 +7,10 @@
     {
       "path": "/api/shopify/sync/drain",
       "schedule": "17 8 * * *"
+    },
+    {
+      "path": "/api/shopify/pricing/cron",
+      "schedule": "27 8 * * *"
     }
   ]
 }

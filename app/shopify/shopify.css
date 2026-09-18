@@ -500,3 +500,20 @@
     align-items: start;
   }
 }
+.pricing-panel { padding: 24px; margin: 24px 0; }
+.pricing-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.pricing-panel h2 { margin: 4px 0 10px; }
+.pricing-panel p { line-height: 1.6; }
+.pricing-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.pricing-policy { opacity: .75; font-size: .86rem; }
+.pricing-progress { font-weight: 650; }
+.pricing-error { color: #ef766f; }
+.pricing-panel details { border-top: 1px solid #71809633; padding: 14px 0; }
+.pricing-panel summary { cursor: pointer; font-weight: 600; }
+.pricing-table-wrap { overflow-x: auto; margin-top: 12px; }
+.pricing-panel table { width: 100%; border-collapse: collapse; }
+.pricing-panel th, .pricing-panel td { text-align: left; padding: 10px; border-bottom: 1px solid #71809633; }
+.pricing-panel td small, .pricing-issues span { display: block; font-size: .85rem; opacity: .8; margin-top: 4px; }
+.pricing-issues { padding-left: 20px; }
+.pricing-issues li { margin: 12px 0; }
+@media (max-width: 900px) { .pricing-panel-heading { flex-direction: column; } .pricing-panel { padding: 18px; } }
