@@ -85,8 +85,8 @@ does not sell these new Shopify singles.
 
 ## Release prerequisites
 
-- Restore the five original PNG assets listed in `docs/RECOVERY.md` before the
-  first deployment of this recovered application.
+- Original PNG recovery is complete; all five files match the original source
+  hashes recorded in `docs/RECOVERY.md`.
 - Connect the existing Vercel project to `defy-tcg/web-app` for Git deployments.
 - Add the server-only Shopify connection settings to Production and separate
   development values to Development/Preview.

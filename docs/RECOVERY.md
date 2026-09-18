@@ -21,23 +21,25 @@ Source: existing production deployment `dpl_HZ3Mac1a42BBAJNxdRTAnqGwZjrf` of
   sign-up screens, and theme toggle. Live login and database mutations were not
   exercised because development credentials are not yet configured.
 
-## Still required before the first release
+## Original image assets restored
 
-Five original PNG files could not be exported through the source viewer:
+All five original PNG assets were downloaded on September 18, 2026 through the
+authenticated Vercel CLI API from the original deployment above. Each decoded
+file has a valid PNG signature and its SHA-1 exactly matches the deployment's
+source manifest file ID. The files are restored unchanged under `public/`:
 
-- `public/defy-os-app-icon-source.png`
-- `public/defy-os-app-icon.png`
-- `public/defy-os-icon-source.png`
-- `public/defy-os-icon.png`
-- `public/defy-os-logo.png`
+| File | SHA-1 |
+| --- | --- |
+| `defy-os-app-icon-source.png` | `cf330fcff2237037400766192e0581bc1a7876b0` |
+| `defy-os-app-icon.png` | `364aac26c2680cd6d125699fbdb56ed7a2252f86` |
+| `defy-os-icon-source.png` | `7d2a695d8215f6f5882c99a995324e9a5f06ffa7` |
+| `defy-os-icon.png` | `9d38af88a1bba7ae78dab6168f97cbd4473c6acc` |
+| `defy-os-logo.png` | `b4678bff33d20be7c0f103367aaa6a10b3c5a6db` |
 
-The Vercel viewer shows blank/broken image previews and eventually an error;
-anonymous app/image URLs return the sign-in page. Failed HTML downloads were
-removed rather than stored as PNGs. No substitute artwork was introduced.
-Temporary Vercel CLI access was requested to finish exact binary export.
-Known source file IDs: app-icon-source
-`cf330fcff2237037400766192e0581bc1a7876b0`; app-icon
-`364aac26c2680cd6d125699fbdb56ed7a2252f86`.
+This resolves the original image-export blocker without substitute artwork.
+The recovery itself did not deploy the application or change production data.
+
+## Remaining setup and initial recovery history
 
 The original `.env.example` is hidden by Vercel's environment-file preview
 restriction. Its local replacement documents all four variables referenced by

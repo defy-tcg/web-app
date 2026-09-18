@@ -2,6 +2,8 @@
 
 ## Validated locally on 2026-09-18
 
+- The five original DefyOS PNG assets were recovered from the original Vercel
+  deployment and verified against its source-manifest SHA1 hashes.
 - DefyOS uses the storefront's canonical SKU format and reuses verified Shopify
   product, variant, and inventory-item IDs. Read-only production checks resolved
   Defy, Treasure Trove, and Mirror Image to their existing listings.
@@ -21,7 +23,7 @@
 
 ## Required activation sequence
 
-1. Restore the original PNG files in `RECOVERY.md`. Connect the existing Vercel
+1. Original PNG recovery is complete (see `RECOVERY.md`). Connect the existing Vercel
    `defy3/defy-store-os` project to `defy-tcg/web-app`; do not create a replacement
    project or trigger a separate manual deployment.
 2. Extend the existing Shopify app with `read_orders` and
@@ -38,8 +40,9 @@
    in `SHOPIFY_SYNC.md`. Existing subscriptions are never deleted by this script.
 5. Run reconciliation to completion. Verify stock and permitted recent orders
    against Shopify. Do not test by creating production orders or adding stock.
-6. Release the storefront's default-off receiving switch and legacy-variant
-   display compatibility. Confirm `card.condition`, `card.finish`, and
+6. The storefront's default-off receiving switch and legacy-variant display
+   compatibility are published as Sites version 36 (`44ca8b6`), with production
+   receiving still in legacy mode. Confirm `card.condition`, `card.finish`, and
    `card.language` are readable by Storefront API. Set the storefront receiving
    mode to `drain`, resolve started/uncertain old receipts using their original
    journal, and only then select `os` after verifying DefyOS is ready. Keep legacy
