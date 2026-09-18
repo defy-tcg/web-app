@@ -1,0 +1,183 @@
+import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
+import test from "node:test";
+import { decodeCursor, encodeCursor, hasSyncOrigin, parseDelivery, processDelivery, readBoundedBody, shouldApplyProjection, verifyWebhookHmac, type Delivery, type Projection, type SyncBatch, type SyncStore } from "../lib/shopify/sync-core.ts";
+import { fetchDeliverySnapshot, fetchReconcilePage } from "../lib/shopify/snapshots.ts";
+import { configBlockers, type ReadGraphQL } from "../lib/shopify/read-client.ts";
+
+const shop = "defy-receiving-test.myshopify.com";
+const location = "gid://shopify/Location/1";
+const older = "2026-09-18T00:00:00.000Z";
+const newer = "2026-09-18T00:01:00.000Z";
+const delivery: Delivery = { id: "inventory_levels/update:event-one", topic: "inventory_levels/update", resourceId: "gid://shopify/InventoryItem/1", locationId: location, triggeredAt: newer };
+function stock(quantity: number, version = newer, observedAt = newer): Projection {
+  return { kind: "inventory", id: "item@location", parentId: "variant", sourceUpdatedAt: version, observedAt, data: { available: quantity }, deleted: false };
+}
+class MemoryStore implements SyncStore {
+  deliveries = new Set<string>();
+  rows = new Map<string, Projection>();
+  legacyQuantity = 17;
+  failNext = false;
+  async hasDelivery(_shop: string, id: string) { return this.deliveries.has(id); }
+  async apply(_shop: string, event: Delivery, batch: SyncBatch) {
+    if (this.deliveries.has(event.id)) return false;
+    if (this.failNext) { this.failNext = false; throw new Error("Database write failed"); }
+    for (const row of batch.projections) if (shouldApplyProjection(this.rows.get(row.id), row)) this.rows.set(row.id, row);
+    this.deliveries.add(event.id);
+    return true;
+  }
+}
+test("Shopify signature validates exact raw bytes and rejects tampering, malformed signatures, and wrong secrets", () => {
+  const raw = Buffer.from('{"id":123,"title":"Blitzcrank, Impassive"}');
+  const signature = createHmac("sha256", "test-secret").update(raw).digest("base64");
+  assert.equal(verifyWebhookHmac(raw, signature, "test-secret"), true);
+  assert.equal(verifyWebhookHmac(Buffer.from(raw.toString().replace("123", "124")), signature, "test-secret"), false);
+  assert.equal(verifyWebhookHmac(Buffer.from(JSON.stringify(JSON.parse(raw.toString()), null, 2)), signature, "test-secret"), false);
+  for (const invalid of [null, "", "abc", `${signature}extra`]) assert.equal(verifyWebhookHmac(raw, invalid, "test-secret"), false);
+  assert.equal(verifyWebhookHmac(raw, signature, "wrong"), false);
+});
+test("streamed webhook body limits work without Content-Length", async () => {
+  const request = new Request("https://example.com", { method: "POST", body: "x".repeat(20) });
+  await assert.rejects(readBoundedBody(request, 10), /too large/);
+});
+test("webhook envelope requires expected shop, safe IDs, timestamp and event ID; strips customer fields", () => {
+  const headers = new Headers({ "x-shopify-shop-domain": shop, "x-shopify-topic": "orders/updated", "x-shopify-event-id": "event-12345678", "x-shopify-triggered-at": newer });
+  const result = parseDelivery(headers, { id: 456, customer: { email: "private@example.com" }, note: "private" }, shop);
+  assert.deepEqual(result, { id: "orders/updated:event-12345678:gid://shopify/Order/456", topic: "orders/updated", resourceId: "gid://shopify/Order/456", triggeredAt: newer });
+  assert.throws(() => parseDelivery(headers, { id: 456 }, "untrusted.myshopify.com"), /Unexpected/);
+  assert.throws(() => parseDelivery(headers, { id: Number.MAX_SAFE_INTEGER + 1 }, shop), /valid Order/);
+  headers.delete("x-shopify-event-id");
+  assert.throws(() => parseDelivery(headers, { id: 456 }, shop), /event ID/);
+});
+test("duplicates and different order events do not double-decrement inventory or touch legacy quantities", async () => {
+  const store = new MemoryStore();
+  let reads = 0;
+  const fetchSnapshot = async () => { reads++; return { projections: [stock(5)], replaceChildren: [] }; };
+  await processDelivery(shop, delivery, store, fetchSnapshot);
+  assert.deepEqual(await processDelivery(shop, delivery, store, fetchSnapshot), { duplicate: true });
+  await processDelivery(shop, { ...delivery, id: "paid-event", topic: "orders/paid" }, store, fetchSnapshot);
+  assert.equal(reads, 2);
+  assert.equal(store.rows.get("item@location")?.data.available, 5);
+  assert.equal(store.legacyQuantity, 17);
+});
+test("older source versions and equal-version earlier observations cannot overwrite new snapshots; tombstones win ties", () => {
+  const current = stock(3, newer, newer);
+  assert.equal(shouldApplyProjection(current, stock(10, older, "2026-09-18T01:00:00Z")), false);
+  assert.equal(shouldApplyProjection(current, stock(10, newer, older)), false);
+  const tombstone = { ...current, deleted: true };
+  assert.equal(shouldApplyProjection(current, tombstone), true);
+  assert.equal(shouldApplyProjection(tombstone, stock(10, newer, "2026-09-18T01:00:00Z")), false);
+});
+test("remote fetch and DB failures leave delivery retryable", async () => {
+  const store = new MemoryStore();
+  await assert.rejects(processDelivery(shop, delivery, store, async () => { throw new Error("throttled"); }), /throttled/);
+  assert.equal(await store.hasDelivery(shop, delivery.id), false);
+  store.failNext = true;
+  const fetchSnapshot = async () => ({ projections: [stock(4)], replaceChildren: [] });
+  await assert.rejects(processDelivery(shop, delivery, store, fetchSnapshot), /Database/);
+  assert.equal(await store.hasDelivery(shop, delivery.id), false);
+  await processDelivery(shop, delivery, store, fetchSnapshot);
+  assert.equal(store.rows.get("item@location")?.data.available, 4);
+});
+test("inventory webhook reads current upstream quantity and version instead of trusting event quantity", async () => {
+  const graphql: ReadGraphQL = async <T>(query: string) => {
+    assert.match(query, /^query /);
+    assert.doesNotMatch(query, /mutation/);
+    return { inventoryItem: { variant: { id: "gid://shopify/ProductVariant/1" }, inventoryLevel: { updatedAt: newer, quantities: [{ name: "available", quantity: 7 }, { name: "on_hand", quantity: 9 }, { name: "committed", quantity: 2 }] } } } as T;
+  };
+  const batch = await fetchDeliverySnapshot(graphql, { ...delivery, triggeredAt: older }, location);
+  assert.equal(batch.projections[0].sourceUpdatedAt, newer);
+  assert.equal(batch.projections[0].data.available, 7);
+  assert.equal(batch.projections[0].data.onHand, 9);
+  assert.deepEqual(await fetchDeliverySnapshot(graphql, { ...delivery, locationId: "gid://shopify/Location/99" }, location), { projections: [], replaceChildren: [] });
+});
+test("non-delete unavailable objects retry; confirmed deletion produces a tombstone", async () => {
+  const graphql: ReadGraphQL = async <T>() => ({ product: null }) as T;
+  const event = { ...delivery, resourceId: "gid://shopify/Product/1", topic: "products/update" };
+  await assert.rejects(fetchDeliverySnapshot(graphql, event, location), /not readable/);
+  const batch = await fetchDeliverySnapshot(graphql, { ...event, topic: "products/delete" }, location);
+  assert.equal(batch.projections[0].deleted, true);
+  assert.equal(batch.projections[0].sourceUpdatedAt, newer);
+});
+test("reconciliation continuation is bounded and never replaces all product children with a partial page", async () => {
+  const graphql: ReadGraphQL = async <T>(query: string) => {
+    assert.match(query, /productVariants\(first: 25/);
+    return { productVariants: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "page2" } } } as T;
+  };
+  const page = await fetchReconcilePage(graphql, decodeCursor(null), location);
+  assert.deepEqual(decodeCursor(page.nextCursor), { phase: "inventory", after: "page2" });
+  assert.deepEqual(page.batch.replaceChildren, []);
+  assert.equal(page.done, false);
+  assert.deepEqual(decodeCursor(encodeCursor({ phase: "orders", after: null })), { phase: "orders", after: null });
+  assert.throws(() => decodeCursor("bad cursor"), /Invalid sync cursor/);
+});
+test("orders projection retains financial state and totals, discards customer fields, and reads stock without applying sale deltas", async () => {
+  const variant = { id: "gid://shopify/ProductVariant/1", title: "Near Mint / Foil / English", sku: "card-1", price: "3.50", updatedAt: newer,
+    product: { id: "gid://shopify/Product/1", title: "Defy", handle: "defy", status: "ACTIVE", updatedAt: newer },
+    inventoryItem: { id: "gid://shopify/InventoryItem/1", tracked: true, inventoryLevel: { updatedAt: newer, quantities: [{ name: "available", quantity: 6 }] } } };
+  const order = { id: "gid://shopify/Order/1", name: "#1001", createdAt: older, updatedAt: newer, cancelledAt: null, displayFinancialStatus: "PARTIALLY_REFUNDED", displayFulfillmentStatus: "FULFILLED",
+    customer: { email: "private@example.com" }, currentTotalPriceSet: { shopMoney: { amount: "7.00", currencyCode: "USD" } },
+    lineItems: { nodes: [{ id: "gid://shopify/LineItem/1", title: "Defy", sku: "card-1", quantity: 3, currentQuantity: 2, variant: { id: variant.id }, originalUnitPriceSet: { shopMoney: { amount: "3.50", currencyCode: "USD" } } }], pageInfo: { hasNextPage: false, endCursor: null } } };
+  const graphql: ReadGraphQL = async <T>(query: string, variables?: Record<string, unknown>) => {
+    if (query.includes("DefyOrderInventory")) {
+      assert.deepEqual(variables?.ids, [variant.id]);
+      return { nodes: [variant] } as T;
+    }
+    assert.doesNotMatch(query, /inventoryLevel/);
+    return { order } as T;
+  };
+  const batch = await fetchDeliverySnapshot(graphql, { ...delivery, topic: "orders/updated", resourceId: order.id }, location);
+  assert.equal(batch.projections.find(row => row.kind === "orders")?.data.financialStatus, "PARTIALLY_REFUNDED");
+  assert.equal(batch.projections.find(row => row.kind === "orders")?.data.itemCount, 2);
+  assert.equal(batch.projections.find(row => row.kind === "inventory")?.data.available, 6);
+  assert.doesNotMatch(JSON.stringify(batch), /private@example|customer/);
+  order.lineItems.pageInfo.hasNextPage = true;
+  await assert.rejects(fetchDeliverySnapshot(graphql, { ...delivery, topic: "orders/updated", resourceId: order.id }, location), /no partial order/);
+});
+test("sync configuration restricts domains and requires explicit webhook secret and receiving location", () => {
+  const settings = { enabled: false, shop, clientId: "id", clientSecret: "secret", webhookSecret: "secret", locationId: location };
+  assert.deepEqual(configBlockers(settings), []);
+  assert.equal(configBlockers({ ...settings, shop: "attacker.example" }).length, 1);
+  assert.equal(configBlockers({ ...settings, webhookSecret: "", locationId: "1" }).length, 2);
+});
+test("manual sync requires configured production origin and a custom header", () => {
+  const request = new Request("https://defy-store-os.vercel.app/api/shopify/sync", { method: "POST", headers: { origin: "https://defy-store-os.vercel.app", "x-defy-sync": "1" } });
+  assert.equal(hasSyncOrigin(request, "https://defy-store-os.vercel.app", true), true);
+  assert.equal(hasSyncOrigin(request, undefined, true), false);
+  assert.equal(hasSyncOrigin(request, undefined, false), true);
+  request.headers.set("origin", "https://attacker.example");
+  assert.equal(hasSyncOrigin(request, "https://defy-store-os.vercel.app", true), false);
+  request.headers.set("origin", "https://defy-store-os.vercel.app");
+  request.headers.delete("x-defy-sync");
+  assert.equal(hasSyncOrigin(request, "https://defy-store-os.vercel.app", true), false);
+});
+test("webhook delivery IDs take precedence and shared event IDs preserve distinct inventory resources", () => {
+  const headers = new Headers({ "x-shopify-shop-domain": shop, "x-shopify-topic": "inventory_levels/update", "x-shopify-event-id": "shared-event", "x-shopify-triggered-at": newer });
+  const first = parseDelivery(headers, { inventory_item_id: 1, location_id: 1 }, shop);
+  const second = parseDelivery(headers, { inventory_item_id: 2, location_id: 1 }, shop);
+  assert.notEqual(first?.id, second?.id);
+  headers.set("x-shopify-webhook-id", "delivery-123456");
+  assert.equal(parseDelivery(headers, { inventory_item_id: 1, location_id: 1 }, shop)?.id, "webhook:delivery-123456");
+});
+test("temporarily missing inventory retries unless the event is a disconnect", async () => {
+  const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: { variant: { id: "variant1" }, inventoryLevel: null } }) as T;
+  await assert.rejects(fetchDeliverySnapshot(graphql, delivery, location), /not readable/);
+  const batch = await fetchDeliverySnapshot(graphql, { ...delivery, topic: "inventory_levels/disconnect" }, location);
+  assert.equal(batch.projections[0].deleted, true);
+});
+test("reconciliation identity audits recover missed product and variant deletions without trusting partial scans", async () => {
+  const graphql: ReadGraphQL = async <T>() => ({ nodes: [null] }) as T;
+  const page = await fetchReconcilePage(graphql, { phase: "productsAudit", after: null }, location, async () => ({ ids: ["gid://shopify/Product/1"], hasNextPage: false, endCursor: "gid://shopify/Product/1" }));
+  assert.equal(page.batch.projections[0].kind, "products");
+  assert.equal(page.batch.projections[0].deleted, true);
+  assert.deepEqual(decodeCursor(page.nextCursor), { phase: "variantsAudit", after: null });
+  const failedRead: ReadGraphQL = async () => { throw new Error("ACCESS_DENIED"); };
+  await assert.rejects(fetchReconcilePage(failedRead, { phase: "productsAudit", after: null }, location, async () => ({ ids: ["gid://shopify/Product/1"], hasNextPage: false, endCursor: null })), /ACCESS_DENIED/);
+});
+test("large orders are durably deferred while subsequent reconciliation pages can continue", async () => {
+  const graphql: ReadGraphQL = async <T>() => ({ orders: { nodes: [{ id: "gid://shopify/Order/1", updatedAt: newer, lineItems: { pageInfo: { hasNextPage: true } } }], pageInfo: { hasNextPage: true, endCursor: "next-order" } } }) as T;
+  const page = await fetchReconcilePage(graphql, { phase: "orders", after: null }, location);
+  assert.equal(page.batch.projections.length, 0);
+  assert.equal(page.batch.deferred?.[0].resourceId, "gid://shopify/Order/1");
+  assert.deepEqual(decodeCursor(page.nextCursor), { phase: "orders", after: "next-order" });
+});

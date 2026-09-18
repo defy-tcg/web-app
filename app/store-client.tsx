@@ -2197,6 +2197,9 @@ export default function StoreOS() {
             </p>
           </div>
           <div className="header-actions">
+            <Link className="secondary-button" href="/shopify">
+              Shopify stock &amp; orders
+            </Link>
             <Link className="secondary-button" href="/singles">
               Riftbound singles
             </Link>
@@ -2821,6 +2824,14 @@ export default function StoreOS() {
               {label}
             </button>
           ))}
+          <Link
+            href="/shopify"
+            className="nav-item"
+            style={{ textDecoration: "none" }}
+          >
+            <span aria-hidden="true">↔</span>
+            Shopify sync
+          </Link>
         </nav>
         <div className="sidebar-spacer" />
         <ThemeToggle className="sidebar-theme-toggle" />
@@ -3007,6 +3018,9 @@ export default function StoreOS() {
                   <b>›</b>
                 </button>
               ))}
+              <Link href="/shopify" className="secondary-button">
+                ↔ Shopify stock &amp; orders
+              </Link>
             </div>
           </section>
         </div>

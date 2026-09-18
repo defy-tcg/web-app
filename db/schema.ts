@@ -1,5 +1,7 @@
 import { index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
+export * from "./shopify-schema";
+
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   sku: text("sku").notNull(),

@@ -23,6 +23,7 @@ class FakeAdapter implements SinglesAdapter {
   adjustCalls = 0;
   metadataCalls = 0;
   publishCalls = 0;
+  publicationAttempts: string[][] = [];
   canPublish = true;
   loseAdjustmentResponse = false;
   loseCreationResponse = false;
@@ -68,7 +69,7 @@ class FakeAdapter implements SinglesAdapter {
     if (this.loseAdjustmentResponse) { this.loseAdjustmentResponse = false; throw new SinglesError("SHOPIFY_UNAVAILABLE", "Lost response.", true, true); }
     return this.adjustments.get(key)!;
   }
-  async publish() { this.publishCalls++; if (this.failPublish) throw new SinglesError("SHOPIFY_UNAVAILABLE", "Publication interrupted.", true, true); }
+  async publish(_row: ReceiptRow, context: SinglesContext) { this.publishCalls++; this.publicationAttempts.push([...context.publicationIds]); if (this.failPublish) throw new SinglesError("SHOPIFY_UNAVAILABLE", "Publication interrupted.", true, true); }
 }
 
 test("singles validation separates finish and condition and rejects duplicates / malformed money", () => {
@@ -180,9 +181,11 @@ test("interrupted publication reports received stock and retries publishing with
   const first = await receiveSingles(input, catalog, adapter);
   assert.equal(first.status, "pending"); assert.equal(first.rows[0].received, true); assert.equal(first.rows[0].published, false);
   adapter.clock += 25 * 60 * 60 * 1000; adapter.failPublish = false;
+  adapter.context.publicationIds = ["online", "pos", "website"];
   const second = await receiveSingles(input, catalog, adapter);
   assert.equal(second.status, "complete"); assert.equal(second.rows[0].published, true);
   assert.equal(adapter.adjustCalls, 1);
+  assert.deepEqual(adapter.publicationAttempts, [["online", "pos"], ["online", "pos", "website"]]);
 });
 
 test("partial batch records completed rows and does not repeat them on retry", async () => {
@@ -298,7 +301,8 @@ test("Shopify adapter rejects zero-price restock of an active product and does n
   const queries: string[] = [];
   const graphql: SinglesGraphQL = async <T>(query: string): Promise<T> => {
     queries.push(query);
-    return { productByIdentifier: { id: "p", status: "ACTIVE", catalogId: { value: planned.catalogId }, variants: { nodes: [{ id: "v", sku: planned.sku, inventoryPolicy: "DENY", inventoryItem: { id: "i", tracked: true } }], pageInfo: { hasNextPage: false } } } } as T;
+    const variant = { id: "v", sku: planned.sku, inventoryPolicy: "DENY", selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Nonfoil" }, { name: "Language", value: "English" }], inventoryItem: { id: "i", tracked: true }, product: { id: "p" } };
+    return { productByIdentifier: null, products: { nodes: [], pageInfo: { hasNextPage: false } }, product: { id: "p", status: "ACTIVE", catalogId: { value: planned.catalogId }, variants: { nodes: [variant], pageInfo: { hasNextPage: false } } }, productVariants: { nodes: [variant], pageInfo: { hasNextPage: false } } } as T;
   };
   const adapter = new ShopifySinglesAdapter(graphql, { shop: "test", locationId: "loc" }, () => Date.now());
   await assert.rejects(adapter.resolve({ ...planned, priceCents: 0 }, new FakeAdapter().context), { code: "PRICE_REQUIRED" });

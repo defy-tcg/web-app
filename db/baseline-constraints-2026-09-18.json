@@ -1,0 +1,974 @@
+[
+  {
+    "kind": "constraint",
+    "table_name": "_defy_catalog_export",
+    "name": "_defy_catalog_export_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "_defy_catalog_export",
+    "name": "_defy_catalog_export_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "_defy_catalog_export",
+    "name": "_defy_catalog_export_pkey",
+    "definition": "CREATE UNIQUE INDEX _defy_catalog_export_pkey ON public._defy_catalog_export USING btree (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "_defy_export_test",
+    "name": "_defy_export_test_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "_defy_export_test",
+    "name": "_defy_export_test_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "_defy_export_test",
+    "name": "_defy_export_test_pkey",
+    "definition": "CREATE UNIQUE INDEX _defy_export_test_pkey ON public._defy_export_test USING btree (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "defy_catalog_export_cache",
+    "name": "defy_catalog_export_cache_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "defy_catalog_export_cache",
+    "name": "defy_catalog_export_cache_encrypted_blob_not_null",
+    "definition": "NOT NULL encrypted_blob"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "defy_catalog_export_cache",
+    "name": "defy_catalog_export_cache_export_key_not_null",
+    "definition": "NOT NULL export_key"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "defy_catalog_export_cache",
+    "name": "defy_catalog_export_cache_pkey",
+    "definition": "PRIMARY KEY (export_key)"
+  },
+  {
+    "kind": "index",
+    "table_name": "defy_catalog_export_cache",
+    "name": "defy_catalog_export_cache_pkey",
+    "definition": "CREATE UNIQUE INDEX defy_catalog_export_cache_pkey ON public.defy_catalog_export_cache USING btree (export_key)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_amount_cents_not_null",
+    "definition": "NOT NULL amount_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_category_not_null",
+    "definition": "NOT NULL category"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_description_not_null",
+    "definition": "NOT NULL description"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_expense_date_not_null",
+    "definition": "NOT NULL expense_date"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_note_not_null",
+    "definition": "NOT NULL note"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_recurrence_not_null",
+    "definition": "NOT NULL recurrence"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "expenses",
+    "name": "expenses_vendor_not_null",
+    "definition": "NOT NULL vendor"
+  },
+  {
+    "kind": "index",
+    "table_name": "expenses",
+    "name": "expenses_category_idx",
+    "definition": "CREATE INDEX expenses_category_idx ON public.expenses USING btree (category)"
+  },
+  {
+    "kind": "index",
+    "table_name": "expenses",
+    "name": "expenses_date_idx",
+    "definition": "CREATE INDEX expenses_date_idx ON public.expenses USING btree (expense_date)"
+  },
+  {
+    "kind": "index",
+    "table_name": "expenses",
+    "name": "expenses_pkey",
+    "definition": "CREATE UNIQUE INDEX expenses_pkey ON public.expenses USING btree (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_delta_not_null",
+    "definition": "NOT NULL delta"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_note_not_null",
+    "definition": "NOT NULL note"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_product_id_not_null",
+    "definition": "NOT NULL product_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_product_id_products_id_fk",
+    "definition": "FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_reason_not_null",
+    "definition": "NOT NULL reason"
+  },
+  {
+    "kind": "index",
+    "table_name": "inventory_movements",
+    "name": "inventory_movements_pkey",
+    "definition": "CREATE UNIQUE INDEX inventory_movements_pkey ON public.inventory_movements USING btree (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "inventory_movements",
+    "name": "movements_product_idx",
+    "definition": "CREATE INDEX movements_product_idx ON public.inventory_movements USING btree (product_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "inventory_movements",
+    "name": "movements_request_key_unique",
+    "definition": "CREATE UNIQUE INDEX movements_request_key_unique ON public.inventory_movements USING btree (request_key)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_captured_at_not_null",
+    "definition": "NOT NULL captured_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_market_price_cents_not_null",
+    "definition": "NOT NULL market_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_product_id_not_null",
+    "definition": "NOT NULL product_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_product_id_products_id_fk",
+    "definition": "FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "price_history",
+    "name": "price_history_source_not_null",
+    "definition": "NOT NULL source"
+  },
+  {
+    "kind": "index",
+    "table_name": "price_history",
+    "name": "price_history_pkey",
+    "definition": "CREATE UNIQUE INDEX price_history_pkey ON public.price_history USING btree (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "price_history",
+    "name": "price_history_product_idx",
+    "definition": "CREATE INDEX price_history_product_idx ON public.price_history USING btree (product_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "price_history",
+    "name": "price_history_product_source_version_unique",
+    "definition": "CREATE UNIQUE INDEX price_history_product_source_version_unique ON public.price_history USING btree (product_id, source, source_version)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_card_number_not_null",
+    "definition": "NOT NULL card_number"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_condition_not_null",
+    "definition": "NOT NULL condition"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_cost_cents_not_null",
+    "definition": "NOT NULL cost_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_finish_not_null",
+    "definition": "NOT NULL finish"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_game_not_null",
+    "definition": "NOT NULL game"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_list_price_cents_not_null",
+    "definition": "NOT NULL list_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_location_not_null",
+    "definition": "NOT NULL location"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_low_price_cents_not_null",
+    "definition": "NOT NULL low_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_low_stock_threshold_not_null",
+    "definition": "NOT NULL low_stock_threshold"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_market_price_cents_not_null",
+    "definition": "NOT NULL market_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_name_not_null",
+    "definition": "NOT NULL name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_price_source_not_null",
+    "definition": "NOT NULL price_source"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_product_type_not_null",
+    "definition": "NOT NULL product_type"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_quantity_not_null",
+    "definition": "NOT NULL quantity"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_rarity_not_null",
+    "definition": "NOT NULL rarity"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_set_name_not_null",
+    "definition": "NOT NULL set_name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_sku_not_null",
+    "definition": "NOT NULL sku"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "products",
+    "name": "products_updated_at_not_null",
+    "definition": "NOT NULL updated_at"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_barcode_digits_idx",
+    "definition": "CREATE INDEX products_barcode_digits_idx ON public.products USING btree (regexp_replace(COALESCE(barcode, ''::text), '[^0-9]'::text, ''::text, 'g'::text))"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_barcode_idx",
+    "definition": "CREATE INDEX products_barcode_idx ON public.products USING btree (barcode)"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_pkey",
+    "definition": "CREATE UNIQUE INDEX products_pkey ON public.products USING btree (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_sku_unique",
+    "definition": "CREATE UNIQUE INDEX products_sku_unique ON public.products USING btree (sku)"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_tcgplayer_id_idx",
+    "definition": "CREATE INDEX products_tcgplayer_id_idx ON public.products USING btree (tcgplayer_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "products",
+    "name": "products_type_idx",
+    "definition": "CREATE INDEX products_type_idx ON public.products USING btree (product_type)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_product_id_products_id_fk",
+    "definition": "FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_product_name_not_null",
+    "definition": "NOT NULL product_name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_quantity_not_null",
+    "definition": "NOT NULL quantity"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_sale_id_not_null",
+    "definition": "NOT NULL sale_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_sale_id_sales_id_fk",
+    "definition": "FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_sku_not_null",
+    "definition": "NOT NULL sku"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_unit_cost_cents_not_null",
+    "definition": "NOT NULL unit_cost_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sale_items",
+    "name": "sale_items_unit_price_cents_not_null",
+    "definition": "NOT NULL unit_price_cents"
+  },
+  {
+    "kind": "index",
+    "table_name": "sale_items",
+    "name": "sale_items_pkey",
+    "definition": "CREATE UNIQUE INDEX sale_items_pkey ON public.sale_items USING btree (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "sale_items",
+    "name": "sale_items_product_idx",
+    "definition": "CREATE INDEX sale_items_product_idx ON public.sale_items USING btree (product_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "sale_items",
+    "name": "sale_items_sale_idx",
+    "definition": "CREATE INDEX sale_items_sale_idx ON public.sale_items USING btree (sale_id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_channel_not_null",
+    "definition": "NOT NULL channel"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_cogs_cents_not_null",
+    "definition": "NOT NULL cogs_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_discount_cents_not_null",
+    "definition": "NOT NULL discount_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_items_count_not_null",
+    "definition": "NOT NULL items_count"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_note_not_null",
+    "definition": "NOT NULL note"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_payment_method_not_null",
+    "definition": "NOT NULL payment_method"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_sale_number_not_null",
+    "definition": "NOT NULL sale_number"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_sold_at_not_null",
+    "definition": "NOT NULL sold_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_subtotal_cents_not_null",
+    "definition": "NOT NULL subtotal_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_tax_cents_not_null",
+    "definition": "NOT NULL tax_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "sales",
+    "name": "sales_total_cents_not_null",
+    "definition": "NOT NULL total_cents"
+  },
+  {
+    "kind": "index",
+    "table_name": "sales",
+    "name": "sales_channel_idx",
+    "definition": "CREATE INDEX sales_channel_idx ON public.sales USING btree (channel)"
+  },
+  {
+    "kind": "index",
+    "table_name": "sales",
+    "name": "sales_number_unique",
+    "definition": "CREATE UNIQUE INDEX sales_number_unique ON public.sales USING btree (sale_number)"
+  },
+  {
+    "kind": "index",
+    "table_name": "sales",
+    "name": "sales_pkey",
+    "definition": "CREATE UNIQUE INDEX sales_pkey ON public.sales USING btree (id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "sales",
+    "name": "sales_sold_at_idx",
+    "definition": "CREATE INDEX sales_sold_at_idx ON public.sales USING btree (sold_at)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_entry_fee_cents_not_null",
+    "definition": "NOT NULL entry_fee_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_event_date_not_null",
+    "definition": "NOT NULL event_date"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_game_not_null",
+    "definition": "NOT NULL game"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_id_not_null",
+    "definition": "NOT NULL id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_name_not_null",
+    "definition": "NOT NULL name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_note_not_null",
+    "definition": "NOT NULL note"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_other_cost_cents_not_null",
+    "definition": "NOT NULL other_cost_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_pkey",
+    "definition": "PRIMARY KEY (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_players_not_null",
+    "definition": "NOT NULL players"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_prize_cost_cents_not_null",
+    "definition": "NOT NULL prize_cost_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "store_events",
+    "name": "store_events_status_not_null",
+    "definition": "NOT NULL status"
+  },
+  {
+    "kind": "index",
+    "table_name": "store_events",
+    "name": "events_date_idx",
+    "definition": "CREATE INDEX events_date_idx ON public.store_events USING btree (event_date)"
+  },
+  {
+    "kind": "index",
+    "table_name": "store_events",
+    "name": "events_game_idx",
+    "definition": "CREATE INDEX events_game_idx ON public.store_events USING btree (game)"
+  },
+  {
+    "kind": "index",
+    "table_name": "store_events",
+    "name": "store_events_pkey",
+    "definition": "CREATE UNIQUE INDEX store_events_pkey ON public.store_events USING btree (id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_category_id_not_null",
+    "definition": "NOT NULL category_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_created_at_not_null",
+    "definition": "NOT NULL created_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_game_not_null",
+    "definition": "NOT NULL game"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_group_id_not_null",
+    "definition": "NOT NULL group_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_pkey",
+    "definition": "PRIMARY KEY (group_id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_priority_not_null",
+    "definition": "NOT NULL priority"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_set_name_not_null",
+    "definition": "NOT NULL set_name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_status_not_null",
+    "definition": "NOT NULL status"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_updated_at_not_null",
+    "definition": "NOT NULL updated_at"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_pkey",
+    "definition": "CREATE UNIQUE INDEX tcg_catalog_expansion_queue_pkey ON public.tcg_catalog_expansion_queue USING btree (group_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_expansion_queue",
+    "name": "tcg_catalog_expansion_queue_status_priority_idx",
+    "definition": "CREATE INDEX tcg_catalog_expansion_queue_status_priority_idx ON public.tcg_catalog_expansion_queue USING btree (status, priority)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_abbreviation_not_null",
+    "definition": "NOT NULL abbreviation"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_category_id_not_null",
+    "definition": "NOT NULL category_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_group_id_not_null",
+    "definition": "NOT NULL group_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_name_not_null",
+    "definition": "NOT NULL name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_pkey",
+    "definition": "PRIMARY KEY (group_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_category_idx",
+    "definition": "CREATE INDEX tcg_catalog_groups_category_idx ON public.tcg_catalog_groups USING btree (category_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_groups",
+    "name": "tcg_catalog_groups_pkey",
+    "definition": "CREATE UNIQUE INDEX tcg_catalog_groups_pkey ON public.tcg_catalog_groups USING btree (group_id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_barcode_not_null",
+    "definition": "NOT NULL barcode"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_category_id_not_null",
+    "definition": "NOT NULL category_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_game_not_null",
+    "definition": "NOT NULL game"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_group_id_not_null",
+    "definition": "NOT NULL group_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_image_url_not_null",
+    "definition": "NOT NULL image_url"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_low_price_cents_not_null",
+    "definition": "NOT NULL low_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_market_price_cents_not_null",
+    "definition": "NOT NULL market_price_cents"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_name_not_null",
+    "definition": "NOT NULL name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_pkey",
+    "definition": "PRIMARY KEY (product_id)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_product_id_not_null",
+    "definition": "NOT NULL product_id"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_raw_barcode_not_null",
+    "definition": "NOT NULL raw_barcode"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_set_name_not_null",
+    "definition": "NOT NULL set_name"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_synced_at_not_null",
+    "definition": "NOT NULL synced_at"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_tcgplayer_url_not_null",
+    "definition": "NOT NULL tcgplayer_url"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_gtin_digits_idx",
+    "definition": "CREATE INDEX tcg_catalog_gtin_digits_idx ON public.tcg_catalog_products USING btree (regexp_replace(COALESCE(barcode, ''::text), '\\D'::text, ''::text, 'g'::text))"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_barcode_digits_idx",
+    "definition": "CREATE INDEX tcg_catalog_products_barcode_digits_idx ON public.tcg_catalog_products USING btree (regexp_replace(barcode, '[^0-9]'::text, ''::text, 'g'::text))"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_barcode_idx",
+    "definition": "CREATE INDEX tcg_catalog_products_barcode_idx ON public.tcg_catalog_products USING btree (barcode)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_group_idx",
+    "definition": "CREATE INDEX tcg_catalog_products_group_idx ON public.tcg_catalog_products USING btree (group_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_pkey",
+    "definition": "CREATE UNIQUE INDEX tcg_catalog_products_pkey ON public.tcg_catalog_products USING btree (product_id)"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_products_raw_barcode_digits_idx",
+    "definition": "CREATE INDEX tcg_catalog_products_raw_barcode_digits_idx ON public.tcg_catalog_products USING btree (regexp_replace(raw_barcode, '[^0-9]'::text, ''::text, 'g'::text))"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_catalog_products",
+    "name": "tcg_catalog_raw_barcode_digits_idx",
+    "definition": "CREATE INDEX tcg_catalog_raw_barcode_digits_idx ON public.tcg_catalog_products USING btree (regexp_replace(COALESCE(raw_barcode, ''::text), '\\D'::text, ''::text, 'g'::text))"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_sync_state",
+    "name": "tcg_sync_state_key_not_null",
+    "definition": "NOT NULL key"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_sync_state",
+    "name": "tcg_sync_state_pkey",
+    "definition": "PRIMARY KEY (key)"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_sync_state",
+    "name": "tcg_sync_state_status_not_null",
+    "definition": "NOT NULL status"
+  },
+  {
+    "kind": "constraint",
+    "table_name": "tcg_sync_state",
+    "name": "tcg_sync_state_updated_at_not_null",
+    "definition": "NOT NULL updated_at"
+  },
+  {
+    "kind": "index",
+    "table_name": "tcg_sync_state",
+    "name": "tcg_sync_state_pkey",
+    "definition": "CREATE UNIQUE INDEX tcg_sync_state_pkey ON public.tcg_sync_state USING btree (key)"
+  }
+]

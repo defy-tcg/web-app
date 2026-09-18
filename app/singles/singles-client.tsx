@@ -711,6 +711,11 @@ export default function SinglesClient() {
               Search the reference catalog, then add only the cards you have on
               hand. Standard cards, alternate art, and promos stay distinct.
             </p>
+            <p className="singles-help">
+              <Link href="/shopify" className="singles-back">
+                View Shopify stock &amp; orders →
+              </Link>
+            </p>
           </div>
           <div className="singles-steps" aria-label="Receiving steps">
             <div>

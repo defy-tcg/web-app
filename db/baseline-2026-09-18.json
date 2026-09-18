@@ -1,0 +1,988 @@
+{
+  "capturedAt": "2026-09-18",
+  "project": "sweet-truth-89258614",
+  "sourceBranch": "br-falling-voice-af2e9bhg",
+  "testBranch": "br-shiny-mud-afd6okid",
+  "tables": [
+    {
+      "table_name": "_defy_catalog_export",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_export_test",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_package_b64_20260821",
+      "columns": [
+        {
+          "type": "text",
+          "column": "b64",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_2000_plain",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_compact_enc_v2",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "bytea",
+          "column": "encrypted_payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_compact_v2",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_min_enc_v3",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "bytea",
+          "column": "encrypted_payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_min_v3",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "_defy_sealed_export_temp2",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "bytea",
+          "column": "encrypted_payload",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "defy_catalog_export_cache",
+      "columns": [
+        {
+          "type": "text",
+          "column": "export_key",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "bytea",
+          "column": "encrypted_blob",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "expenses",
+      "columns": [
+        {
+          "type": "text",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "category",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "vendor",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "description",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "amount_cents",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "recurrence",
+          "default": "'One-time'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "expense_date",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "note",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "inventory_movements",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": "nextval('inventory_movements_id_seq'::regclass)",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "product_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "delta",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "reason",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "note",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "request_key",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "price_history",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": "nextval('price_history_id_seq'::regclass)",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "product_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "market_price_cents",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "source",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "captured_at",
+          "default": "now()",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "low_price_cents",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "source_version",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "products",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "id",
+          "default": "nextval('products_id_seq'::regclass)",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "sku",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "barcode",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "integer",
+          "column": "tcgplayer_id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "tcgplayer_url",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "product_type",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "game",
+          "default": "'Other'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "set_name",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "card_number",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "rarity",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "condition",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "finish",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "quantity",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "cost_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "market_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "list_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "location",
+          "default": "'UNASSIGNED'::text",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "low_stock_threshold",
+          "default": "2",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "price_source",
+          "default": "'manual'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "price_updated_at",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "updated_at",
+          "default": "now()",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "low_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "sheet_quantity",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "sale_items",
+      "columns": [
+        {
+          "type": "text",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "sale_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "product_id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "product_name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "sku",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "quantity",
+          "default": "1",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "unit_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "unit_cost_cents",
+          "default": "0",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "sales",
+      "columns": [
+        {
+          "type": "text",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "sale_number",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "channel",
+          "default": "'In-store'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "payment_method",
+          "default": "'Card'::text",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "subtotal_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "discount_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "tax_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "total_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "cogs_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "items_count",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "note",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "sold_at",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "sealed_catalog_selection",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "product_id",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "integer",
+          "column": "catalog_rank",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "numeric",
+          "column": "score",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "selected_at",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "store_events",
+      "columns": [
+        {
+          "type": "text",
+          "column": "id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "game",
+          "default": "'Other'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "event_date",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "entry_fee_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "players",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "prize_cost_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "other_cost_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "status",
+          "default": "'Scheduled'::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "note",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "tcg_catalog_expansion_queue",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "category_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "group_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "game",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "set_name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "priority",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "status",
+          "default": "'pending'::text",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "last_attempt_at",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "last_success_at",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "last_error",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "created_at",
+          "default": "now()",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "updated_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "tcg_catalog_groups",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "group_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "category_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "abbreviation",
+          "default": "''::text",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "modified_on",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "source_version",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "synced_at",
+          "default": null,
+          "not_null": false
+        }
+      ]
+    },
+    {
+      "table_name": "tcg_catalog_products",
+      "columns": [
+        {
+          "type": "integer",
+          "column": "product_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "barcode",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "raw_barcode",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "category_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "group_id",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "game",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "set_name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "name",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "image_url",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "tcgplayer_url",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "low_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "integer",
+          "column": "market_price_cents",
+          "default": "0",
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "product_modified_on",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "source_version",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "synced_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    },
+    {
+      "table_name": "tcg_sync_state",
+      "columns": [
+        {
+          "type": "text",
+          "column": "key",
+          "default": null,
+          "not_null": true
+        },
+        {
+          "type": "text",
+          "column": "feed_version",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "cursor",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "status",
+          "default": "'idle'::text",
+          "not_null": true
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "locked_until",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "last_success_at",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "text",
+          "column": "last_error",
+          "default": null,
+          "not_null": false
+        },
+        {
+          "type": "timestamp with time zone",
+          "column": "updated_at",
+          "default": "now()",
+          "not_null": true
+        }
+      ]
+    }
+  ]
+}

@@ -30,7 +30,7 @@ export function previewSingles(rows: SinglesIntakeRow[], catalog: Catalog): Sing
   const planned = rows.map((row, index) => {
     if (!row || typeof row !== "object") throw new SinglesError("INVALID_ROW", `Row ${index + 1} is invalid.`);
     const card = cards.get(row.cardKey);
-    if (!card || card.language !== "English" || !Number.isSafeInteger(card.productId) || card.productId < 1 || !card.finish) throw new SinglesError("UNKNOWN_CARD", `Row ${index + 1} does not match an English catalog printing.`);
+    if (!card || card.language !== "English" || !Number.isSafeInteger(card.productId) || card.productId < 1 || !["Normal", "Foil"].includes(card.finish)) throw new SinglesError("UNKNOWN_CARD", `Row ${index + 1} does not match an English catalog printing.`);
     if (!Object.hasOwn(CONDITIONS, row.condition)) throw new SinglesError("INVALID_CONDITION", `Row ${index + 1} needs a supported condition.`);
     if (!Number.isSafeInteger(row.quantity) || row.quantity < 1 || row.quantity > 100_000) throw new SinglesError("INVALID_QUANTITY", `Row ${index + 1} needs a whole quantity between 1 and 100,000.`);
     for (const field of ["costCents", "priceCents"] as const) {
@@ -41,7 +41,7 @@ export function previewSingles(rows: SinglesIntakeRow[], catalog: Catalog): Sing
     if (identities.has(identity)) throw new SinglesError("DUPLICATE_IDENTITY", `Row ${index + 1} repeats the same card, finish, language, and condition. Combine its quantities first.`);
     identities.add(identity);
     return { cardKey: row.cardKey, condition: row.condition, quantity: row.quantity, costCents: row.costCents, priceCents: row.priceCents, card: { ...card },
-      sku: `DEFY-RFB-S${card.productId}-${digest(card.finish).slice(0, 12).toUpperCase()}-EN-${condition}`,
+      sku: `DEFY-RFB-${card.productId}-${card.finish.toUpperCase()}-EN-${condition}`,
       catalogId: `single:riftbound:${card.productId}:${encodeURIComponent(card.finish)}:English:${condition}` };
   });
   const total = (field: "quantity" | "costCents" | "priceCents") => planned.reduce((sum, row) => sum + (field === "quantity" ? row.quantity : row[field] * row.quantity), 0);
@@ -272,7 +272,7 @@ export async function receiveSingles(input: SinglesReceiveInput, catalog: Catalo
         if (!row.adjustmentId) throw new SinglesError("ADJUSTMENT_UNCERTAIN", "Shopify did not confirm the inventory adjustment. Retry the same request.", true, true);
         await persist();
       }
-      if (receipt.publish && !row.published) { await guard(); await adapter.publish(row, receipt.context); row.published = true; await persist(); }
+      if (receipt.publish && !row.published) { await guard(); await adapter.publish(row, { ...receipt.context, publicationIds: context.publicationIds }); row.published = true; await persist(); }
     }
     if (receipt.status === "pending") { receipt.status = "complete"; await persist(); }
   } catch (error) {

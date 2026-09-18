@@ -12,17 +12,38 @@ listings. Shopify holds current singles quantities shared by website and POS.
    per card, and selling price. Alternatively, upload/paste the CSV template.
 3. Review every row. A quantity is an addition to current Shopify stock, not a
    replacement count. Do not re-enter stock already received through another app.
-4. Choose whether to publish to Online Store and Point of Sale. Publishing needs
-   a positive selling price and both channel permissions. Draft intake keeps new
-   listings unpublished for review.
+4. Choose whether to publish to Online Store, Point of Sale, and the Defy TCG
+   website (Headless). Publishing needs a positive selling price and permission
+   for all three publications. Draft intake keeps new listings unpublished for
+   review. Publishing a Shopify product affects its other variants too; stocked
+   variants without a positive price must be reviewed first.
 5. Save. Keep the page's saved receipt if the connection is interrupted; use its
    retry action. Never recreate an uncertain receipt with a new request ID.
 
-Card, exact source product ID, finish, English language, and condition determine
-each permanent singles SKU. A separate Shopify product is created for each of
-these exact identities so conditions cannot overwrite one another. Restocking
-uses the existing identity, updates the explicitly entered price/cost, and adds
-quantity. Existing sealed SKUs and the sealed receiving journal remain separate.
+The exact TCGplayer product ID, finish, English language, and condition determine
+new singles SKUs: `DEFY-RFB-{ID}-{NORMAL|FOIL}-EN-{NM|LP|MP|HP|DMG}`. These are the
+same identities used by the storefront. Existing products, variants, and inventory
+items keep their Shopify IDs; receiving updates only the selected variant's price,
+cost, and added quantity. Existing sealed SKUs and receiving remain separate.
+
+An exact mapping check runs before any stock write. It combines paginated SKU
+prefix/tag searches, app-owned unique identities, storefront catalog metadata and
+handles, and the nine verified original storefront product IDs. Every candidate's
+full variant list is read and checked; card titles are never used for fuzzy
+matching. Repeated/missing pagination or conflicting identifiers stop receiving
+for review. The original no-SKU Defy normal/Near Mint card uses its verified product,
+variant, and inventory-item IDs; that exception cannot apply to another card or
+condition. Unknown manual listings without any shared identity require explicit
+mapping before being received here.
+
+New printings use a unique app-owned printing ID and Condition / Finish / Language
+options; new conditions or finishes append a variant to the existing compatible
+product. Creation never runs `productSet` against a pre-existing listing. Existing
+product titles, options, SKUs, and sibling variants are not replaced. The first
+zero-stock draft variant created by this app may be initialized in place. Old OS
+single-variant products and their hashed SKUs remain valid, including frozen
+receipts from before this change. Card metadata is exposed for storefront and
+deck-builder matching; new product images use the full-size TCGplayer source.
 
 ## Catalog and pricing
 
@@ -50,7 +71,10 @@ and location. Development and preview must use the development store.
 
 Receipt records and a compare-and-set journal live in the app-owned Shopify
 `singles` namespace. Product uniqueness uses the existing app-owned receiving
-catalog-ID definition with a separate singles prefix. Inventory additions reuse
+catalog-ID definition with a separate singles printing prefix. This fences OS
+product creation; a second independent writer must be disabled for new receipts
+during cutover. The website can still recover already-started batches using their
+original journal, but their rows must not be re-entered in OS. Inventory additions reuse
 their original Shopify idempotency key. Retry of an uncertain addition stops
 before Shopify's 24-hour deduplication retention expires. Completed receipts can
 still be read without adding stock again.
@@ -66,14 +90,27 @@ does not sell these new Shopify singles.
 - Connect the existing Vercel project to `defy-tcg/web-app` for Git deployments.
 - Add the server-only Shopify connection settings to Production and separate
   development values to Development/Preview.
-- Approve `write_publications` for Defy Receiving to enable the optional website
-  and POS publishing action. Stock receipt itself uses the existing product and
+- Approve `write_publications` for Defy Receiving to enable the optional Online
+  Store, POS, and Headless website publishing action. The production website uses
+  verified publication `gid://shopify/Publication/202600611926`; development stores
+  must have an unambiguous `Defy TCG website` publication. Stock receipt itself uses the existing product and
   inventory permissions.
 - Verify development-store receipt, exact replay, and condition separation before
   releasing. Do not populate production quantities until the owner supplies actual
   on-hand cards and confirms the reviewed batch.
 
-## Verification
+## Mapping verification
+
+`ShopifySinglesAdapter.lookupExisting(plannedRow)` is read-only and can verify the
+product/variant/inventory-item mapping without creating products or receiving
+stock. It returns `null` for an unmapped new variant and throws on conflicting
+existing evidence. Automated tests cover paginated mapping, sibling preservation,
+legacy no-SKU and hashed-SKU recovery, lost creation responses, exact condition
+separation, and publication to all three channels. No test changes production
+stock. Pending old receipts use the current verified publication set on retry;
+completed receipts still return their saved result without replaying inventory.
+
+## Earlier development verification
 
 The development Shopify store was exercised with three exact identities: foil
 Near Mint, foil Lightly Played, and normal Near Mint. Each created a separate
