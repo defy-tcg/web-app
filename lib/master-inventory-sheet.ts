@@ -5,6 +5,8 @@ import { findExactCatalogMatch } from "@/lib/catalog-match";
 import { gameFromAlias, inferGameFromName, type TcgGameName } from "@/lib/tcg-games";
 import { matchSheetProducts } from "@/lib/inventory-identity";
 import { sheetProductSku } from "@/lib/product-sku";
+import { SCRYDEX_PRICE_SOURCE, preserveScrydexPricing } from "@/lib/pricing-policy";
+import { protectedPricingColumns, protectedSheetIdentityColumns } from "@/lib/pricing-storage";
 
 const MASTER_SHEET_ID = "1KDj1xuxf6JFoLp-_CZZeRnbZWe4bAq78DYeNqPSid0k";
 const INVENTORY_GID = "206164464";
@@ -271,28 +273,35 @@ export async function syncMasterInventorySheet() {
       deduplicated += 1;
     }
 
-    const marketChanged =
-      current.marketPriceCents !== sheetProduct.marketPriceCents;
-    const listPriceCents =
+    const incomingMarketChanged = current.marketPriceCents !== sheetProduct.marketPriceCents;
+    const incomingListPriceCents =
       current.listPriceCents === 0 ||
       current.listPriceCents === current.marketPriceCents
         ? sheetProduct.marketPriceCents
         : current.listPriceCents;
+    const pricing = preserveScrydexPricing(current, {
+      marketPriceCents: sheetProduct.marketPriceCents,
+      listPriceCents: incomingListPriceCents,
+      priceSource: incomingMarketChanged ? "master-sheet" : current.priceSource,
+      priceUpdatedAt: incomingMarketChanged ? now : current.priceUpdatedAt,
+    });
     const previousSheetQuantity = current.sheetQuantity ?? sheetProduct.quantity;
     const sheetDelta = sheetProduct.quantity - previousSheetQuantity;
     const nextQuantity = Math.max(0, current.quantity + sheetDelta);
     const resolvedGame = sheetProduct.gameReliable && sheetProduct.game
       ? sheetProduct.game
       : current.game;
+    const incomingIdentity = { name: sheetProduct.name, game: resolvedGame, setName: sheetProduct.setName };
+    const identity = current.priceSource === SCRYDEX_PRICE_SOURCE ? current : incomingIdentity;
     const changed =
-      current.name !== sheetProduct.name ||
-      current.game !== resolvedGame ||
-      current.setName !== sheetProduct.setName ||
+      current.name !== identity.name ||
+      current.game !== identity.game ||
+      current.setName !== identity.setName ||
       current.sheetQuantity !== sheetProduct.quantity ||
       nextQuantity !== current.quantity ||
       current.costCents !== sheetProduct.costCents ||
-      marketChanged ||
-      current.listPriceCents !== listPriceCents;
+      current.marketPriceCents !== pricing.marketPriceCents ||
+      current.listPriceCents !== pricing.listPriceCents;
     if (!changed) {
       unchanged += 1;
       continue;
@@ -300,16 +309,11 @@ export async function syncMasterInventorySheet() {
     await db
       .update(products)
       .set({
-        name: sheetProduct.name,
-        game: resolvedGame,
-        setName: sheetProduct.setName,
+        ...protectedSheetIdentityColumns(incomingIdentity),
         quantity: nextQuantity,
         sheetQuantity: sheetProduct.quantity,
         costCents: sheetProduct.costCents,
-        marketPriceCents: sheetProduct.marketPriceCents,
-        listPriceCents,
-        priceSource: marketChanged ? "master-sheet" : current.priceSource,
-        priceUpdatedAt: marketChanged ? now : current.priceUpdatedAt,
+        ...protectedPricingColumns(pricing),
         updatedAt: now,
       })
       .where(eq(products.id, current.id));
@@ -329,6 +333,7 @@ export async function syncMasterInventorySheet() {
   for (const product of currentProducts) {
     if (matchedProductIds.has(product.id)) continue;
     const wasSheetManaged =
+      product.sheetQuantity !== null ||
       product.priceSource === "master-sheet" ||
       product.priceSource === "google-sheet" ||
       product.sku.startsWith("DEFY-SHEET-");

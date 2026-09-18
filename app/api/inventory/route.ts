@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { inventoryMovements, products } from "../../../db/schema";
 import { getAuthorizedSession } from "@/lib/auth/authorization";
@@ -11,6 +11,9 @@ import {
 import { findExactCatalogMatch } from "@/lib/catalog-match";
 import { canonicalizeGame } from "@/lib/tcg-games";
 import { matchCatalogProduct, sameProductIdentity } from "@/lib/inventory-identity";
+import { managedPricingIdentityGuard, pricingIdentityMatches, protectedPricingColumns, saveScrydexQuote } from "@/lib/pricing-storage";
+import { SCRYDEX_PRICE_SOURCE, samePricingIdentity, scrydexSellPriceCents, type StoredPricing } from "@/lib/pricing-policy";
+import { resolveScrydexPrice } from "@/lib/scrydex";
 import {
   catalogProductSku,
   importedProductSku,
@@ -70,6 +73,7 @@ function valuesFrom(input: ProductInput, resolvedSku?: string) {
   const productType = input.productType === "Sealed" ? "Sealed" : "Single";
   const tcgplayerUrl = cleanHttpsUrl(input.tcgplayerUrl);
   const linkedProductId = tcgplayerProductIdFromUrl(tcgplayerUrl);
+  const incomingPriceSource = cleanText(input.priceSource, "manual") || "manual";
   return {
     sku,
     barcode: cleanText(input.barcode) || null,
@@ -91,7 +95,8 @@ function valuesFrom(input: ProductInput, resolvedSku?: string) {
     listPriceCents: Math.max(0, cleanInt(input.listPriceCents)),
     location: cleanText(input.location, "UNASSIGNED").toUpperCase() || "UNASSIGNED",
     lowStockThreshold: Math.max(0, cleanInt(input.lowStockThreshold, 2)),
-    priceSource: cleanText(input.priceSource, "manual") || "manual",
+    // Only the authenticated server-side quote path can assign this source.
+    priceSource: incomingPriceSource.toLowerCase().startsWith(SCRYDEX_PRICE_SOURCE) ? "manual" : incomingPriceSource,
     priceUpdatedAt: input.marketPriceCents ? new Date().toISOString() : null,
     updatedAt: new Date().toISOString(),
   } as const;
@@ -99,6 +104,32 @@ function valuesFrom(input: ProductInput, resolvedSku?: string) {
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
+
+class PricingConflictError extends Error {}
+
+function unchangedProduct(current: typeof products.$inferSelect) {
+  return and(
+    eq(products.id, current.id),
+    eq(products.updatedAt, current.updatedAt),
+    eq(products.priceSource, current.priceSource),
+    pricingIdentityMatches(current),
+  );
+}
+
+async function pricingForIdentityChange(current: typeof products.$inferSelect, next: Parameters<typeof resolveScrydexPrice>[0]): Promise<StoredPricing | null> {
+  if (current.priceSource !== SCRYDEX_PRICE_SOURCE || samePricingIdentity(current, { ...next, tcgplayerId: next.tcgplayerId ?? null })) return null;
+  try {
+    const quote = await resolveScrydexPrice(next);
+    return {
+      marketPriceCents: quote.cents,
+      listPriceCents: scrydexSellPriceCents(quote.cents),
+      priceSource: SCRYDEX_PRICE_SOURCE,
+      priceUpdatedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    throw new PricingConflictError(`The product details were not changed: ${error instanceof Error ? error.message : "Scrydex could not verify a price for the new identity."}`);
+  }
+}
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected inventory error";
@@ -114,6 +145,7 @@ function isUniqueViolation(error: unknown) {
 }
 
 function statusFor(error: unknown) {
+  if (error instanceof PricingConflictError) return 409;
   return isUniqueViolation(error) || /SKU cannot be changed|already exists as/i.test(errorMessage(error))
     ? 409
     : /required|Code 39|characters or fewer/i.test(errorMessage(error)) ? 400 : 500;
@@ -253,7 +285,14 @@ export async function POST(request: Request) {
       if (!current) return Response.json({ error: "Product not found" }, { status: 404 });
       if (validateSku(payload.product.sku) !== current.sku)
         return Response.json({ error: "SKU cannot be changed after product creation. Existing labels and sales history keep using it." }, { status: 409 });
-      const [product] = await db.update(products).set(valuesFrom(payload.product, current.sku)).where(eq(products.id, id)).returning();
+      const next = valuesFrom(payload.product, current.sku);
+      const quotedPricing = await pricingForIdentityChange(current, next);
+      const product = quotedPricing ? await saveScrydexQuote(current, quotedPricing.marketPriceCents, next) : (await db.update(products).set({
+        ...next,
+        ...protectedPricingColumns(next),
+        updatedAt: new Date().toISOString(),
+      }).where(unchangedProduct(current)).returning())[0];
+      if (!product) throw new PricingConflictError("This product changed during the update. Reload inventory and try again.");
       return Response.json({ product: withImage(product) });
     }
 
@@ -267,18 +306,26 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      const [product] = await db
+      const [current] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+      if (!current) return Response.json({ error: "Product not found" }, { status: 404 });
+      const identity = {
+        ...current,
+        tcgplayerId: tcgplayerId || null,
+        tcgplayerUrl: tcgplayerId ? tcgplayerProductUrl(tcgplayerId) : directImage,
+      };
+      const quotedPricing = await pricingForIdentityChange(current, identity);
+      const product = quotedPricing ? await saveScrydexQuote(current, quotedPricing.marketPriceCents, {
+        tcgplayerId: identity.tcgplayerId, tcgplayerUrl: identity.tcgplayerUrl,
+      }) : (await db
         .update(products)
         .set({
-          tcgplayerId: tcgplayerId || null,
-          tcgplayerUrl: tcgplayerId
-            ? tcgplayerProductUrl(tcgplayerId)
-            : directImage,
+          tcgplayerId: identity.tcgplayerId,
+          tcgplayerUrl: identity.tcgplayerUrl,
           updatedAt: new Date().toISOString(),
         })
-        .where(eq(products.id, id))
-        .returning();
-      if (!product) return Response.json({ error: "Product not found" }, { status: 404 });
+        .where(unchangedProduct(current))
+        .returning())[0];
+      if (!product) throw new PricingConflictError("This product changed during the image update. Reload inventory and try again.");
       return Response.json({ product: withImage(product) });
     }
 
@@ -339,11 +386,15 @@ export async function POST(request: Request) {
           void _imageMatch;
           linkedRow = linked;
         }
+        if (current?.priceSource === SCRYDEX_PRICE_SOURCE && !samePricingIdentity(current, linkedRow)) {
+          throw new PricingConflictError(`CSV import cannot change the Scrydex-priced identity of ${current.sku}. Update that product with a verified quote first. No CSV rows were imported.`);
+        }
         rows.push(linkedRow);
         existingBySku.set(linkedRow.sku, current || ({ ...linkedRow, id: -rows.length } as (typeof existing)[number]));
       }
+      let imported = 0;
       for (const row of rows) {
-        await db.insert(products).values(row).onConflictDoUpdate({
+        const applied = await db.insert(products).values(row).onConflictDoUpdate({
           target: products.sku,
           set: {
             barcode: row.barcode,
@@ -359,17 +410,19 @@ export async function POST(request: Request) {
             finish: row.finish,
             quantity: row.quantity,
             costCents: row.costCents,
-            marketPriceCents: row.marketPriceCents,
-            listPriceCents: row.listPriceCents,
+            ...protectedPricingColumns(row),
             location: row.location,
             lowStockThreshold: row.lowStockThreshold,
-            priceSource: row.priceSource,
-            priceUpdatedAt: row.priceUpdatedAt,
             updatedAt: sql`CURRENT_TIMESTAMP`,
           },
-        });
+          setWhere: managedPricingIdentityGuard(row),
+        }).returning({ id: products.id });
+        if (!applied.length) {
+          return Response.json({ imported, error: `Import stopped after ${imported} rows because ${row.sku} acquired a different Scrydex-priced identity. Reload inventory and review the remaining CSV rows.` }, { status: 409 });
+        }
+        imported++;
       }
-      return Response.json({ imported: rows.length });
+      return Response.json({ imported });
     }
 
     return Response.json({ error: "Unsupported inventory action" }, { status: 400 });

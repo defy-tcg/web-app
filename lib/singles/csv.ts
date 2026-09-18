@@ -67,7 +67,10 @@ export function parseSinglesCsv(text: string, catalog: Catalog): SinglesCsvResul
       if (!/^\d+$/.test(quantityText) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 2_147_483_647)
         throw new Error("Quantity must be a positive whole number");
       const costCents = cents(get(entry.values, "unitcost", "cost"), "Unit Cost");
-      const priceCents = cents(get(entry.values, "sellprice", "listprice", "price"), "Sell Price");
+      // Legacy CSV prices remain readable; receiving always replaces them with
+      // the reviewed Scrydex quote. New imports may omit the price entirely.
+      const price = get(entry.values, "sellprice", "listprice", "price");
+      const priceCents = price ? cents(price, "Sell Price") : 0;
       const productIdText = get(entry.values, "productid", "tcgplayerid");
       const name = get(entry.values, "name", "productname");
       const set = get(entry.values, "set", "setname", "setcode");

@@ -97,6 +97,41 @@ test("a retry after Shopify accepted the delta adds stock exactly once", async (
   assert.equal(adapter.adjustCalls, calls);
 });
 
+test("new pricing failure is durably rejected before Shopify preflight or product/stock mutations", async () => {
+  const adapter = new FakeAdapter();
+  let pricingChecks = 0, preflights = 0;
+  adapter.pausePreflight = async () => { preflights++; };
+  const validatePricing = async () => { pricingChecks++; throw new SinglesError("PRICE_CHANGED", "Review the current Scrydex price again."); };
+  const rejected = await receiveSingles(request(), catalog, adapter, validatePricing);
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.error?.code, "PRICE_CHANGED");
+  assert.equal(rejected.error?.uncertain, false);
+  assert.equal(preflights, 0);
+  assert.equal(adapter.products.size, 0);
+  assert.equal(adapter.adjustCalls, 0);
+  assert.equal((await receiveSingles(request(), catalog, adapter, validatePricing)).status, "rejected");
+  assert.equal(pricingChecks, 1, "a rejected ID must never turn into a newly priced receipt");
+});
+
+test("reserved receipts finish at their reviewed price without another pricing provider call", async () => {
+  const adapter = new FakeAdapter();
+  adapter.loseAdjustmentResponse = true;
+  let pricingChecks = 0;
+  const first = await receiveSingles(request(), catalog, adapter, async (preview) => {
+    pricingChecks++;
+    assert.equal(preview.rows[0].priceCents, row.priceCents);
+  });
+  assert.equal(first.status, "pending");
+  const unavailable = async () => { pricingChecks++; throw new Error("Pricing provider offline or price changed"); };
+  const second = await receiveSingles(request(), { ...catalog, cards: [] }, adapter, unavailable);
+  assert.equal(second.status, "complete");
+  assert.equal((await receiveSingles(request(), catalog, adapter, unavailable)).status, "complete");
+  assert.equal(pricingChecks, 1);
+  assert.equal(adapter.stock.get(second.rows[0].sku), row.quantity);
+  const receipt = [...adapter.records.values()].find((entry) => (entry.value as { status?: string }).status === "complete")!.value as { rows: SinglesIntakeRow[] };
+  assert.equal(receipt.rows[0].priceCents, row.priceCents);
+});
+
 test("product creation that loses its response resolves the same identity on retry", async () => {
   const adapter = new FakeAdapter(); adapter.loseCreationResponse = true;
   const first = await receiveSingles(request(), catalog, adapter);

@@ -18,7 +18,6 @@ type DraftRow = {
   condition: SinglesIntakeRow["condition"];
   quantity: string;
   cost: string;
-  price: string;
 };
 type Connection = {
   connected: boolean;
@@ -34,6 +33,7 @@ type Preview = {
     card: CatalogCard;
     sku: string;
     catalogId: string;
+    pricing: { source: "scrydex"; marketCents: number };
   })[];
   totalQuantity: number;
   totalCostCents: number;
@@ -59,6 +59,7 @@ const PENDING_KEY = "defy-riftbound-pending:v1";
 const RECEIPT_KEY = "defy-riftbound-receipt:v1";
 const PAGE_SIZE = 36;
 const MAX_ROWS = 100;
+const QUOTE_BATCH_SIZE = 10;
 const money = (cents: number | null) =>
   cents === null
     ? "Unavailable"
@@ -89,7 +90,6 @@ const makeDraft = (row: SinglesIntakeRow): DraftRow => ({
   condition: row.condition,
   quantity: String(row.quantity),
   cost: (row.costCents / 100).toFixed(2),
-  price: (row.priceCents / 100).toFixed(2),
 });
 
 function readMoney(value: string, label: string) {
@@ -141,6 +141,7 @@ export default function SinglesClient() {
   const [publish, setPublish] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [quoteProgress, setQuoteProgress] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [csvText, setCsvText] = useState("");
@@ -355,12 +356,11 @@ export default function SinglesClient() {
         condition: "Near Mint",
         quantity: "1",
         cost: "0.00",
-        price: "",
       },
     ]);
     setPreview(null);
     setMessage(
-      `${card.name} added to your batch. Set its condition, cost, and selling price.`,
+      `${card.name} added to your batch. Set its condition and cost; review will calculate Scrydex plus 10%.`,
     );
     setError("");
   }
@@ -373,6 +373,7 @@ export default function SinglesClient() {
 
   function currentRows() {
     if (!draft.length) throw new Error("Add at least one card to your batch.");
+    const identities = new Set<string>();
     return draft.map((row, index): SinglesIntakeRow => {
       const label = `Row ${index + 1}`;
       if (
@@ -381,17 +382,16 @@ export default function SinglesClient() {
         Number(row.quantity) < 1
       )
         throw new Error(`${label}: quantity must be a positive whole number.`);
-      const priceCents = readMoney(row.price, `${label} selling price`);
-      if (publish && priceCents <= 0)
-        throw new Error(
-          `${label}: enter a selling price greater than zero to publish.`,
-        );
+      const identity = JSON.stringify([row.cardKey, row.condition]);
+      if (identities.has(identity))
+        throw new Error(`${label}: this card, finish, and condition is already in the batch. Combine its quantities first.`);
+      identities.add(identity);
       return {
         cardKey: row.cardKey,
         condition: row.condition,
         quantity: Number(row.quantity),
         costCents: readMoney(row.cost, `${label} unit cost`),
-        priceCents,
+        priceCents: 0,
       };
     });
   }
@@ -403,26 +403,27 @@ export default function SinglesClient() {
     setMessage("");
     setPreview(null);
     setPreviewing(true);
+    setQuoteProgress(0);
     try {
       const rows = currentRows();
-      const response = await fetch("/api/singles/intake", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "preview", rows, publish }),
-      });
-      const data = await response.json();
-      if (
-        !response.ok ||
-        !Array.isArray(data.rows) ||
-        data.rows.length !== rows.length
-      )
-        throw new Error(
-          errorText(
-            data.error,
-            "This batch could not be reviewed. Check the card details and try again.",
-          ),
-        );
-      setPreview(data);
+      const combined: Preview = { rows: [], totalQuantity: 0, totalCostCents: 0, totalPriceCents: 0 };
+      for (let offset = 0; offset < rows.length; offset += QUOTE_BATCH_SIZE) {
+        const chunk = rows.slice(offset, offset + QUOTE_BATCH_SIZE);
+        const response = await fetch("/api/singles/intake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "preview", rows: chunk, publish }),
+        });
+        const data = await response.json();
+        if (!response.ok || !Array.isArray(data.rows) || data.rows.length !== chunk.length)
+          throw new Error(errorText(data.error, "This batch could not be reviewed. Check the card details and try again."));
+        combined.rows.push(...data.rows);
+        combined.totalQuantity += data.totalQuantity;
+        combined.totalCostCents += data.totalCostCents;
+        combined.totalPriceCents += data.totalPriceCents;
+        setQuoteProgress(combined.rows.length);
+      }
+      setPreview(combined);
       requestAnimationFrame(() => reviewRef.current?.focus());
     } catch (reason) {
       setError(errorText(reason, "This batch could not be reviewed."));
@@ -727,7 +728,7 @@ export default function SinglesClient() {
             <div>
               <b>02</b>
               <span>
-                Build your batch<small>Condition, count, and price</small>
+                Build your batch<small>Condition, count, and cost</small>
               </span>
             </div>
             <div>
@@ -979,7 +980,7 @@ export default function SinglesClient() {
                 <span>
                   {filtered.length.toLocaleString()} matching versions
                 </span>
-                <span>Market data: {dateTime(catalog.sourceUpdatedAt)}</span>
+                <span>Catalog updated: {dateTime(catalog.sourceUpdatedAt)}</span>
               </div>
             )}
             {catalog?.warnings?.length ? (
@@ -1043,8 +1044,8 @@ export default function SinglesClient() {
                       {card.rarity && <span>{card.rarity}</span>}
                     </div>
                     <div className="singles-card-market">
-                      <span>Market benchmark</span>
-                      <strong>{money(card.marketCents)}</strong>
+                      <span>Selling price</span>
+                      <strong>Scrydex +10%</strong>
                     </div>
                     <button
                       className="singles-button is-add"
@@ -1076,9 +1077,10 @@ export default function SinglesClient() {
             )}
             {catalog && (
               <p className="singles-footnote">
-                USD benchmarks from TCGCSV / TCGplayer. These are not
-                condition-specific selling prices. Review each card&apos;s
-                condition and set your own price.
+                Card references come from TCGCSV / TCGplayer. Review your batch
+                to get USD prices from Scrydex for each exact finish and
+                condition. Selling prices are 10% above Scrydex, rounded to the
+                nearest cent.
               </p>
             )}
           </section>
@@ -1187,36 +1189,18 @@ export default function SinglesClient() {
                             />
                           </label>
                           <label>
-                            <span>Selling price ($)</span>
+                            <span>Scrydex +10% ($)</span>
                             <input
                               type="text"
-                              inputMode="decimal"
-                              placeholder="Set price"
-                              value={row.price}
-                              onChange={(event) =>
-                                updateDraft(row.id, {
-                                  price: event.target.value,
-                                })
-                              }
+                              readOnly
+                              placeholder="Calculated on review"
+                              value={preview ? (preview.rows[index].priceCents / 100).toFixed(2) : ""}
                             />
                           </label>
                         </fieldset>
-                        {card && (
+                        {preview && (
                           <div className="singles-benchmark">
-                            <span>Market: {money(card.marketCents)}</span>
-                            {card.marketCents !== null && (
-                              <button
-                                type="button"
-                                disabled={locked || previewing}
-                                onClick={() =>
-                                  updateDraft(row.id, {
-                                    price: (card.marketCents! / 100).toFixed(2),
-                                  })
-                                }
-                              >
-                                Use as selling price
-                              </button>
-                            )}
+                            <span>Scrydex market: {money(preview.rows[index].pricing.marketCents)}</span>
                           </div>
                         )}
                       </article>
@@ -1235,7 +1219,7 @@ export default function SinglesClient() {
                   onClick={() => void reviewBatch()}
                 >
                   {previewing
-                    ? "Checking batch…"
+                    ? `Checking Scrydex prices… ${quoteProgress}/${draft.length}`
                     : `Review batch${draft.length ? ` (${draft.length})` : ""}`}
                 </button>
               </div>
@@ -1248,7 +1232,8 @@ export default function SinglesClient() {
               <div className="singles-import-body">
                 <p>
                   Upload or paste up to 100 card rows. Include the set and exact
-                  finish to identify the right version.
+                  finish to identify the right version. Sell Price is optional;
+                  any imported price is replaced with Scrydex plus 10% at review.
                 </p>
                 <button
                   className="singles-text-button"
@@ -1366,7 +1351,8 @@ export default function SinglesClient() {
                 <h2>Ready to add {preview.totalQuantity} cards?</h2>
                 <p>
                   Confirm each version, condition, quantity, and price before
-                  receiving.
+                  receiving. Selling prices equal Scrydex plus 10%, rounded to
+                  the nearest cent.
                 </p>
               </div>
               <button
@@ -1387,7 +1373,8 @@ export default function SinglesClient() {
                     <th>Condition</th>
                     <th>Add quantity</th>
                     <th>Unit cost</th>
-                    <th>Selling price</th>
+                    <th>Scrydex market</th>
+                    <th>Selling price (+10%)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1403,6 +1390,7 @@ export default function SinglesClient() {
                       <td>{row.condition}</td>
                       <td>+{row.quantity}</td>
                       <td>{money(row.costCents)}</td>
+                      <td>{money(row.pricing.marketCents)}</td>
                       <td>{money(row.priceCents)}</td>
                     </tr>
                   ))}
@@ -1437,8 +1425,8 @@ export default function SinglesClient() {
                 )}
                 {missingPublishPrice && (
                   <p className="singles-row-error" role="alert">
-                    Set a selling price greater than zero for every row before
-                    publishing. Choose Edit batch to update prices.
+                    Every row needs a confirmed Scrydex price greater than zero
+                    before publishing. Choose Edit batch and review prices again.
                   </p>
                 )}
                 <p className="singles-help">

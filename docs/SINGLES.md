@@ -9,8 +9,10 @@ listings. Shopify holds current singles quantities shared by website and POS.
 1. Search by card name, collector number, set, or TCGplayer product ID. Check the
    pictured printing and finish against the physical English card.
 2. Add the card, choose its condition, and enter the quantity being added, cost
-   per card, and selling price. Alternatively, upload/paste the CSV template.
-3. Review every row. A quantity is an addition to current Shopify stock, not a
+   per card. Alternatively, upload/paste the CSV template; selling price is optional
+   and any supplied value is replaced by the verified Scrydex quote.
+3. Review every row's market price and selling price (Scrydex market + 10%, rounded
+   to cents). A quantity is an addition to current Shopify stock, not a
    replacement count. Do not re-enter stock already received through another app.
 4. Choose whether to publish to Online Store, Point of Sale, and the Defy TCG
    website (Headless). Publishing needs a positive selling price and permission
@@ -47,9 +49,20 @@ deck-builder matching; new product images use the full-size TCGplayer source.
 
 ## Catalog and pricing
 
-The catalog is a bundled TCGCSV category 89 snapshot with a visible source date.
-Market prices are dated USD benchmarks; they are not live or condition-specific.
-The system does not automatically turn a benchmark into a selling price.
+The identity catalog is a bundled TCGCSV category 89 snapshot with a visible
+source date. Its historical market benchmarks do not determine selling prices.
+Review fetches a Scrydex quote for each exact English printing, finish, and raw
+condition, and applies a 10% markup rounded half-up to cents. Quotes require a
+positive USD market price and are cached for 24 hours. Missing collector numbers,
+unsupported printings, ambiguous matches, and unavailable condition prices block
+the affected review; the app does not substitute Near Mint or another finish.
+
+Price reviews use groups of at most ten rows, with at most four concurrent
+provider requests. Before a new receipt starts, the server verifies the submitted
+sale price against the current quote. A changed price requires another review.
+Saved receipts resume their original price even when the provider is unavailable,
+preserving inventory idempotency. This updates the selected received variant;
+it does not automatically reprice every existing Shopify listing.
 
 TCGCSV does not expose language-level SKUs. English is the configured intake
 scope; the operator must confirm the physical card's language. Explicit foreign
@@ -68,6 +81,7 @@ The server uses the existing Defy Receiving app's client credentials, stored onl
 in ignored local environment files or encrypted Vercel environment variables.
 See `.env.example`. Configure each environment with its intended Shopify store
 and location. Development and preview must use the development store.
+Scrydex additionally requires `SCRYDEX_API_KEY` and `SCRYDEX_TEAM_ID` on the server.
 
 Receipt records and a compare-and-set journal live in the app-owned Shopify
 `singles` namespace. Product uniqueness uses the existing app-owned receiving

@@ -143,6 +143,16 @@ type SheetSyncResult = {
   needsGame?: string[];
   error?: string;
 };
+type PriceRefreshFailure = { productId: number; name: string; error: string };
+type PriceRefreshBatch = {
+  checked: number;
+  updated: number;
+  failed: number;
+  failures: PriceRefreshFailure[];
+  nextAfterId: number | null;
+  note?: string;
+  error?: string;
+};
 
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -155,6 +165,13 @@ const compactMoney = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 const dollars = (cents: number) => currency.format(cents / 100);
+const priceSourceLabel = (source: string) => {
+  if (source.startsWith("scrydex")) return "Scrydex";
+  if (source === "tcgplayer-daily") return "TCGplayer";
+  if (source === "tcgplayer-csv") return "TCGplayer CSV";
+  if (["master-sheet", "google-sheet"].includes(source)) return "Master sheet";
+  return source === "manual" ? "Manual" : source || "Unknown";
+};
 const cents = (value: FormDataEntryValue | null) =>
   Math.max(0, Math.round((Number(value) || 0) * 100));
 const day = (value: string) =>
@@ -302,11 +319,13 @@ function EditableNumber({
   label,
   value,
   money = false,
+  readOnly = false,
   onCommit,
 }: {
   label: string;
   value: number;
   money?: boolean;
+  readOnly?: boolean;
   onCommit: (value: number) => Promise<boolean>;
 }) {
   const format = (amount: number) =>
@@ -314,7 +333,7 @@ function EditableNumber({
   const [draft, setDraft] = useState(() => format(value));
   const [saving, setSaving] = useState(false);
   async function commit() {
-    if (saving) return;
+    if (saving || readOnly) return;
     const parsed = Number(draft);
     if (!Number.isFinite(parsed) || parsed < 0) {
       setDraft(format(value));
@@ -337,12 +356,13 @@ function EditableNumber({
       {money && <span aria-hidden="true">$</span>}
       <input
         aria-label={label}
+        title={readOnly ? "Price managed by Scrydex refresh" : undefined}
         type="number"
         min="0"
         step={money ? "0.01" : "1"}
         inputMode={money ? "decimal" : "numeric"}
         value={draft}
-        disabled={saving}
+        disabled={saving || readOnly}
         onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => void commit()}
@@ -492,7 +512,10 @@ export default function StoreOS() {
   const [scanError, setScanError] = useState("");
   const [scanPriceStatus, setScanPriceStatus] = useState("");
   const [scanPriceError, setScanPriceError] = useState(false);
-  const [scanTcgplayerLink, setScanTcgplayerLink] = useState("");
+  const [priceSyncing, setPriceSyncing] = useState(false);
+  const [bulkPriceSyncing, setBulkPriceSyncing] = useState(false);
+  const [bulkPriceStatus, setBulkPriceStatus] = useState("");
+  const [bulkPriceFailures, setBulkPriceFailures] = useState<PriceRefreshFailure[]>([]);
   const [scanLog, setScanLog] = useState<ScanLog[]>([]);
   const [scanBusy, setScanBusy] = useState(false);
   const [sheetSyncing, setSheetSyncing] = useState(false);
@@ -504,6 +527,7 @@ export default function StoreOS() {
   const fileInput = useRef<HTMLInputElement>(null);
   const scannerInput = useRef<HTMLInputElement>(null);
   const sheetSyncBusy = useRef(false);
+  const priceSyncBusy = useRef(false);
 
   async function loadAll() {
     setLoading(true);
@@ -1239,6 +1263,12 @@ export default function StoreOS() {
     product: Product,
     changes: Partial<Product>,
   ) {
+    if (product.priceSource.startsWith("scrydex") && (
+      Object.hasOwn(changes, "marketPriceCents") || Object.hasOwn(changes, "listPriceCents")
+    )) {
+      notify("Scrydex manages this market price and its 10% markup. Refresh prices to update them.");
+      return false;
+    }
     const marksManual = Object.prototype.hasOwnProperty.call(
       changes,
       "marketPriceCents",
@@ -1299,7 +1329,6 @@ export default function StoreOS() {
     setScanError("");
     setScanPriceStatus("");
     setScanPriceError(false);
-    setScanTcgplayerLink("");
   }
   function recordScan(product: Product, action: string) {
     setScanLog((current) =>
@@ -1319,14 +1348,17 @@ export default function StoreOS() {
       ].slice(0, 8),
     );
   }
-  async function syncProductPrice(product: Product, tcgplayerId?: number) {
-    setScanPriceStatus("Checking the latest TCGplayer market price…");
+  async function syncProductPrice(product: Product) {
+    if (priceSyncBusy.current) return product;
+    priceSyncBusy.current = true;
+    setPriceSyncing(true);
+    setScanPriceStatus("Checking Scrydex and setting the sticker price 10% above market…");
     setScanPriceError(false);
     try {
       const response = await fetch("/api/prices/refresh", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ productId: product.id, tcgplayerId }),
+        body: JSON.stringify({ productId: product.id }),
       });
       const data = (await response.json()) as {
         product?: Product;
@@ -1334,15 +1366,14 @@ export default function StoreOS() {
         error?: string;
       };
       if (!response.ok || !data.product)
-        throw new Error(data.error || "TCGplayer price refresh failed");
+        throw new Error(data.error || "Scrydex price refresh failed");
       const updated = data.product;
       setProducts((current) =>
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
       setScanResult(updated);
-      setScanTcgplayerLink("");
       setScanPriceStatus(
-        `TCGplayer market updated to ${dollars(updated.marketPriceCents)}${data.match?.matchedName ? ` · ${data.match.matchedName}` : ""}`,
+        `Scrydex market ${dollars(updated.marketPriceCents)} · Sticker ${dollars(updated.listPriceCents)} (market + 10%, rounded to the nearest cent)${data.match?.matchedName ? ` · ${data.match.matchedName}` : ""}`,
       );
       return updated;
     } catch (caught) {
@@ -1350,15 +1381,76 @@ export default function StoreOS() {
       setScanPriceStatus(
         caught instanceof Error
           ? caught.message
-          : "TCGplayer price refresh failed",
+          : "Scrydex price refresh failed",
       );
       return product;
+    } finally {
+      priceSyncBusy.current = false;
+      setPriceSyncing(false);
+    }
+  }
+  async function syncAllPrices() {
+    if (priceSyncBusy.current) return;
+    priceSyncBusy.current = true;
+    setBulkPriceSyncing(true);
+    setBulkPriceFailures([]);
+    setBulkPriceStatus("Refreshing all inventory prices from Scrydex…");
+    let checked = 0;
+    let updated = 0;
+    let failed = 0;
+    let afterId = 0;
+    try {
+      while (true) {
+        const response = await fetch("/api/prices/refresh", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ afterId }),
+        });
+        const data = (await response.json()) as PriceRefreshBatch;
+        if (!response.ok) throw new Error(data.error || "Scrydex price refresh failed");
+        checked += data.checked;
+        updated += data.updated;
+        failed += data.failed;
+        setBulkPriceFailures((current) => [...current, ...data.failures]);
+        setBulkPriceStatus(
+          `Scrydex: ${checked} checked · ${updated} updated · ${failed} need review`,
+        );
+        if (data.nextAfterId === null) break;
+        if (!Number.isSafeInteger(data.nextAfterId) || data.nextAfterId <= afterId)
+          throw new Error("The price refresh could not continue. Refresh prices again to retry.");
+        afterId = data.nextAfterId;
+      }
+      const message = `Scrydex refresh complete: ${updated} updated · ${failed} need review. Updated list prices are market + 10%, rounded to the nearest cent.`;
+      setBulkPriceStatus(message);
+      notify(message);
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : "Scrydex price refresh failed";
+      const message = `Refresh stopped after ${updated} updates. ${reason}`;
+      setBulkPriceStatus(message);
+      notify(message);
+    } finally {
+      try {
+        const response = await fetch("/api/inventory", { cache: "no-store" });
+        const inventory = (await response.json()) as { products?: Product[]; error?: string };
+        if (!response.ok || !inventory.products)
+          throw new Error(inventory.error || "Reload inventory to see the updated prices.");
+        const refreshedProducts = inventory.products;
+        setProducts(refreshedProducts);
+        setScanResult((current) => current
+          ? refreshedProducts.find((item) => item.id === current.id) ?? null
+          : null);
+      } catch (caught) {
+        const reason = caught instanceof Error ? caught.message : "Reload inventory to see the updated prices.";
+        setBulkPriceStatus((current) => `${current} ${reason}`);
+      }
+      priceSyncBusy.current = false;
+      setBulkPriceSyncing(false);
     }
   }
   async function handleScan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = scanValue.trim();
-    if (!value || scanBusy) return;
+    if (!value || scanBusy || priceSyncBusy.current) return;
     setScanBusy(true);
     setScanError("");
     setScanPriceStatus("");
@@ -1370,7 +1462,7 @@ export default function StoreOS() {
       if (scanMode === "lookup") {
         setScanResult(product);
         const priced = await syncProductPrice(product);
-        recordScan(priced, "Looked up + priced");
+        recordScan(priced, "Looked up");
       } else if (scanMode === "checkout") {
         const inCart =
           cart.find((item) => item.productId === product.id)?.quantity || 0;
@@ -1379,7 +1471,7 @@ export default function StoreOS() {
         setScanResult(product);
         const priced = await syncProductPrice(product);
         addProduct(priced);
-        recordScan(priced, "Priced + added to checkout");
+        recordScan(priced, "Added to checkout");
         notify(`${product.name} added to sale`);
       } else {
         if (scanMode === "remove" && product.quantity <= 0)
@@ -1812,10 +1904,10 @@ export default function StoreOS() {
                     onChange={(event) => setScanValue(event.target.value)}
                     placeholder="Scanner ready — or type a code"
                     autoComplete="off"
-                    disabled={scanBusy}
+                    disabled={scanBusy || priceSyncing || bulkPriceSyncing}
                   />
-                  <button disabled={!scanValue.trim() || scanBusy}>
-                    {scanBusy ? "Working…" : "Run"}
+                  <button disabled={!scanValue.trim() || scanBusy || priceSyncing || bulkPriceSyncing}>
+                    {scanBusy || priceSyncing || bulkPriceSyncing ? "Working…" : "Run"}
                   </button>
                 </div>
                 <p>
@@ -1896,7 +1988,7 @@ export default function StoreOS() {
                     </strong>
                   </span>
                   <span>
-                    <small>TCG market</small>
+                    <small>Market price</small>
                     <strong>
                       {scanResult.marketPriceCents
                         ? dollars(scanResult.marketPriceCents)
@@ -1910,48 +2002,23 @@ export default function StoreOS() {
                   <span>
                     <small>Price source</small>
                     <strong>
-                      {scanResult.priceSource === "tcgplayer-daily"
-                        ? "TCGplayer daily"
-                        : "Manual / CSV"}
+                      {priceSourceLabel(scanResult.priceSource)}
                     </strong>
                   </span>
                 </div>
                 <div
                   className={`price-sync-status ${scanPriceError ? "failed" : ""}`}
                 >
-                  <span>
+                  <span role="status">
                     <i />
                     {scanPriceStatus ||
                       `Market price ${scanResult.priceUpdatedAt ? "last updated " + new Date(scanResult.priceUpdatedAt).toLocaleString() : "has not synced yet"}`}
                   </span>
-                  {scanPriceError && (
-                    <label className="tcg-link-field">
-                      <span>TCGplayer product ID</span>
-                      <div>
-                        <input
-                          inputMode="numeric"
-                          placeholder="Example: 635368"
-                          value={scanTcgplayerLink}
-                          onChange={(event) =>
-                            setScanTcgplayerLink(
-                              event.target.value.replace(/\D/g, ""),
-                            )
-                          }
-                        />
-                        <button
-                          disabled={scanBusy || !Number(scanTcgplayerLink)}
-                          onClick={() =>
-                            void syncProductPrice(
-                              scanResult,
-                              Number(scanTcgplayerLink),
-                            )
-                          }
-                        >
-                          Link & sync
-                        </button>
-                      </div>
-                    </label>
-                  )}
+                  <small>
+                    Scrydex refresh sets the sticker price to market + 10%,
+                    rounded to the nearest cent.
+                    {scanPriceError && " The current price is unchanged. Check the card details before retrying."}
+                  </small>
                   <div>
                     {tcgplayerProductUrl(
                       scanResult.tcgplayerId,
@@ -1967,14 +2034,14 @@ export default function StoreOS() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Open TCGplayer ↗
+                        TCGplayer catalog ↗
                       </a>
                     )}
                     <button
-                      disabled={scanBusy}
+                      disabled={scanBusy || priceSyncing || bulkPriceSyncing}
                       onClick={() => void syncProductPrice(scanResult)}
                     >
-                      ↻ Sync price
+                      {priceSyncing ? "Refreshing…" : "↻ Refresh Scrydex price"}
                     </button>
                   </div>
                 </div>
@@ -1985,8 +2052,9 @@ export default function StoreOS() {
                 <strong>Ready for a scan</strong>
                 <p>
                   Scan the Defy SKU barcode on a sleeve, top loader, or sealed
-                  product. Lookup and Checkout scans now sync the latest
-                  TCGplayer market price.
+                  product. Lookup and Checkout scans refresh Scrydex market
+                  prices and set the sticker price 10% higher, rounded to the
+                  nearest cent.
                 </p>
               </div>
             )}
@@ -2192,8 +2260,12 @@ export default function StoreOS() {
             <h2>Stock catalog</h2>
             <p>
               {products.length} products · {metrics.units} units · Click any
-              quantity or price to edit ·{" "}
+              quantity or manual price to edit ·{" "}
               <span className="sheet-sync-status">{sheetSyncStatus}</span>
+            </p>
+            <p>
+              Scrydex controls refreshed market and list prices. List prices are
+              market + 10%, rounded to the nearest cent.
             </p>
           </div>
           <div className="header-actions">
@@ -2209,6 +2281,13 @@ export default function StoreOS() {
               onClick={() => void syncMasterSheet(true)}
             >
               {sheetSyncing ? "Syncing…" : "↻ Sync sheet"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={bulkPriceSyncing || priceSyncing || loading || !products.length}
+              onClick={() => void syncAllPrices()}
+            >
+              {bulkPriceSyncing ? "Refreshing prices…" : "↻ Refresh all Scrydex prices"}
             </button>
             <input
               ref={fileInput}
@@ -2237,6 +2316,21 @@ export default function StoreOS() {
             </button>
           </div>
         </header>
+        {bulkPriceStatus && (
+          <div className={`price-sync-status ${bulkPriceFailures.length ? "failed" : ""}`}>
+            <span role="status">{bulkPriceStatus}</span>
+            {bulkPriceFailures.length > 0 && (
+              <details>
+                <summary>Review {bulkPriceFailures.length} products with unchanged prices</summary>
+                <ul>
+                  {bulkPriceFailures.map((failure) => (
+                    <li key={failure.productId}>{failure.name}: {failure.error}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
         <fieldset className="inventory-game-filter">
           <legend className="sr-only">Filter inventory by game</legend>
           <div className="inventory-game-filter-scroll">
@@ -2323,9 +2417,10 @@ export default function StoreOS() {
                     <td>
                       <EditableNumber
                         key={`market-${product.id}-${product.marketPriceCents}`}
-                        label={`Market price for ${product.name}`}
+                        label={`${product.priceSource.startsWith("scrydex") ? "Scrydex market" : "Market"} price for ${product.name}`}
                         value={product.marketPriceCents}
                         money
+                        readOnly={product.priceSource.startsWith("scrydex") || bulkPriceSyncing || priceSyncing}
                         onCommit={(marketPriceCents) =>
                           updateProductValue(product, { marketPriceCents })
                         }
@@ -2334,9 +2429,10 @@ export default function StoreOS() {
                     <td>
                       <EditableNumber
                         key={`list-${product.id}-${product.listPriceCents}`}
-                        label={`List price for ${product.name}`}
+                        label={`${product.priceSource.startsWith("scrydex") ? "Scrydex market plus 10% list" : "List"} price for ${product.name}`}
                         value={product.listPriceCents}
                         money
+                        readOnly={product.priceSource.startsWith("scrydex") || bulkPriceSyncing || priceSyncing}
                         onCommit={(listPriceCents) =>
                           updateProductValue(product, { listPriceCents })
                         }

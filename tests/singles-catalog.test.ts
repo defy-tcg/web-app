@@ -25,6 +25,16 @@ test("CSV keeps separate finishes, art printings and conditions with exact cent 
   ]);
 });
 
+test("CSV accepts blank or absent sale price for server-side Scrydex review", () => {
+  const blank = parseSinglesCsv(csv("100,,,,Normal,NM,2,0.29,"), catalog);
+  assert.deepEqual(blank.errors, []);
+  assert.equal(blank.rows[0].priceCents, 0);
+  const absent = parseSinglesCsv("Product ID,Finish,Condition,Quantity,Unit Cost\n100,Normal,NM,2,0.29", catalog);
+  assert.deepEqual(absent.errors, []);
+  assert.equal(absent.rows[0].priceCents, 0);
+  assert.equal(absent.rows[0].costCents, 29);
+});
+
 test("name lookup requires exact set and number and handles quoted names", () => {
   const result = parseSinglesCsv(csv(',"Ahri, Fox",OGN,001/100,Foil,DMG,1,0,0'), catalog);
   assert.deepEqual(result.errors, []);

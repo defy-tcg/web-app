@@ -35,6 +35,8 @@ The source uses these server environment variables:
 | `NEON_AUTH_BASE_URL` | Neon Auth endpoint for that environment |
 | `NEON_AUTH_COOKIE_SECRET` | Secret used to protect authentication cookies |
 | `AUTHORIZED_EMAILS` | Comma-separated emails permitted to use the store |
+| `SCRYDEX_API_KEY` | Server-only Scrydex API credential |
+| `SCRYDEX_TEAM_ID` | Team identifier required with every Scrydex API request |
 
 The source has existing owner-email defaults, but set `AUTHORIZED_EMAILS`
 explicitly for each environment. None of these variables belongs in a
@@ -53,9 +55,14 @@ Development, and changes apply to subsequent deployments.
 [Neon connection setup](https://neon.com/docs/guides/vercel-manual),
 [Vercel environment variables](https://vercel.com/docs/environment-variables)
 
-No sheet, pricing, or cron API key is referenced by the restored source. The
-master spreadsheet ID/tab are in `lib/master-inventory-sheet.ts`; pricing and
-image matching use public TCGCSV/TCGplayer resources. Authenticated app startup
+The master spreadsheet ID/tab are in `lib/master-inventory-sheet.ts`; image
+matching and the bundled Riftbound catalog use public TCGCSV/TCGplayer resources.
+Price refreshes and singles intake use Scrydex's raw USD market prices with a
+10% selling-price markup. Both Scrydex credentials are required; never expose
+them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price
+data for 24 hours. A failed or ambiguous match never substitutes another feed.
+The existing Shopify retry cron uses the server-only `CRON_SECRET`.
+Authenticated app startup
 automatically triggers a sheet-sync write after 2.5 seconds and every five
 minutes. Use development data for local interaction tests; change the sheet
 source in a development-only change if test inventory must differ from the

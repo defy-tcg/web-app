@@ -156,7 +156,7 @@ async function rejectBeforeReservation(adapter: SinglesAdapter, input: SinglesRe
 }
 
 /** The adapter is injectable for fault/retry tests. Production credentials are loaded only on invocation. */
-export async function receiveSingles(input: SinglesReceiveInput, catalog: Catalog, injectedAdapter?: SinglesAdapter): Promise<SinglesResult> {
+export async function receiveSingles(input: SinglesReceiveInput, catalog: Catalog, injectedAdapter?: SinglesAdapter, validateNewPricing?: (preview: SinglesPreview) => Promise<void>): Promise<SinglesResult> {
   if (!input || typeof input.requestId !== "string" || !/^[a-zA-Z0-9_-]{16,100}$/.test(input.requestId)) throw new SinglesError("INVALID_REQUEST_ID", "Use a unique request ID of 16–100 letters, numbers, underscores, or dashes.");
   if (typeof input.publish !== "boolean") throw new SinglesError("INVALID_PUBLISH", "Choose whether this receipt should publish its cards.");
   // Fingerprint only submitted fields, before consulting a refreshed catalog. Recovery uses the frozen card snapshot.
@@ -177,6 +177,9 @@ export async function receiveSingles(input: SinglesReceiveInput, catalog: Catalo
   let context: SinglesContext;
   try {
     preview = saved.value ? null : previewSingles(input.rows, catalog);
+    // Price checks belong before a new reservation. A saved receipt must finish
+    // with its reviewed price even if the market or pricing provider changes.
+    if (preview && validateNewPricing) await validateNewPricing(preview);
     if (input.publish && (saved.value?.rows ?? preview!.rows).some(row => row.priceCents <= 0)) throw new SinglesError("PRICE_REQUIRED", "Every published single needs a sale price greater than zero.");
     context = await adapter.preflight(input.publish);
   } catch (error) {

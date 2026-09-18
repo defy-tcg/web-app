@@ -1,6 +1,7 @@
 import { getAuthorizedSession } from "@/lib/auth/authorization";
 import { readRiftboundCatalog } from "@/lib/singles/catalog";
-import { previewSingles, receiveSingles, SinglesError } from "@/lib/singles/intake";
+import { receiveSingles, SinglesError } from "@/lib/singles/intake";
+import { previewPricedSingles, validateSinglesPricing } from "@/lib/singles/pricing";
 import type { SinglesIntakeRow } from "@/lib/singles/types";
 
 export const dynamic = "force-dynamic";
@@ -24,16 +25,16 @@ export async function POST(request: Request) {
     }
     const catalog = await readRiftboundCatalog();
     if (payload.action === "preview") {
-      const preview = previewSingles(payload.rows, catalog);
+      const preview = await previewPricedSingles(payload.rows, catalog);
       if (payload.publish && preview.rows.some((row) => row.priceCents <= 0)) {
         return Response.json({ error: "Every published single needs a sale price greater than zero." }, { status: 400 });
       }
-      return Response.json(preview);
+      return Response.json(preview, { headers: { "Cache-Control": "no-store" } });
     }
     if (payload.action !== "receive" || typeof payload.requestId !== "string" || payload.rows.length !== 1) {
       return Response.json({ error: "Save one reviewed row per receipt with its original request ID." }, { status: 400 });
     }
-    const receipt = await receiveSingles({ requestId: payload.requestId, rows: payload.rows, publish: payload.publish }, catalog);
+    const receipt = await receiveSingles({ requestId: payload.requestId, rows: payload.rows, publish: payload.publish }, catalog, undefined, validateSinglesPricing);
     return Response.json(receipt, { status: receipt.status === "pending" ? 202 : 200, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof SinglesError) {

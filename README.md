@@ -2,7 +2,7 @@
 
 The Defy TCG application source, recovered locally from the existing production
 deployment. It includes inventory, scanner checkout, sales, expenses, tournaments,
-reporting, TCGplayer pricing and imports, Google Sheets sync, authentication,
+reporting, Scrydex pricing, TCGplayer sales imports, Google Sheets sync, authentication,
 price-label printing, and light/night mode.
 
 **Transfer status:** application code and build checks are complete. Five
@@ -62,7 +62,7 @@ items, price overrides, discounts, tax, payment methods, and sales channels.
 
 The new `/singles` workspace provides an English reference catalog, including
 alternate art and promos, with exact-finish search and batch CSV intake. Enter
-condition, quantity received, cost, and selling price, then review the batch.
+condition, quantity received, and cost, then review the batch's Scrydex prices.
 Shopify stores these singles and their receipt history, with optional Online
 Store/POS publishing. The legacy Neon checkout does not sell these Shopify
 singles. See [singles setup and operations](docs/SINGLES.md) for connection,
@@ -90,7 +90,8 @@ search is bounded for responsiveness and may fall back to repeat opponents.
 Defy reads the public `Inventory` tab in the configured master spreadsheet on
 app open, every five minutes while open, and from `Sync sheet`. It applies the
 change in sheet quantity since the last sync so subsequent syncs preserve sales
-deductions. It also updates unit cost and market price.
+deductions. It also updates unit cost and market prices for items that have not
+yet been priced through Scrydex. Verified Scrydex pricing is preserved.
 
 Matching products retain their SKU, barcode, TCGplayer link, image, and custom
 list price. New rows require a reliable game and a unique exact catalog image
@@ -101,6 +102,30 @@ in `lib/master-inventory-sheet.ts`.
 Product pictures use an exact TCGplayer product ID or verified HTTPS image URL.
 When those are omitted, catalog matching must find one exact name-and-set match.
 Blank image fields in later CSV imports preserve existing links.
+
+## Scrydex pricing
+
+Configure server-only `SCRYDEX_API_KEY` and `SCRYDEX_TEAM_ID` in `.env.local` and
+Vercel. Inventory's **Refresh Scrydex prices** action processes small resumable
+batches. Successful matches store the unmarked market price and a selling price
+of **market × 1.10**, rounded half-up to the nearest USD cent. A $10.00 market
+price produces an $11.00 selling price. Repeated refreshes do not compound the
+markup. Market and selling-price fields are read-only for Scrydex-managed items.
+
+Matching requires a verified English product, exact printing/set, finish, raw
+condition, and a positive USD price. Singles also require a collector number.
+Supported singles games are Pokémon, MTG, Lorcana, One Piece, Gundam, and Riftbound;
+sealed support is limited to Pokémon, One Piece, and Riftbound. Unsupported,
+ambiguous, or unavailable quotes leave existing inventory prices unchanged and
+are reported for review. There is no fallback price provider or currency conversion.
+TCGplayer IDs, images, and sales imports remain catalog/transaction references.
+
+Singles intake computes the same rule during review and verifies it again before
+starting a new receipt. Missing quotes block that row; changed prices require a
+new review. Already-started receipts retain their frozen prices when retried.
+Pricing reads are cached for 24 hours; this is an on-demand refresh, not a scheduled
+background repricing job. Existing Shopify listings are repriced when their
+selected variant is received through this flow, not by a store-wide Shopify write.
 
 ## TCGplayer sales import and reports
 
