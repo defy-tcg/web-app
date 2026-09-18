@@ -65,5 +65,5 @@ export async function previewPricedSingles(rows: SinglesIntakeRow[], catalog: Ca
 export async function validateSinglesPricing(preview: SinglesPreview, resolve: SinglesPriceResolver = resolvePrice): Promise<void> {
   const current = await pricePreview(preview, resolve);
   const changed = current.rows.find((row, index) => row.priceCents !== preview.rows[index].priceCents);
-  if (changed) throw new SinglesError("PRICE_CHANGED", `${changed.card.name}'s selling price must equal Scrydex plus 10%. Review its current price again before receiving.`);
+  if (changed) throw new SinglesError("PRICE_CHANGED", `${changed.card.name}'s price has changed. Review its current Scrydex market price again before receiving.`);
 }

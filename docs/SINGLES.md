@@ -11,8 +11,9 @@ listings. Shopify holds current singles quantities shared by website and POS.
 2. Add the card, choose its condition, and enter the quantity being added, cost
    per card. Alternatively, upload/paste the CSV template; selling price is optional
    and any supplied value is replaced by the verified Scrydex quote.
-3. Review every row's market price and selling price (Scrydex market + 10%, rounded
-   to cents). A quantity is an addition to current Shopify stock, not a
+3. Review every row's Scrydex market price. The review and its total market value
+   show the raw provider prices; customer selling prices are kept out of intake
+   review. A quantity is an addition to current Shopify stock, not a
    replacement count. Do not re-enter stock already received through another app.
 4. Choose whether to publish to Online Store, Point of Sale, and the Defy TCG
    website (Headless). Publishing needs a positive selling price and permission
@@ -52,7 +53,10 @@ deck-builder matching; new product images use the full-size TCGplayer source.
 The identity catalog is a bundled TCGCSV category 89 snapshot with a visible
 source date. Its historical market benchmarks do not determine selling prices.
 Review fetches a Scrydex quote for each exact English printing, finish, and raw
-condition, and applies a 10% markup rounded half-up to cents. Quotes require a
+condition. Intake displays the raw market price and calculates its total as
+market price multiplied by quantity. The customer-facing selling price is
+Scrydex market plus 10%, rounded half-up to cents; that price is still sent to
+Shopify when receiving, but is not displayed in intake review. Quotes require a
 positive USD market price and are cached for 24 hours. Missing collector numbers,
 unsupported printings, ambiguous matches, and unavailable condition prices block
 the affected review; the app does not substitute Near Mint or another finish.

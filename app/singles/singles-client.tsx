@@ -37,7 +37,6 @@ type Preview = {
   })[];
   totalQuantity: number;
   totalCostCents: number;
-  totalPriceCents: number;
 };
 type PendingEntry = {
   requestId: string;
@@ -330,6 +329,10 @@ export default function SinglesClient() {
   const missingPublishPrice = Boolean(
     publish && preview?.rows.some((row) => row.priceCents <= 0),
   );
+  const totalMarketCents = preview?.rows.reduce(
+    (total, row) => total + row.pricing.marketCents * row.quantity,
+    0,
+  ) ?? 0;
 
   function updateDraft(id: string, change: Partial<DraftRow>) {
     if (locked || previewInFlight.current) return;
@@ -360,7 +363,7 @@ export default function SinglesClient() {
     ]);
     setPreview(null);
     setMessage(
-      `${card.name} added to your batch. Set its condition and cost; review will calculate Scrydex plus 10%.`,
+      `${card.name} added to your batch. Set its condition and cost; review will show its Scrydex market price.`,
     );
     setError("");
   }
@@ -406,7 +409,7 @@ export default function SinglesClient() {
     setQuoteProgress(0);
     try {
       const rows = currentRows();
-      const combined: Preview = { rows: [], totalQuantity: 0, totalCostCents: 0, totalPriceCents: 0 };
+      const combined: Preview = { rows: [], totalQuantity: 0, totalCostCents: 0 };
       for (let offset = 0; offset < rows.length; offset += QUOTE_BATCH_SIZE) {
         const chunk = rows.slice(offset, offset + QUOTE_BATCH_SIZE);
         const response = await fetch("/api/singles/intake", {
@@ -420,7 +423,6 @@ export default function SinglesClient() {
         combined.rows.push(...data.rows);
         combined.totalQuantity += data.totalQuantity;
         combined.totalCostCents += data.totalCostCents;
-        combined.totalPriceCents += data.totalPriceCents;
         setQuoteProgress(combined.rows.length);
       }
       setPreview(combined);
@@ -1044,8 +1046,8 @@ export default function SinglesClient() {
                       {card.rarity && <span>{card.rarity}</span>}
                     </div>
                     <div className="singles-card-market">
-                      <span>Selling price</span>
-                      <strong>Scrydex +10%</strong>
+                      <span>Scrydex market</span>
+                      <strong>Available on review</strong>
                     </div>
                     <button
                       className="singles-button is-add"
@@ -1078,9 +1080,8 @@ export default function SinglesClient() {
             {catalog && (
               <p className="singles-footnote">
                 Card references come from TCGCSV / TCGplayer. Review your batch
-                to get USD prices from Scrydex for each exact finish and
-                condition. Selling prices are 10% above Scrydex, rounded to the
-                nearest cent.
+                to get USD market prices from Scrydex for each exact finish and
+                condition.
               </p>
             )}
           </section>
@@ -1189,20 +1190,15 @@ export default function SinglesClient() {
                             />
                           </label>
                           <label>
-                            <span>Scrydex +10% ($)</span>
+                            <span>Scrydex market ($)</span>
                             <input
                               type="text"
                               readOnly
-                              placeholder="Calculated on review"
-                              value={preview ? (preview.rows[index].priceCents / 100).toFixed(2) : ""}
+                              placeholder="Available on review"
+                              value={preview ? (preview.rows[index].pricing.marketCents / 100).toFixed(2) : ""}
                             />
                           </label>
                         </fieldset>
-                        {preview && (
-                          <div className="singles-benchmark">
-                            <span>Scrydex market: {money(preview.rows[index].pricing.marketCents)}</span>
-                          </div>
-                        )}
                       </article>
                     );
                   })}
@@ -1232,8 +1228,9 @@ export default function SinglesClient() {
               <div className="singles-import-body">
                 <p>
                   Upload or paste up to 100 card rows. Include the set and exact
-                  finish to identify the right version. Sell Price is optional;
-                  any imported price is replaced with Scrydex plus 10% at review.
+                  finish to identify the right version. Sell Price is optional
+                  and any supplied value is ignored. Review shows the verified
+                  Scrydex market price.
                 </p>
                 <button
                   className="singles-text-button"
@@ -1350,9 +1347,8 @@ export default function SinglesClient() {
                 <p className="singles-eyebrow">FINAL REVIEW</p>
                 <h2>Ready to add {preview.totalQuantity} cards?</h2>
                 <p>
-                  Confirm each version, condition, quantity, and price before
-                  receiving. Selling prices equal Scrydex plus 10%, rounded to
-                  the nearest cent.
+                  Confirm each version, condition, quantity, and Scrydex market
+                  price before receiving. Market prices are per card in USD.
                 </p>
               </div>
               <button
@@ -1374,7 +1370,6 @@ export default function SinglesClient() {
                     <th>Add quantity</th>
                     <th>Unit cost</th>
                     <th>Scrydex market</th>
-                    <th>Selling price (+10%)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1391,7 +1386,6 @@ export default function SinglesClient() {
                       <td>+{row.quantity}</td>
                       <td>{money(row.costCents)}</td>
                       <td>{money(row.pricing.marketCents)}</td>
-                      <td>{money(row.priceCents)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1413,7 +1407,7 @@ export default function SinglesClient() {
                     <strong>Publish to website and POS</strong>
                     <small>
                       Make these cards available for sale. Every row needs a
-                      selling price greater than zero.
+                      confirmed Scrydex price greater than zero.
                     </small>
                   </span>
                 </label>
@@ -1440,8 +1434,8 @@ export default function SinglesClient() {
                   Total cost <strong>{money(preview.totalCostCents)}</strong>
                 </span>
                 <span>
-                  At listed prices{" "}
-                  <strong>{money(preview.totalPriceCents)}</strong>
+                  Total market value{" "}
+                  <strong>{money(totalMarketCents)}</strong>
                 </span>
                 <button
                   className="singles-button is-primary"
