@@ -1,0 +1,102 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "5d05fa97e2b5857bb29611308b700187"
+name = "Defy Receiving"
+application_url = "https://shopify.dev/apps/default-app-home"
+embedded = true
+
+[webhooks]
+api_version = "2026-07"
+
+[access.admin]
+direct_api_mode = "online"
+embedded_app_direct_api_access = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_locations,write_inventory,write_products"
+
+[auth]
+redirect_urls = [ ]
+
+[shop.metafields.receiving.state]
+name = "Defy receiving sequence and recovery"
+description = "App-managed SKU allocator and unfinished receipt. Never reset or manually edit."
+type = "json"
+
+  [shop.metafields.receiving.state.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[shop.metafields.receiving.clock]
+name = "Defy receiving server clock"
+type = "single_line_text_field"
+
+  [shop.metafields.receiving.clock.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[product.metafields.receiving.catalog_id]
+name = "Defy receiving catalog ID"
+type = "id"
+
+  [product.metafields.receiving.catalog_id.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+  [product.metafields.receiving.catalog_id.capabilities]
+  unique_values = true
+
+[variant.metafields.receiving.game]
+name = "Trading card game"
+type = "single_line_text_field"
+
+  [variant.metafields.receiving.game.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[variant.metafields.receiving.barcode_id]
+name = "Defy canonical manufacturer barcode"
+type = "id"
+
+  [variant.metafields.receiving.barcode_id.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+  [variant.metafields.receiving.barcode_id.capabilities]
+  unique_values = true
+
+[variant.metafields.receiving.unit]
+name = "Selling unit"
+type = "single_line_text_field"
+
+  [variant.metafields.receiving.unit.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[metaobjects.app.receiving_intent]
+name = "Defy receiving intent"
+
+  [metaobjects.app.receiving_intent.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[metaobjects.app.receiving_intent.fields.payload]
+name = "Frozen receipt"
+type = "json"
+required = true
+
+[metaobjects.app.receiving_applied]
+name = "Defy completed receipt"
+
+  [metaobjects.app.receiving_applied.access]
+  admin = "merchant_read"
+  storefront = "none"
+
+[metaobjects.app.receiving_applied.fields.payload]
+name = "Completed receipt"
+type = "json"
+required = true
+
+[pos]
+embedded = true

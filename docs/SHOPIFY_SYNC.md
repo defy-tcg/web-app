@@ -10,6 +10,8 @@ workflow in this integration that adds stock.
 The separate [Scrydex pricing refresh](SHOPIFY_PRICING.md) updates existing
 Shopify selling prices for POS and online use. It has its own daily schedule,
 manual refresh panel, and durable progress; stock/order projection stays read-only.
+The [Defy Pricing POS tile](SHOPIFY_POS_PRICING.md) also updates a scanned
+variant's price on demand. Neither pricing flow adjusts stock or cost.
 
 ## Configure and enable
 

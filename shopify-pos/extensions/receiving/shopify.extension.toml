@@ -1,0 +1,16 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Defy Receiving"
+handle = "defy-receiving"
+uid = "358619c9-fe45-9425-cbeb-955e95c4107ceb952e07"
+description = "Scan sealed stock, preserve store SKUs and record receipts."
+
+[[extensions.targeting]]
+module = "./src/Tile.tsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.tsx"
+target = "pos.home.modal.render"

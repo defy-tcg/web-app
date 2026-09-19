@@ -69,6 +69,10 @@ Intake review shows unmarked market prices. Both Scrydex credentials are require
 never expose them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price
 data for 24 hours. A failed or ambiguous match never substitutes another feed.
 The existing Shopify retry cron uses the server-only `CRON_SECRET`.
+The Shopify POS **Defy Pricing** tile uses the same Scrydex policy and the
+existing Defy Receiving app credentials. Its authenticated backend updates
+Shopify variant prices; the separate Shopify extension release and device setup
+are documented in [SHOPIFY_POS_PRICING.md](SHOPIFY_POS_PRICING.md).
 Authenticated app startup
 automatically triggers a sheet-sync write after 2.5 seconds and every five
 minutes. Use development data for local interaction tests; change the sheet

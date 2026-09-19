@@ -1,0 +1,17 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "Defy Pricing"
+handle = "defy-pricing"
+uid = "04725f0a-16bf-11dd-e207-ebdb7edeb094c65e3a54"
+type = "ui_extension"
+description = "Scan a SKU to fetch Defy's Scrydex price and add its Shopify variant."
+# Shopify CLI assigns uid when this extension is linked to the existing app.
+
+[[extensions.targeting]]
+target = "pos.home.tile.render"
+module = "./src/Tile.tsx"
+
+[[extensions.targeting]]
+target = "pos.home.modal.render"
+module = "./src/Modal.tsx"
