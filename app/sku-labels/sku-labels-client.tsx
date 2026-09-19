@@ -3,7 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { createSkuLabelDocument, generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
+import { createPortal } from "react-dom";
+import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
 import ThemeToggle from "../theme-toggle";
 
 type Label = { sku: string; name: string };
@@ -44,14 +45,17 @@ export default function SkuLabelsClient() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [storageWarning, setStorageWarning] = useState("");
   const generated = useRef(new Set<string>());
   const generating = useRef(false);
+  const downloadingPdf = useRef(false);
   const total = labels.length * Number(copies);
   const validCopies = Number.isInteger(Number(copies)) && Number(copies) >= 1 && Number(copies) <= 100;
   const canPrint = labels.length > 0 && validCopies && total <= 1000;
+  const printLabels = useMemo(() => labels.map((label) => ({ ...label, svg: skuQrSvg(label.sku) })), [labels]);
 
   useEffect(() => {
     let saved: Label[] = [];
@@ -145,20 +149,43 @@ export default function SkuLabelsClient() {
 
   function print() {
     setError("");
+    setMessage("If no printer dialog appears, choose Download PDF, open the file in Preview or your browser, and print it at actual size.");
     try {
-      const document = createSkuLabelDocument(labels, Number(copies));
-      const popup = window.open("", "_blank", "width=780,height=680");
-      if (!popup) throw new Error("Allow pop-ups for DefyOS, then choose Print again.");
-      popup.document.open();
-      popup.addEventListener("load", () => { popup.focus(); popup.print(); }, { once: true });
-      popup.document.write(document);
-      popup.document.close();
+      // Keep the print request in the click event and avoid unsupported popup windows.
+      window.print();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The print window could not open.");
+      setError(caught instanceof Error ? `${caught.message} Use Download PDF to print this batch.` : "Printing is unavailable here. Use Download PDF to print this batch.");
+    }
+  }
+
+  async function downloadPdf() {
+    if (!canPrint || downloadingPdf.current) return;
+    downloadingPdf.current = true;
+    setPdfBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const { createSkuLabelPdf } = await import("@/lib/sku-label-pdf");
+      const bytes = await createSkuLabelPdf(labels, Number(copies));
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "defy-singles-labels-38x13mm.pdf";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setMessage("PDF ready. Open the downloaded file in Preview or your browser, select your thermal printer, and print at 100% / actual size on 38 × 13 mm paper.");
+    } catch (caught) {
+      setError(caught instanceof Error ? `PDF could not be created: ${caught.message}` : "PDF could not be created. Try again.");
+    } finally {
+      downloadingPdf.current = false;
+      setPdfBusy(false);
     }
   }
 
   return (
+    <>
     <main className="sku-shell">
       <header className="sku-topbar">
         <Link href="/" className="sku-brand">
@@ -193,9 +220,13 @@ export default function SkuLabelsClient() {
             <div className="sku-print-settings">
               <label>Copies per SKU<input type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
               <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>labels to print</span></div>
-              <button className="dark-button" disabled={!canPrint || busy} onClick={print}>Print {canPrint ? total : ""} label{total === 1 ? "" : "s"}</button>
+              <div className="sku-print-actions">
+                <button className="dark-button" disabled={!canPrint || busy || pdfBusy} onClick={() => void downloadPdf()}>{pdfBusy ? "Preparing PDF…" : "Download PDF"}</button>
+                <button className="secondary-button" disabled={!canPrint || busy || pdfBusy} onClick={print}>Print {canPrint ? total : ""} label{total === 1 ? "" : "s"}</button>
+              </div>
             </div>
             {(!validCopies || total > 1000) && <p className="sku-inline-error" role="alert">Use 1–100 copies per SKU, up to 1,000 labels per print job.</p>}
+            <p className="sku-print-help"><strong>No print dialog?</strong> Download the PDF and open it in Preview or a browser to print. Your existing SKUs stay the same.</p>
             <p className="sku-print-help">Printer settings: <strong>38 × 13 mm</strong> paper, <strong>100% / actual size</strong>, no margins, headers, or footers. Scan a test label first. Use a QR-capable scanner; a 1D barcode scanner cannot read QR codes.</p>
           </section>
         </div>
@@ -213,5 +244,19 @@ export default function SkuLabelsClient() {
         <footer className="sku-footer"><strong>Connect the label to your single.</strong><p>In Inventory → ＋ Product, paste the generated code into the SKU field. The QR contains that exact SKU. Creating labels does not add products or change stock.</p><p>Your latest batch is saved in this browser. Codes are checked against current Defy inventory, but are only reserved when you save the product. Keep your CSV for older batches.</p></footer>
       </div>
     </main>
+    {ready && createPortal(
+      <div className="sku-print-sheet" aria-hidden="true">
+        {canPrint && printLabels.flatMap((label) => Array.from({ length: Number(copies) }, (_, copy) => (
+          <section className="sku-thermal-label" key={`${label.sku}-${copy}`}>
+            <div className="sku-thermal-qr" dangerouslySetInnerHTML={{ __html: label.svg }} />
+            <div className="sku-thermal-details">
+              {label.name.trim() && <div className="sku-thermal-name">{label.name.trim()}</div>}
+              <div className="sku-thermal-code">{label.sku}</div>
+            </div>
+          </section>
+        )))}
+      </div>, document.body,
+    )}
+    </>
   );
 }

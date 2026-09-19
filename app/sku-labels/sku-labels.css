@@ -46,7 +46,8 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-total { display: grid; gap: 4px; margin-bottom: 3px; }
 .sku-total strong { font-size: 24px; line-height: 1; }
 .sku-total span { color: var(--muted); font-size: 10px; }
-.sku-print-settings button { margin-left: auto; min-height: 42px; }
+.sku-print-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.sku-print-actions button { min-height: 42px; }
 .sku-print-help { margin: 18px 0 0; font-size: 11px; line-height: 1.75; color: var(--muted); }
 .sku-feedback > p { margin: 16px 0; border-radius: 9px; padding: 13px 16px; font-size: 12px; line-height: 1.6; }
 .sku-success { color: var(--ink); background: var(--soft); }
@@ -85,7 +86,8 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-panel h2 { font-size: 15px; }
   .sku-panel-heading p { font-size: 11px; }
   .sku-print-settings { gap: 12px; flex-wrap: wrap; }
-  .sku-print-settings button { flex: 1; min-width: 120px; }
+  .sku-print-actions { width: 100%; }
+  .sku-print-actions button { flex: 1; min-width: 120px; }
   .sku-batch-heading { align-items: flex-start; flex-direction: column; }
   .sku-batch-actions { width: 100%; }
   .sku-batch-actions button { flex: 1; font-size: 12px; }
@@ -93,4 +95,18 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-label-row > label, .sku-label-row > button { grid-column: 2; }
   .sku-label-row > button { justify-self: start; }
   .sku-preview-stage { min-height: 210px; }
+}
+.sku-print-sheet { display: none; }
+@page defy-sku-label { size: 38mm 13mm; margin: 0; }
+@media print {
+  html:has(.sku-print-sheet), body:has(.sku-print-sheet) { margin: 0; padding: 0; background: #fff; color: #000; }
+  body:has(.sku-print-sheet) > :not(.sku-print-sheet) { display: none !important; }
+  .sku-print-sheet { display: block; width: 38mm; margin: 0; padding: 0; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sku-thermal-label { page: defy-sku-label; width: 38mm; height: 13mm; padding: 1mm; display: flex; align-items: center; gap: 1mm; overflow: hidden; break-inside: avoid; }
+  .sku-thermal-label + .sku-thermal-label { break-before: page; }
+  .sku-thermal-qr { width: 11mm; height: 11mm; flex: 0 0 11mm; }
+  .sku-thermal-qr svg { display: block; width: 11mm; height: 11mm; shape-rendering: crispEdges; }
+  .sku-thermal-details { width: 24mm; min-width: 0; font-family: Arial, sans-serif; }
+  .sku-thermal-name { font-size: 6.5pt; line-height: 2.8mm; max-height: 5.6mm; overflow: hidden; overflow-wrap: anywhere; margin-bottom: .7mm; }
+  .sku-thermal-code { font: 700 7pt/3mm "Courier New", monospace; white-space: nowrap; }
 }

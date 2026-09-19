@@ -71,6 +71,12 @@ the printer's paper size to 38 × 13 mm and test one label before a full batch.
 Choose 1–100 copies per SKU, up to 1,000 labels per print job. Copy the SKUs or
 download a CSV; the current batch is saved in the current browser.
 
+**Download PDF** creates a file with one exact-size page per label, including
+the selected copies. Open it in Preview or your browser and print at actual
+size. This also works when an embedded browser does not show a print dialog.
+The **Print** button prints the label sheet directly from the current page;
+it no longer opens an `about:blank` window. Both options preserve your SKUs.
+
 Generation reads current Defy inventory to avoid existing SKUs and barcodes,
 and avoids codes already generated in the current session. It does not create
 inventory or reserve codes across devices. In **Inventory → ＋ Product**, paste
