@@ -12,17 +12,6 @@ const NAME_DPI = 600;
 
 type NameImage = { png: Uint8Array | string; heightMm: number };
 type RasterizeName = (name: string) => Promise<NameImage>;
-type LoadLogo = () => Promise<Uint8Array | string>;
-
-async function loadBrandLogo(): Promise<Uint8Array> {
-  try {
-    const response = await fetch("/defy-tcg-label-logo.png", { cache: "force-cache" });
-    if (!response.ok) throw new Error("Logo request failed");
-    return new Uint8Array(await response.arrayBuffer());
-  } catch {
-    throw new Error("The Defy TCG logo could not load. Check your connection and download the PDF again.");
-  }
-}
 
 /** Wrap at spaces when possible, without splitting Unicode code points. */
 export function wrapSkuLabelName(name: string, maxWidth: number, measure: (value: string) => number): string[] {
@@ -86,7 +75,6 @@ export async function createSkuLabelPdf(
   labels: readonly SkuLabel[],
   copies: number,
   renderName: RasterizeName = rasterizeName,
-  loadLogo: LoadLogo = loadBrandLogo,
 ): Promise<Uint8Array> {
   if (!Number.isInteger(copies) || copies < 1 || copies > MAX_LABEL_COPIES) {
     throw new Error(`Print between 1 and ${MAX_LABEL_COPIES} copies per SKU.`);
@@ -105,12 +93,6 @@ export async function createSkuLabelPdf(
   pdf.catalog.getOrCreateViewerPreferences().setPrintScaling(PrintScaling.None);
   const font = await pdf.embedFont(StandardFonts.CourierBold);
   const brandFont = await pdf.embedFont(StandardFonts.HelveticaBold);
-  let logo;
-  try {
-    logo = await pdf.embedPng(await loadLogo());
-  } catch {
-    throw new Error("The Defy TCG logo could not load. Check your connection and download the PDF again.");
-  }
   const nameImages = new Map<string, Promise<{ image: Awaited<ReturnType<typeof pdf.embedPng>>; heightMm: number }>>();
 
   for (const label of labels) {
@@ -129,9 +111,9 @@ export async function createSkuLabelPdf(
     qr.addData(label.sku, "Alphanumeric");
     qr.make();
     const moduleSize = QR_MM * MM / (qr.getModuleCount() + 8);
-    const textHeightMm = nameImage ? 4 + 0.25 + nameImage.heightMm + 0.25 + 2.5 : 4 + 0.25 + 2.5;
+    const textHeightMm = nameImage ? 3 + 0.25 + nameImage.heightMm + 0.25 + 2.5 : 3 + 0.25 + 2.5;
     const textBottom = (HEIGHT_MM - textHeightMm) / 2;
-    const brandBottom = textBottom + textHeightMm - 4;
+    const brandBottom = textBottom + textHeightMm - 3;
 
     for (let copy = 0; copy < copies; copy++) {
       const page = pdf.addPage([WIDTH_MM * MM, HEIGHT_MM * MM]);
@@ -147,11 +129,10 @@ export async function createSkuLabelPdf(
           });
         }
       }
-      page.drawImage(logo, { x: 13 * MM, y: brandBottom * MM, width: 4 * MM, height: 4 * MM });
-      page.drawText("Defy TCG", {
-        x: 18 * MM,
-        y: brandBottom * MM + (4 * MM - brandFont.heightAtSize(7.5, { descender: false })) / 2,
-        size: 7.5,
+      page.drawText("Defy TCG - Redmond", {
+        x: 13 * MM,
+        y: brandBottom * MM + (3 * MM - brandFont.heightAtSize(6.5, { descender: false })) / 2,
+        size: 6.5,
         font: brandFont,
         color: rgb(0, 0, 0),
       });

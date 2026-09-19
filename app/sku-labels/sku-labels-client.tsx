@@ -31,7 +31,7 @@ function QrLabel({ label }: { label: Label }) {
     <div className="sku-paper">
       <div className="sku-qr" role="img" aria-label={`QR code for ${label.sku}`} dangerouslySetInnerHTML={{ __html: svg }} />
       <div className="sku-paper-text">
-        <div className="sku-paper-brand"><Image src="/defy-tcg-label-logo.png" alt="Defy TCG mascot" width={160} height={160} unoptimized loading="eager" /><span>Defy TCG</span></div>
+        <div className="sku-paper-brand">Defy TCG - Redmond</div>
         {displayName && <strong>{displayName}</strong>}
         <code>{label.sku}</code>
       </div>
@@ -151,11 +151,6 @@ export default function SkuLabelsClient() {
 
   function print() {
     setError("");
-    const logo = document.querySelector<HTMLImageElement>(".sku-preview-stage .sku-paper-brand img");
-    if (!logo?.complete || !logo.naturalWidth) {
-      setError("The label logo has not loaded yet. Try again in a moment or choose Download PDF.");
-      return;
-    }
     setMessage("If no printer dialog appears, choose Download PDF, open the file in Preview or your browser, and print it at actual size.");
     try {
       // Keep the print request in the click event and avoid unsupported popup windows.
@@ -222,7 +217,7 @@ export default function SkuLabelsClient() {
           </section>
 
           <section className="sku-panel sku-preview-panel" aria-labelledby="sku-preview-title">
-            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Small label. Ready to scan.</h2><p>Your Defy TCG logo + QR + card name + SKU</p></div></div>
+            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Small label. Ready to scan.</h2><p>Defy TCG - Redmond + QR + card name + SKU</p></div></div>
             <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div><QrLabel label={labels[0] ?? example} /><p>{labels.length ? "First label preview · enlarged for clarity" : "Example label · generate a batch to preview yours"}</p></div>
             <div className="sku-print-settings">
               <label>Copies per SKU<input type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
@@ -257,7 +252,7 @@ export default function SkuLabelsClient() {
           <section className="sku-thermal-label" key={`${label.sku}-${copy}`}>
             <div className="sku-thermal-qr" dangerouslySetInnerHTML={{ __html: label.svg }} />
             <div className="sku-thermal-details">
-              <div className="sku-thermal-brand"><Image src="/defy-tcg-label-logo.png" alt="" width={160} height={160} unoptimized loading="eager" /><span>Defy TCG</span></div>
+              <div className="sku-thermal-brand">Defy TCG - Redmond</div>
               {label.name.trim() && <div className="sku-thermal-name">{label.name.trim()}</div>}
               <div className="sku-thermal-code">{label.sku}</div>
             </div>
