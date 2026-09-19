@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ScrydexError } from "../scrydex.ts";
 import { PosAuthError, verifyPosSessionToken, type PosAuthConfig } from "./pos-auth.ts";
 
@@ -17,7 +18,19 @@ export type PosPricingDependencies = {
   refresh: (code: string) => Promise<PosPricingResult>;
   authConfig?: PosAuthConfig;
   nowSeconds?: number;
+  reportFailure?: (failure: PosPricingFailureReport) => void;
 };
+export type PosPricingFailureReport = {
+  event: "shopify_pos_pricing_failed";
+  requestId: string;
+  stage: "auth" | "input" | "lookup";
+  code: string;
+  status: number;
+};
+
+function reportFailure(failure: PosPricingFailureReport): void {
+  console.warn(JSON.stringify(failure));
+}
 
 class PosRequestError extends Error {
   readonly code: string;
@@ -74,32 +87,35 @@ function publicError(error: unknown): { code: string; error: string; status: num
       not_configured: ["Scrydex pricing is not configured.", 503],
       unsupported: ["This card or product is not supported for automatic Scrydex pricing.", 422],
       incomplete_identity: ["The product needs its exact card details before it can be priced.", 422],
-      not_found: ["No exact Scrydex match was found for this product.", 404],
+      not_found: ["Shopify found the product, but its name and set do not match a Scrydex sealed product or card.", 404],
       ambiguous: ["Scrydex returned more than one possible match. Review the product's card details.", 409],
       price_unavailable: ["Scrydex has no current price for this card and condition.", 422],
       upstream_error: ["Scrydex is unavailable. Try the scan again shortly.", 503],
     } as const;
-    const [message, status] = errors[error.code];
-    return { code: error.code, error: message, status };
+    if (Object.hasOwn(errors, error.code)) {
+      const [message, status] = errors[error.code];
+      return { code: error.code, error: message, status };
+    }
   }
   // The pricing adapter supplies typed business failures; never forward raw upstream messages.
-  if (error instanceof Error && error.name === "PosPricingError" && "code" in error && "status" in error
-    && typeof error.code === "string" && /^[A-Z_]{1,64}$/.test(error.code)
-    && typeof error.status === "number" && [400, 404, 409, 422, 429, 502, 503].includes(error.status)) {
-    const messages: Record<string, string> = {
-      INVALID_CODE: "This SKU or barcode cannot be priced automatically.",
-      NOT_FOUND: "No Shopify variant matches this SKU or barcode.",
-      AMBIGUOUS_CODE: "More than one Shopify variant uses this SKU or barcode. Correct the duplicates before scanning again.",
-      IDENTITY_CONFLICT: "The Shopify product's card details conflict. Review its identity before scanning again.",
-      IDENTITY_REQUIRED: "The Shopify product needs complete card details before it can be priced.",
-      PRODUCT_TYPE_REQUIRED: "The Shopify product must identify whether it is a single or sealed product.",
-      PRODUCT_UNAVAILABLE: "This Shopify product is not available to sell.",
-      LANGUAGE_UNSUPPORTED: "Automatic Scrydex pricing currently supports English cards only.",
-      CURRENCY_UNSUPPORTED: "Automatic Scrydex pricing currently supports USD only.",
-      VARIANT_INVALID: "Shopify did not return a valid variant for this scan.",
-      PRICE_UPDATE_UNCONFIRMED: "Shopify could not confirm the price update. Try the scan again shortly.",
+  if (error instanceof Error && error.name === "PosPricingError" && "code" in error && typeof error.code === "string") {
+    const errors: Record<string, readonly [string, number]> = {
+      INVALID_CODE: ["This SKU or barcode cannot be priced automatically.", 400],
+      NOT_FOUND: ["This barcode or SKU is not linked to a Shopify product. Add the exact code to its Shopify variant before scanning again.", 404],
+      AMBIGUOUS_CODE: ["More than one Shopify variant uses this SKU or barcode. Correct the duplicates before scanning again.", 409],
+      IDENTITY_CONFLICT: ["The Shopify product's card details conflict. Review its identity before scanning again.", 422],
+      IDENTITY_REQUIRED: ["The Shopify product needs complete card details before it can be priced.", 422],
+      PRODUCT_TYPE_REQUIRED: ["The Shopify product must identify whether it is a single or sealed product.", 422],
+      PRODUCT_UNAVAILABLE: ["This Shopify product is not available to sell.", 422],
+      LANGUAGE_UNSUPPORTED: ["Automatic Scrydex pricing currently supports English cards only.", 422],
+      CURRENCY_UNSUPPORTED: ["Automatic Scrydex pricing currently supports USD only.", 422],
+      VARIANT_INVALID: ["Shopify did not return a valid variant for this scan.", 502],
+      PRICE_UPDATE_UNCONFIRMED: ["Shopify could not confirm the price update. Try the scan again shortly.", 502],
     };
-    return { code: error.code, error: messages[error.code] ?? "Shopify POS pricing is unavailable. Try the scan again shortly.", status: error.status };
+    if (Object.hasOwn(errors, error.code)) {
+      const [message, status] = errors[error.code];
+      return { code: error.code, error: message, status };
+    }
   }
   return { code: "pricing_unavailable", error: "Unable to confirm the price. Try the scan again shortly.", status: 503 };
 }
@@ -109,8 +125,19 @@ export async function handlePosPricingRequest(request: Request, dependencies: Po
   const origin = request.headers.get("origin");
   const headers = new Headers({ "Cache-Control": "private, no-store, max-age=0", Vary: "Origin" });
   const json = (body: unknown, status: number) => Response.json(body, { status, headers });
+  let stage: PosPricingFailureReport["stage"] = "auth";
+  const failedPost = (failure: { code: string; error: string; status: number }) => {
+    const requestId = randomUUID();
+    // Only fixed classifications and a server-generated ID enter logs. Never log
+    // request headers/body, the scanned code, product data, or a caught exception.
+    const report: PosPricingFailureReport = { event: "shopify_pos_pricing_failed", requestId, stage, code: failure.code, status: failure.status };
+    try { (dependencies.reportFailure ?? reportFailure)(report); }
+    catch { /* Observability must not change the failure returned to POS. */ }
+    return json({ code: failure.code, error: failure.error, requestId }, failure.status);
+  };
   if (origin !== null && !POS_ORIGINS.has(origin)) {
-    return json({ code: "origin_not_allowed", error: "Use Defy Pricing from Shopify POS." }, 403);
+    const failure = { code: "origin_not_allowed", error: "Use Defy Pricing from Shopify POS.", status: 403 };
+    return request.method === "POST" ? failedPost(failure) : json({ code: failure.code, error: failure.error }, failure.status);
   }
   if (origin) headers.set("Access-Control-Allow-Origin", origin);
   if (request.method === "OPTIONS") {
@@ -134,7 +161,9 @@ export async function handlePosPricingRequest(request: Request, dependencies: Po
     const token = /^Bearer ([A-Za-z0-9_.-]+)$/i.exec(authorization)?.[1];
     if (!token) throw new PosAuthError("unauthorized");
     verifyPosSessionToken(token, dependencies.authConfig, dependencies.nowSeconds);
+    stage = "input";
     const code = await scanCode(request);
+    stage = "lookup";
     const result = await dependencies.refresh(code);
     // Select response fields explicitly, so server-only adapter data cannot leak into POS.
     return json({
@@ -142,7 +171,6 @@ export async function handlePosPricingRequest(request: Request, dependencies: Po
       priceCents: result.priceCents, currency: result.currency, scrydexId: result.scrydexId,
     }, 200);
   } catch (error) {
-    const failure = publicError(error);
-    return json({ code: failure.code, error: failure.error }, failure.status);
+    return failedPost(publicError(error));
   }
 }

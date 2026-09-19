@@ -69,7 +69,12 @@ function PricingModal() {
           <s-button variant="primary" disabled={!code.trim() || busy} loading={state.kind === 'loading'} onClick={lookup}>Look up price</s-button>
           {cameraAvailable && <s-button disabled={busy} onClick={scanAgain}>Scan with camera</s-button>}
           {state.kind === 'loading' && <s-text>Fetching the price and syncing Shopify…</s-text>}
-          {state.kind === 'error' && <s-banner heading="Price needs attention" tone="critical">{state.message}</s-banner>}
+          {state.kind === 'error' && (
+            <s-stack direction="block" gap="base">
+              <s-banner heading="Price needs attention" tone="critical" />
+              <s-text>{state.message}</s-text>
+            </s-stack>
+          )}
           {quote && (
             <s-section heading={quote.title}>
               <s-stack direction="block" gap="base">
@@ -77,7 +82,12 @@ function PricingModal() {
                 <s-text>Customer price: ${(quote.priceCents / 100).toFixed(2)} USD</s-text>
                 {state.kind === 'quoted' && <s-button variant="primary" onClick={() => void controllerRef.current?.add()}>Add to cart</s-button>}
                 {state.kind === 'adding' && <s-text>Checking the price in Shopify POS before adding…</s-text>}
-                {state.kind === 'added' && <s-banner heading="Added to cart" tone="success">The selling price has been checked. Adjust quantity in the cart if needed.</s-banner>}
+                {state.kind === 'added' && (
+                  <s-stack direction="block" gap="base">
+                    <s-banner heading="Added to cart" tone="success" />
+                    <s-text>The selling price has been checked. Adjust quantity in the cart if needed.</s-text>
+                  </s-stack>
+                )}
               </s-stack>
             </s-section>
           )}
