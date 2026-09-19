@@ -83,7 +83,7 @@ export function createSkuLabelDocument(labels: readonly SkuLabel[], copies: numb
   const pages = labels.flatMap(({ sku, name }) => {
     const svg = skuQrSvg(sku);
     const displayName = Array.from(name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
-    const label = `<section class="label"><div class="qr">${svg}</div><div class="details">${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div></div></section>`;
+    const label = `<section class="label"><div class="qr">${svg}</div><div class="details"><div class="brand"><img src="/defy-tcg-label-logo.png" alt="" width="160" height="160"><span>Defy TCG</span></div>${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div></div></section>`;
     return Array<string>(copies).fill(label);
   }).join("\n");
   return `<!DOCTYPE html>
@@ -97,9 +97,11 @@ body { width: 38mm; -webkit-print-color-adjust: exact; print-color-adjust: exact
 .label + .label { break-before: page; page-break-before: always; }
 .qr { width: 11mm; height: 11mm; flex: 0 0 11mm; }
 .qr svg { display: block; width: 11mm; height: 11mm; shape-rendering: crispEdges; }
-.details { width: 24mm; min-width: 0; font-family: Arial, sans-serif; }
-.name { font-size: 6.5pt; line-height: 2.8mm; max-height: 5.6mm; overflow: hidden; overflow-wrap: anywhere; margin-bottom: 0.7mm; }
-.sku { font: 700 7pt/3mm "Courier New", monospace; white-space: nowrap; }
+.details { width: 24mm; min-width: 0; display: grid; gap: .25mm; font-family: Arial, sans-serif; }
+.brand { display: flex; align-items: center; gap: 1mm; height: 4mm; font: 700 7.5pt/1 Arial, sans-serif; white-space: nowrap; }
+.brand img { display: block; width: 4mm; height: 4mm; object-fit: contain; flex-shrink: 0; }
+.name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
+.sku { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
 </style></head><body>
 ${pages}
 </body></html>`;

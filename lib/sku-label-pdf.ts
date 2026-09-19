@@ -7,11 +7,22 @@ const WIDTH_MM = 38;
 const HEIGHT_MM = 13;
 const QR_MM = 11;
 const DETAILS_MM = 24;
-const LINE_MM = 2.8;
+const LINE_MM = 2;
 const NAME_DPI = 600;
 
 type NameImage = { png: Uint8Array | string; heightMm: number };
 type RasterizeName = (name: string) => Promise<NameImage>;
+type LoadLogo = () => Promise<Uint8Array | string>;
+
+async function loadBrandLogo(): Promise<Uint8Array> {
+  try {
+    const response = await fetch("/defy-tcg-label-logo.png", { cache: "force-cache" });
+    if (!response.ok) throw new Error("Logo request failed");
+    return new Uint8Array(await response.arrayBuffer());
+  } catch {
+    throw new Error("The Defy TCG logo could not load. Check your connection and download the PDF again.");
+  }
+}
 
 /** Wrap at spaces when possible, without splitting Unicode code points. */
 export function wrapSkuLabelName(name: string, maxWidth: number, measure: (value: string) => number): string[] {
@@ -45,7 +56,7 @@ async function rasterizeName(name: string): Promise<NameImage> {
   canvas.height = Math.ceil(2 * LINE_MM * dotsPerMm);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("This browser cannot prepare card names for PDF. Try another browser.");
-  const font = `${6.5 * NAME_DPI / 72}px Arial, sans-serif`;
+  const font = `${5.5 * NAME_DPI / 72}px Arial, sans-serif`;
   await document.fonts?.load(font, name);
   context.font = font;
   const lines = wrapSkuLabelName(name, canvas.width - 2, (value) => context.measureText(value).width);
@@ -75,6 +86,7 @@ export async function createSkuLabelPdf(
   labels: readonly SkuLabel[],
   copies: number,
   renderName: RasterizeName = rasterizeName,
+  loadLogo: LoadLogo = loadBrandLogo,
 ): Promise<Uint8Array> {
   if (!Number.isInteger(copies) || copies < 1 || copies > MAX_LABEL_COPIES) {
     throw new Error(`Print between 1 and ${MAX_LABEL_COPIES} copies per SKU.`);
@@ -88,10 +100,17 @@ export async function createSkuLabelPdf(
   }
 
   const pdf = await PDFDocument.create();
-  pdf.setTitle("Defy singles QR labels - 38 x 13 mm");
+  pdf.setTitle("Defy TCG singles QR labels - 38 x 13 mm");
   pdf.setCreator("Defy Store OS");
   pdf.catalog.getOrCreateViewerPreferences().setPrintScaling(PrintScaling.None);
   const font = await pdf.embedFont(StandardFonts.CourierBold);
+  const brandFont = await pdf.embedFont(StandardFonts.HelveticaBold);
+  let logo;
+  try {
+    logo = await pdf.embedPng(await loadLogo());
+  } catch {
+    throw new Error("The Defy TCG logo could not load. Check your connection and download the PDF again.");
+  }
   const nameImages = new Map<string, Promise<{ image: Awaited<ReturnType<typeof pdf.embedPng>>; heightMm: number }>>();
 
   for (const label of labels) {
@@ -110,8 +129,9 @@ export async function createSkuLabelPdf(
     qr.addData(label.sku, "Alphanumeric");
     qr.make();
     const moduleSize = QR_MM * MM / (qr.getModuleCount() + 8);
-    const textHeightMm = nameImage ? nameImage.heightMm + 0.7 + 3 : 3;
+    const textHeightMm = nameImage ? 4 + 0.25 + nameImage.heightMm + 0.25 + 2.5 : 4 + 0.25 + 2.5;
     const textBottom = (HEIGHT_MM - textHeightMm) / 2;
+    const brandBottom = textBottom + textHeightMm - 4;
 
     for (let copy = 0; copy < copies; copy++) {
       const page = pdf.addPage([WIDTH_MM * MM, HEIGHT_MM * MM]);
@@ -127,16 +147,24 @@ export async function createSkuLabelPdf(
           });
         }
       }
+      page.drawImage(logo, { x: 13 * MM, y: brandBottom * MM, width: 4 * MM, height: 4 * MM });
+      page.drawText("Defy TCG", {
+        x: 18 * MM,
+        y: brandBottom * MM + (4 * MM - brandFont.heightAtSize(7.5, { descender: false })) / 2,
+        size: 7.5,
+        font: brandFont,
+        color: rgb(0, 0, 0),
+      });
       if (nameImage) page.drawImage(nameImage.image, {
         x: 13 * MM,
-        y: (textBottom + 3 + 0.7) * MM,
+        y: (textBottom + 2.5 + 0.25) * MM,
         width: DETAILS_MM * MM,
         height: nameImage.heightMm * MM,
       });
       const fontHeight = font.heightAtSize(7, { descender: false });
       page.drawText(label.sku, {
         x: 13 * MM,
-        y: textBottom * MM + (3 * MM - fontHeight) / 2,
+        y: textBottom * MM + (2.5 * MM - fontHeight) / 2,
         size: 7,
         font,
         color: rgb(0, 0, 0),
