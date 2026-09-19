@@ -58,6 +58,25 @@ The scanner accepts USB scanner input or typed SKUs/barcodes. Its modes support
 lookup, receiving, removal, and checkout. Checkout supports inventory and custom
 items, price overrides, discounts, tax, payment methods, and sales channels.
 
+## QR SKU labels for singles
+
+Open **QR SKU labels** in the sidebar, Inventory toolbar, or mobile **More**
+menu. Generate 1–100 random SKUs using an optional custom prefix of up to four
+letters/numbers, add or edit each card name, then print on **38 × 13 mm** thermal
+labels. Each QR code contains the exact SKU, alongside readable SKU text. Use a
+QR-capable scanner; one-dimensional barcode scanners cannot read QR codes.
+
+Print at 100% / actual size with margins, headers, and footers turned off. Set
+the printer's paper size to 38 × 13 mm and test one label before a full batch.
+Choose 1–100 copies per SKU, up to 1,000 labels per print job. Copy the SKUs or
+download a CSV; the current batch is saved in the current browser.
+
+Generation reads current Defy inventory to avoid existing SKUs and barcodes,
+and avoids codes already generated in the current session. It does not create
+inventory or reserve codes across devices. In **Inventory → ＋ Product**, paste
+the generated SKU into the SKU field to associate a single before scanning it.
+Keep the CSV for past batches. The QR workspace does not run master-sheet sync.
+
 ## Riftbound singles
 
 The new `/singles` workspace provides an English reference catalog, including

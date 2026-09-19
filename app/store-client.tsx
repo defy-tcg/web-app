@@ -2272,6 +2272,9 @@ export default function StoreOS() {
             <Link className="secondary-button" href="/singles">
               Riftbound singles
             </Link>
+            <Link className="secondary-button" href="/sku-labels">
+              QR SKU labels
+            </Link>
             <button
               className="secondary-button sheet-sync-button"
               disabled={sheetSyncing}
@@ -2917,6 +2920,10 @@ export default function StoreOS() {
               {label}
             </button>
           ))}
+          <Link href="/sku-labels" className="nav-item" style={{ textDecoration: "none" }}>
+            <span aria-hidden="true">▦</span>
+            QR SKU labels
+          </Link>
           <Link
             href="/shopify"
             className="nav-item"
@@ -3113,6 +3120,9 @@ export default function StoreOS() {
               ))}
               <Link href="/shopify" className="secondary-button">
                 ↔ Shopify stock &amp; orders
+              </Link>
+              <Link href="/sku-labels" className="secondary-button">
+                ▦ QR SKU labels
               </Link>
             </div>
           </section>
