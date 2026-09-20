@@ -8,6 +8,6 @@ export const config = {
   matcher: [
     // Shopify endpoints authenticate with HMAC, the cron secret, or a POS JWT.
     // Keep every other inventory and integration endpoint behind Neon Auth.
-    "/((?!api/auth|api/shopify/webhooks$|api/shopify/sync/drain$|api/shopify/pricing/cron$|api/shopify/pos/pricing$|auth|_next/static|_next/image|favicon.ico|favicon.svg).*)",
+    "/((?!api/auth|api/shopify/webhooks$|api/shopify/sync/drain$|api/shopify/pricing/cron$|api/shopify/pos/pricing$|api/shopify/pos/sealed-catalog$|auth|_next/static|_next/image|favicon.ico|favicon.svg).*)",
   ],
 };
