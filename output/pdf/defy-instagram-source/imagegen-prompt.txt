@@ -1,0 +1,15 @@
+Use case: ads-marketing, precise text edit.
+Asset type: matching A4 portrait Instagram poster, exact same 210:297 aspect ratio as the supplied Discord poster artwork.
+Input image: the existing approved minimal Defy TCG poster artwork. This is the edit target, not a mood reference.
+Change ONLY the two lines beneath the blank white panel:
+- Replace "join our discord." with "follow us."
+- Replace "Scan to join the local card crew." with "@defytcg on Instagram"
+Keep every other element and its position the same: exact electric blue background, top left "DEFY TCG", top right "REDMOND, WA", huge central plain white square, whitespace, typography style, sizes and alignments.
+Keep "follow us." in the same bold rounded geometric lowercase white font and same letter height as the original headline, centered. The second line is quieter white sans-serif and centered.
+CRITICAL: The entire white panel stays completely blank pure white; the genuine supplied Instagram QR will be embedded into it later. No generated QR patterns, no logo, no mascot, no icons, no new decoration, no extra text, no border, no shadow.
+This must look like the Instagram companion to the approved Discord design. Do not redesign, reframe, add screenshot elements, perspective or paper mockup. Flat print artwork.
+Exact final visible text only:
+"DEFY TCG"
+"REDMOND, WA"
+"follow us."
+"@defytcg on Instagram"
