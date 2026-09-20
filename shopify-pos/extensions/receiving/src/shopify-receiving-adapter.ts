@@ -1,6 +1,6 @@
 import {RECEIVING, type Adjustment, type Applied, type JournalState, type Plan, type Product, type ReceivingAdapter, type StateSnapshot, validateExisting} from './receiving-service.ts';
 import {barcodeAliases, barcodeKey, ReceivingError, stableJson, validBarcode} from './receiving-validation.ts';
-import {receivingCardMetadata, receivingCatalogKey, RECEIVING_CATALOG_GAMES, type CatalogReference, type ReceiptCatalog} from './receiving-catalog.ts';
+import {receivingCardMetadata, receivingCatalogKey, RECEIVING_CATALOG_GAMES, type CatalogReference} from './receiving-catalog.ts';
 
 type Json = Record<string, any>;
 export type GraphQL = <T = Json>(query: string, variables?: Json) => Promise<T>;
@@ -171,19 +171,52 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
     return this.catalogProduct(receivingCatalogKey(catalog));
   }
 
-  private async catalogProduct(catalogId: string, expectedCatalog?: ReceiptCatalog): Promise<Product | null> {
-    const cardFields = expectedCatalog ? `productType ${Object.keys(receivingCardMetadata(expectedCatalog)).map(key => `card_${key}: metafield(namespace: "card", key: "${key}") { value }`).join(' ')}` : '';
-    const data = await this.graphql(`query ReceivingCatalogId($identifier: ProductIdentifierInput!) {
+  private async catalogProduct(catalogId: string, draftPlan?: Plan): Promise<Product | null> {
+    const expectedCatalog = draftPlan?.request.catalog;
+    const cardFields = expectedCatalog ? `productType ${Object.keys(receivingCardMetadata(expectedCatalog)).map(key => `card_${key}: metafield(namespace: "card", key: "${key}") { value compareDigest }`).join(' ')}` : '';
+    const query = `query ReceivingCatalogId($identifier: ProductIdentifierInput!) {
       productByIdentifier(identifier: $identifier) { id ${cardFields} variants(first: 2) { nodes { ${variantFields()} } pageInfo { hasNextPage } } }
-    }`, {identifier: {customId: {namespace: RECEIVING.namespace, key: RECEIVING.catalogIdKey, value: catalogId}}});
-    const item = data.productByIdentifier;
+    }`;
+    const variables = {identifier: {customId: {namespace: RECEIVING.namespace, key: RECEIVING.catalogIdKey, value: catalogId}}};
+    let item = (await this.graphql(query, variables)).productByIdentifier;
     if (!item) return null;
-    if (item.variants.nodes.length !== 1 || item.variants.pageInfo.hasNextPage) throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'This receiving catalog ID belongs to a product with a changed variant structure.', false, true);
-    if (expectedCatalog && (item.productType !== `${RECEIVING_CATALOG_GAMES[expectedCatalog.game]} Sealed` ||
-      Object.entries(receivingCardMetadata(expectedCatalog)).some(([key, value]) => item[`card_${key}`]?.value !== value))) {
-      throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The saved catalog metadata changed. Keep this receipt for review; no existing metadata was overwritten.', false, true);
+    const verifyIdentity = (node: Json): Product => {
+      if (!node || node.variants.nodes.length !== 1 || node.variants.pageInfo.hasNextPage) throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'This receiving catalog ID belongs to a product with a changed variant structure.', false, true);
+      const current = product(node.variants.nodes[0]);
+      if (draftPlan && (current.catalogId !== catalogId || current.sku !== draftPlan.plannedSku ||
+        !validBarcode(current.barcode) || barcodeKey(current.barcode) !== barcodeKey(draftPlan.request.barcode) ||
+        current.barcodeId !== barcodeKey(draftPlan.request.barcode) || current.unit !== draftPlan.request.unit ||
+        current.game !== draftPlan.request.game || current.name !== draftPlan.request.name || !current.tracked || current.status !== 'DRAFT')) {
+        throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The existing draft does not match this reserved SKU and receipt. No identity was overwritten.', false, true);
+      }
+      if (expectedCatalog && node.productType !== `${RECEIVING_CATALOG_GAMES[expectedCatalog.game]} Sealed`) {
+        throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The saved catalog product type changed. Keep this receipt for review.', false, true);
+      }
+      return current;
+    };
+    const current = verifyIdentity(item);
+    if (!expectedCatalog) return current;
+    const expected = Object.entries(receivingCardMetadata(expectedCatalog));
+    const missing: Json[] = [];
+    for (const [key, value] of expected) {
+      const field = item[`card_${key}`];
+      if (field && field.value !== value) throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The saved catalog metadata changed. Keep this receipt for review; no existing metadata was overwritten.', false, true);
+      if (!field) missing.push({ownerId: current.productId, namespace: 'card', key, type: 'single_line_text_field', value, compareDigest: null});
     }
-    return product(item.variants.nodes[0]);
+    if (!missing.length) return current;
+    // productSet creates the custom ID itself. Complete descriptive metadata in
+    // a separate resumable step: only this reserved draft, only absent fields.
+    const completed = await this.graphql(`mutation CompleteReceivingCatalogMetadata($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) { metafields { id } userErrors { code field message } }
+    }`, {metafields: missing});
+    userErrors(completed.metafieldsSet, 'Saving the sealed product details');
+    item = (await this.graphql(query, variables)).productByIdentifier;
+    const verified = verifyIdentity(item);
+    if (verified.productId !== current.productId || verified.variantId !== current.variantId ||
+      expected.some(([key, value]) => item[`card_${key}`]?.value !== value)) {
+      throw new ReceivingError('PRODUCT_UNCERTAIN', 'The sealed product details could not be confirmed. Retry this same receipt.', true, true);
+    }
+    return verified;
   }
 
   async resolveProduct(plan: Plan): Promise<Product> {
@@ -224,23 +257,21 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
 
     const barcodeId = barcodeKey(request.barcode);
     const catalogId = request.catalog ? receivingCatalogKey(request.catalog) : barcodeId;
-    const existing = await this.catalogProduct(catalogId, request.catalog);
+    const existing = await this.catalogProduct(catalogId, plan);
     if (existing) {
-      // A recovery lookup NEVER upserts metadata over an already-created product.
+      // Recovery can finish absent metadata on this reserved draft, never replace it.
       if (existing.sku !== plan.plannedSku || barcodeKey(existing.barcode) !== barcodeId || existing.barcodeId !== barcodeId || existing.unit !== request.unit || existing.game !== request.game || existing.name !== request.name) throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The existing product does not match this reserved SKU and receipt. No identity was overwritten.', false, true);
       return existing;
     }
     if ((await this.findByBarcode(request.barcode)).length || (await this.findBySku(plan.plannedSku)).length) throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The reserved barcode or SKU was assigned outside this pending transaction. Ask the owner to review it.', false, true);
-    // Resolve the actual app namespace. When supplying a metadata list, keep
-    // the identifier in it too: productSet replaces supplied list fields.
+    // Resolve the actual app namespace. Let productSet create its custom ID;
+    // sending product metafields here triggers Shopify's customId mismatch check.
     if (!this.writeNamespace) await this.readState();
     if (!this.writeNamespace) throw new ReceivingError('SETUP_REQUIRED', 'The app-owned receiving namespace could not be resolved.', false, true);
     const namespace = this.writeNamespace;
     const input = {
       title: request.name, status: 'DRAFT',
-      ...(request.catalog ? {productType: `${RECEIVING_CATALOG_GAMES[request.catalog.game]} Sealed`,
-        metafields: [{namespace, key: RECEIVING.catalogIdKey, type: 'id', value: catalogId},
-          ...Object.entries(receivingCardMetadata(request.catalog)).map(([key, value]) => ({namespace: 'card', key, type: 'single_line_text_field', value}))]} : {}),
+      ...(request.catalog ? {productType: `${RECEIVING_CATALOG_GAMES[request.catalog.game]} Sealed`} : {}),
       productOptions: [{name: 'Title', values: [{name: 'Default Title'}]}],
       variants: [{sku: plan.plannedSku, barcode: request.barcode,
         optionValues: [{optionName: 'Title', name: 'Default Title'}], inventoryItem: {tracked: true}, inventoryPolicy: 'DENY',
@@ -256,7 +287,7 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
       }
     }`, {input, identifier: {customId: {namespace, key: RECEIVING.catalogIdKey, value: catalogId}}});
     userErrors(data.productSet, 'Creating the draft sealed product');
-    const created = await this.catalogProduct(catalogId, request.catalog);
+    const created = await this.catalogProduct(catalogId, plan);
     if (!created) throw new ReceivingError('PRODUCT_UNCERTAIN', 'The new product could not be confirmed. Retry this same receipt.', true, true);
     if (created.sku !== plan.plannedSku || barcodeKey(created.barcode) !== barcodeId || created.barcodeId !== barcodeId || created.unit !== request.unit || created.game !== request.game || created.name !== request.name || !created.tracked || created.status !== 'DRAFT') {
       throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The created Shopify draft does not match its reserved identity. Keep this receipt pending for review.', false, true);

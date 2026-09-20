@@ -145,9 +145,10 @@ test('legacy receipt replay and receiving paths never perform source lookups', a
 type Json = Record<string, any>;
 function shopifyFixture() {
   const calls: {query: string; variables: Json}[] = [];
+  const failures = {creation: false, metadata: false};
   let saved: Json | null = null;
   const graphql: GraphQL = async <T>(query: string, variables: Json = {}): Promise<T> => {
-    calls.push({query, variables});
+    calls.push({query, variables: structuredClone(variables)});
     let result: Json;
     if (query.includes('query ReceivingCatalogId')) result = {productByIdentifier: saved && saved.catalogKey === variables.identifier.customId.value ? saved : null};
     else if (query.includes('query ReceivingVariant(')) result = {productVariant: saved?.variants.nodes[0] || null};
@@ -156,17 +157,31 @@ function shopifyFixture() {
     else if (query.includes('query ReceivingState')) result = {shop: {id: 'gid://shopify/Shop/1', currencyCode: 'USD', metafield: {namespace: 'app--123--receiving', value: '{"version":1,"nextSequence":1,"pending":null}', compareDigest: 'digest'}}};
     else if (query.includes('mutation CreateReceivingDraft')) {
       const draft = variables.input;
+      // Reproduce the production incompatibility instead of accepting this input in a mock.
+      if (Object.hasOwn(draft, 'metafields')) return {productSet: {product: null, userErrors: [{code: 'METAFIELD_MISMATCH', field: ['input'], message: 'The input argument metafields (if present) must contain the customId value.'}]}} as T;
+      assert.equal(saved, null, 'a retry must recover the existing reserved draft instead of upserting it');
       const variant = draft.variants[0];
       const field = (key: string) => ({value: variant.metafields.find((meta: Json) => meta.key === key)?.value});
-      const metadata = Object.fromEntries((draft.metafields || []).filter((meta: Json) => meta.namespace === 'card').map((meta: Json) => [`card_${meta.key}`, {value: meta.value}]));
       const node = {id: 'gid://shopify/ProductVariant/2', sku: variant.sku, barcode: variant.barcode, title: 'Default Title', inventoryItem: {id: 'gid://shopify/InventoryItem/3', tracked: true},
         game: field('game'), unit: field('unit'), barcodeId: field('barcode_id'), product: {id: 'gid://shopify/Product/1', title: draft.title, status: draft.status, catalogId: {value: variables.identifier.customId.value}}};
-      saved = {id: node.product.id, catalogKey: variables.identifier.customId.value, productType: draft.productType, ...metadata, variants: {nodes: [node], pageInfo: {hasNextPage: false}}};
+      saved = {id: node.product.id, catalogKey: variables.identifier.customId.value, productType: draft.productType, variants: {nodes: [node], pageInfo: {hasNextPage: false}}};
+      if (failures.creation) { failures.creation = false; throw new Error('Lost response after draft creation'); }
       result = {productSet: {product: {id: node.product.id}, userErrors: []}};
+    } else if (query.includes('mutation CompleteReceivingCatalogMetadata')) {
+      assert.ok(saved);
+      for (const field of variables.metafields) {
+        assert.equal(field.ownerId, saved.id);
+        assert.equal(field.namespace, 'card');
+        assert.equal(field.compareDigest, null, 'only absent fields may be created');
+        assert.equal(saved[`card_${field.key}`], undefined, 'existing merchant metadata must not be overwritten');
+      }
+      for (const field of variables.metafields) saved[`card_${field.key}`] = {value: field.value, compareDigest: `digest-${field.key}`};
+      if (failures.metadata) { failures.metadata = false; throw new Error('Lost response after metadata completion'); }
+      result = {metafieldsSet: {metafields: variables.metafields.map((field: Json) => ({id: `gid://shopify/Metafield/${field.key}`})), userErrors: []}};
     } else throw new Error(`Unexpected operation ${query}`);
     return result as T;
   };
-  return {adapter: new ShopifyReceivingAdapter(graphql), calls, saved: () => saved!};
+  return {adapter: new ShopifyReceivingAdapter(graphql), calls, failures, saved: () => saved!};
 }
 
 test('new catalog drafts persist canonical source/card metadata and barcode claim without price, cost, stock or publication writes', async () => {
@@ -175,19 +190,86 @@ test('new catalog drafts persist canonical source/card metadata and barcode clai
   assert.equal(created.catalogId, 'scrydex:pokemon:me3-s9');
   assert.equal(created.barcodeId, 'upc:196214150478');
   const writes = fixture.calls.filter(call => call.query.includes('mutation '));
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   const {input: draft, identifier} = writes[0].variables;
   assert.deepEqual(identifier, {customId: {namespace: 'app--123--receiving', key: 'catalog_id', value: 'scrydex:pokemon:me3-s9'}});
   assert.equal(draft.productType, 'Pokémon Sealed');
   assert.equal(draft.status, 'DRAFT');
-  assert.deepEqual(draft.metafields, [{namespace: 'app--123--receiving', key: 'catalog_id', type: 'id', value: 'scrydex:pokemon:me3-s9'},
-    ...Object.entries(receivingCardMetadata(catalog)).map(([key, value]) => ({namespace: 'card', key, type: 'single_line_text_field', value}))]);
+  assert.equal(Object.hasOwn(draft, 'metafields'), false, 'productSet must let its identifier create the source metafield');
+  assert.match(writes[1].query, /mutation CompleteReceivingCatalogMetadata/);
+  assert.deepEqual(writes[1].variables.metafields, Object.entries(receivingCardMetadata(catalog)).map(([key, value]) => ({ownerId: created.productId, namespace: 'card', key, type: 'single_line_text_field', value, compareDigest: null})));
+  assert.ok(fixture.calls.some(call => call.query.includes('ReceivingCatalogId') && /card_name:[^}]*compareDigest/.test(call.query)));
   assert.equal(draft.variants[0].metafields[0].value, 'upc:196214150478');
   assert.deepEqual(draft.variants[0].inventoryItem, {tracked: true});
   assert.doesNotMatch(JSON.stringify(writes), /"price"|"cost"|"unitCost"|inventoryQuantities|publish|inventoryAdjust/);
   const callCount = fixture.calls.length;
   assert.deepEqual(await fixture.adapter.resolveProduct(plan()), created);
   assert.equal(fixture.calls.slice(callCount).filter(call => call.query.includes('mutation ')).length, 0);
+});
+
+test('lost draft or metadata responses recover the same reservation before inventory changes and never duplicate stock', async () => {
+  for (const stage of ['creation', 'metadata'] as const) {
+    const fixture = shopifyFixture();
+    fixture.failures[stage] = true;
+    const journal = new MemoryAdapter();
+    journal.resolveProduct = savedPlan => fixture.adapter.resolveProduct(savedPlan);
+    const service = new ReceivingService(journal);
+    await assert.rejects(service.receive(request()), (error: ReceivingError) => error.code === 'CONNECTION_UNCERTAIN' && error.committedPossible);
+    assert.ok(fixture.saved());
+    assert.equal(journal.state.pending?.phase, 'planned');
+    assert.equal(journal.adjustedQuantity, 0);
+    assert.equal(journal.state.nextSequence, 2);
+    const result = await service.receive(request());
+    assert.equal(result.product.sku, 'DEFY-S-000001');
+    assert.equal(result.duplicate, true);
+    assert.equal(journal.adjustedQuantity, 2);
+    assert.equal(journal.state.pending, null);
+    assert.equal(fixture.calls.filter(call => call.query.includes('mutation CreateReceivingDraft')).length, 1);
+    assert.equal(fixture.calls.filter(call => call.query.includes('mutation CompleteReceivingCatalogMetadata')).length, 1);
+    assert.equal((await service.receive(request())).duplicate, true);
+    assert.equal(journal.adjustedQuantity, 2);
+    assert.equal(journal.adjustments.size, 1);
+  }
+});
+
+test('partial catalog metadata preserves exact matches and only fills missing fields with compare-and-set', async () => {
+  const fixture = shopifyFixture();
+  fixture.failures.creation = true;
+  await assert.rejects(fixture.adapter.resolveProduct(plan()), /Lost response/);
+  const matching = {value: catalog.name, compareDigest: 'merchant-existing-digest'};
+  fixture.saved().card_name = matching;
+  await fixture.adapter.resolveProduct(plan());
+  assert.equal(fixture.saved().card_name, matching);
+  const completion = fixture.calls.find(call => call.query.includes('mutation CompleteReceivingCatalogMetadata'))!;
+  assert.equal(completion.variables.metafields.length, Object.keys(receivingCardMetadata(catalog)).length - 1);
+  assert.equal(completion.variables.metafields.some((field: Json) => field.key === 'name'), false);
+});
+
+test('draft recovery verifies every reserved identity field before adding missing catalog metadata', async () => {
+  const changes: ((saved: Json) => void)[] = [
+    saved => { saved.variants.nodes[0].sku = 'OTHER'; },
+    saved => { saved.variants.nodes[0].barcode = '036000291452'; },
+    saved => { saved.variants.nodes[0].barcodeId.value = 'upc:036000291452'; },
+    saved => { saved.variants.nodes[0].unit.value = 'Case'; },
+    saved => { saved.variants.nodes[0].game.value = 'Riftbound'; },
+    saved => { saved.variants.nodes[0].product.title = 'Another package'; },
+    saved => { saved.variants.nodes[0].product.status = 'ACTIVE'; },
+    saved => { saved.variants.nodes[0].inventoryItem.tracked = false; },
+    saved => { saved.productType = 'Pokémon Single'; },
+    saved => { saved.variants.nodes[0].product.catalogId.value = 'legacy-other'; },
+    saved => { saved.card_set = {value: 'Different set', compareDigest: 'merchant-digest'}; },
+  ];
+  for (const change of changes) {
+    const fixture = shopifyFixture();
+    fixture.failures.creation = true;
+    await assert.rejects(fixture.adapter.resolveProduct(plan()), /Lost response/);
+    change(fixture.saved());
+    const before = structuredClone(fixture.saved());
+    const callCount = fixture.calls.length;
+    await assert.rejects(fixture.adapter.resolveProduct(plan()), (error: ReceivingError) => error.code === 'PRODUCT_IDENTITY_CONFLICT');
+    assert.equal(fixture.calls.slice(callCount).some(call => call.query.includes('mutation ')), false);
+    assert.deepEqual(fixture.saved(), before);
+  }
 });
 
 test('source recovery rejects changed card metadata without overwriting it', async () => {

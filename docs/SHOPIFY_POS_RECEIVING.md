@@ -78,6 +78,13 @@ journal, SKU allocator, and Shopify inventory adjustment; retry the same receipt
 after an interruption. Older pending receipts retain their original fingerprint
 and recovery behavior. Recovery does not depend on Scrydex being online.
 
+New catalog drafts are created with their custom ID before descriptive card
+metadata is saved. Recovery first verifies the reserved SKU, barcode, package,
+game, name, and draft status, then fills only missing metadata with an atomic
+create-if-absent write. Conflicting existing values require review and are never
+overwritten. Stock is added only after the complete product identity is verified.
+An interrupted draft creation or metadata save resumes the same receipt.
+
 Scrydex market prices shown in the search are USD reference values, may be cached
 for 24 hours, and may be unavailable. They do not populate acquisition cost or
 set a Shopify selling price. Enter actual cost per selling unit. Newly registered
