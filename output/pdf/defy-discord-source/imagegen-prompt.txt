@@ -1,0 +1,17 @@
+Use case: ads-marketing
+Asset type: finished flat print artwork for a portrait A4 in-store Discord community poster, 210:297 aspect ratio. Render as large and crisp as possible.
+Primary request: Design a polished, playful Defy TCG poster based on the supplied brand screenshot. It must prominently invite customers to join the store's Discord.
+Input images: Image 1 (Instagram screenshot) is the brand reference for electric periwinkle/royal blue, bold white sans serif lettering and the exact cute tan cat mascot with blue cap, green hatband, yellow leaf medallion, blue neckerchief, happy closed eyes and small forehead lightning stripe. Do not reproduce Instagram UI, stats, product photos or screenshot text. Image 2 (QR code) is only a reference for the mascot; DO NOT draw or imitate the QR code. A genuine QR will be placed afterward.
+Design: sophisticated clean 2D vector-like illustration, electric blue #4B54FF background, creamy white and warm golden yellow accents, near-black outlines. Friendly collectible trading card shop feel. Subtle large tone-on-tone blue card outlines and small four-point sparkles at edges only, generous breathing room. Flat artwork, no photographed paper, no wall, no perspective, no mockup.
+Composition: thin cream inset border with softly rounded corners, all important content inset at least 7% from edges. Top left small bold wordmark "DEFY TCG". Top right the faithful happy cat mascot, about 23% page width, unobstructed and fully inside margins; it may overlap a decorative card shape but never overlap lettering. Very large bold condensed cream headline across upper portion in two lines "JOIN OUR" then "DISCORD". Under it a small centered sentence "Find your people. Find your next game."
+CRITICAL QR AREA: leave a perfectly plain solid white square centered horizontally, covering x=20% through 80% of page width and y=41% through 83.43% of page height (square in A4 dimensions). A discreet dark-blue offset shadow behind it gives a premium trading-card panel effect. Its interior must be completely blank pure white with NO texture, text, symbols, mascot, QR, or decoration; keep rounded corners confined to the outside 2%. It will contain a real QR inserted later. Do not let any decorative element or typography cross this square.
+Below the square a yellow rounded capsule centered at y=87% reading "SCAN TO JOIN". Below that at y=92% print "EVENTS  •  TRADES  •  LOCAL PLAYERS". Tiny bottom center at y=96% "BUY • SELL • TRADE • PLAY".
+Exact visible text only:
+"DEFY TCG"
+"JOIN OUR"
+"DISCORD"
+"Find your people. Find your next game."
+"SCAN TO JOIN"
+"EVENTS  •  TRADES  •  LOCAL PLAYERS"
+"BUY • SELL • TRADE • PLAY"
+Avoid extraneous copy, URLs, invented logos, watermarks, gradients, clutter, illegible small text, distortion of the cat identity. Prioritize strong clean typography and the reserved central QR square.
