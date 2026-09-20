@@ -6,8 +6,8 @@ import "./shopify.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
-  title: "Shopify stock & orders · Defy TCG",
-  description: "View the Shopify inventory and orders connected to Defy TCG.",
+  title: "Shopify stock & receiving · Defy TCG",
+  description: "View Shopify inventory, receiving quantities, costs, and connected orders for Defy TCG.",
   robots: { index: false, follow: false },
 };
 

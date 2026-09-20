@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { neon } from "@neondatabase/serverless";
 import { ShopifySyncRepository } from "../lib/shopify/repository.ts";
-import type { Delivery, Projection, SyncBatch } from "../lib/shopify/sync-core.ts";
+import { encodeCursor, type Delivery, type Projection, type SyncBatch } from "../lib/shopify/sync-core.ts";
 
 // Explicit opt-in only; root supplies the URL of an isolated development Neon branch.
 const enabled = process.env.SHOPIFY_SYNC_INTEGRATION === "1" && Boolean(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL);
@@ -64,6 +64,55 @@ test("real Postgres sync inbox, concurrent leases, atomic rollback, version orde
     assert.equal(await store.apply(shop, event("removed-variant"), { projections: [], replaceChildren: [{ kind: "variants", parentId: "product1", ids: [], sourceUpdatedAt: newer, observedAt: newer }] }, removalLease.leaseToken), true);
     assert.equal((await sql.query("SELECT deleted FROM shopify_variants WHERE shop=$1 AND id='variant2'", [shop]))[0].deleted, true);
     // Only this isolated fixture shop is removed; no legacy table is ever referenced for mutation.
+  } finally {
+    for (const table of ["shopify_webhook_inbox", "shopify_order_lines", "shopify_orders", "shopify_inventory", "shopify_variants", "shopify_products"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
+    if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
+  }
+});
+
+test("real Postgres inventory-only workers skip order jobs while retaining their data for full sync", { skip: !enabled }, async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;
+  const sql = neon(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL!);
+  const store = new ShopifySyncRepository();
+  const shop = `inventory-mode-${randomUUID()}.invalid`;
+  const time = "2026-09-18T00:00:00.000Z";
+  const delivery = (id: string, topic: string, resourceId: string): Delivery => ({ id, topic, resourceId, triggeredAt: time });
+  const saved = (kind: Projection["kind"], id: string, parentId: string | null, data: Record<string, unknown>): Projection =>
+    ({ kind, id, parentId, data, sourceUpdatedAt: time, observedAt: time, deleted: false });
+  try {
+    await store.enqueue(shop, delivery("old-order", "orders/updated", "order1"));
+    await store.enqueue(shop, delivery("old-order-page", "reconcile", encodeCursor({ phase: "ordersAudit", after: "old-cursor" })));
+    const inventoryPage = delivery("inventory-page", "reconcile", encodeCursor({ phase: "inventory", after: null }));
+    await store.enqueue(shop, inventoryPage);
+    const lease = await store.acquire(shop, undefined, false);
+    assert.equal(lease?.id, "inventory-page");
+    assert.equal(await store.apply(shop, inventoryPage, { projections: [
+      saved("products", "product1", null, { title: "Bundle", status: "ACTIVE" }),
+      saved("variants", "variant1", "product1", { title: "Default", sku: "DEFY-1", barcode: "0196214150478", price: "36.38", tracked: true }),
+      saved("inventory", "item1@location1", "variant1", { locationId: "location1", available: 3, onHand: 5, committed: 2 }),
+      // Previously imported order data must survive an inventory-only interval.
+      saved("orders", "order1", null, { name: "#TEST", createdAt: time, financialStatus: "PAID", total: "36.38", currencyCode: "USD", itemCount: 1 }),
+    ], replaceChildren: [] }, lease!.leaseToken), true);
+    assert.equal(await store.acquire(shop, undefined, false), null);
+    assert.equal(await store.acquire(shop, "old-order", false), null);
+    assert.equal(await store.acquire(shop, "old-order-page", false), null);
+    assert.equal((await sql.query("SELECT status FROM shopify_webhook_inbox WHERE shop=$1 AND id='old-order-page'", [shop]))[0].status, "pending");
+    let inventory = await store.dashboard(shop, "location1", false);
+    assert.deepEqual(inventory.orders, []); assert.equal(inventory.summary.orders, null);
+    assert.equal(inventory.summary.pending, 0); assert.equal(inventory.summary.failed, 0);
+    assert.equal(inventory.inventory[0].barcode, "0196214150478"); assert.equal(inventory.inventory[0].tracked, true);
+    assert.equal(inventory.inventory[0].status, "ACTIVE");
+    assert.equal(inventory.inventory[0].available, 3); assert.equal(inventory.inventory[0].onHand, 5);
+    const orderLease = await store.acquire(shop, "old-order");
+    assert.ok(orderLease); await store.fail(shop, orderLease, "Order permission required");
+    inventory = await store.dashboard(shop, "location1", false);
+    assert.deepEqual(inventory.recentErrors, []); assert.equal(inventory.summary.failed, 0);
+    const full = await store.dashboard(shop, "location1");
+    assert.equal(full.orders.length, 1); assert.equal(full.summary.orders, 1);
+    assert.equal(full.summary.failed, 1); assert.equal(full.summary.pending, 1);
+    assert.equal(full.recentErrors[0].error, "Order permission required");
+    assert.equal((await store.acquire(shop, "old-order-page"))?.id, "old-order-page");
   } finally {
     for (const table of ["shopify_webhook_inbox", "shopify_order_lines", "shopify_orders", "shopify_inventory", "shopify_variants", "shopify_products"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
     if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;

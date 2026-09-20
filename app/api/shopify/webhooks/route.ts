@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     if (!verifyWebhookHmac(raw, request.headers.get("x-shopify-hmac-sha256"), config.webhookSecret)) return Response.json({ error: "Invalid webhook signature." }, { status: 401 });
     let payload: unknown;
     try { payload = JSON.parse(Buffer.from(raw).toString("utf8")); } catch { throw new ShopifySyncError("INVALID_JSON", "Webhook body is not valid JSON.", 400); }
-    const delivery = parseDelivery(request.headers, payload, config.shop);
+    const delivery = parseDelivery(request.headers, payload, config.shop, config.ordersEnabled);
     if (!delivery) return new Response(null, { status: 204 });
     // Persist only IDs/topic/time. Customer payloads and signing secrets are never stored.
     await new ShopifySyncRepository().enqueue(config.shop, delivery);

@@ -2264,10 +2264,14 @@ export default function StoreOS() {
             <p>
               Scrydex controls refreshed market and list prices.
             </p>
+            <p>
+              Stock received in Shopify POS appears in Shopify stock &amp; receiving,
+              with its receipt quantities and costs.
+            </p>
           </div>
           <div className="header-actions">
             <Link className="secondary-button" href="/shopify">
-              Shopify stock &amp; orders
+              Shopify stock &amp; receiving
             </Link>
             <Link className="secondary-button" href="/singles">
               Riftbound singles
@@ -2930,7 +2934,7 @@ export default function StoreOS() {
             style={{ textDecoration: "none" }}
           >
             <span aria-hidden="true">↔</span>
-            Shopify sync
+            Shopify stock &amp; receiving
           </Link>
         </nav>
         <div className="sidebar-spacer" />
@@ -3119,7 +3123,7 @@ export default function StoreOS() {
                 </button>
               ))}
               <Link href="/shopify" className="secondary-button">
-                ↔ Shopify stock &amp; orders
+                ↔ Shopify stock &amp; receiving
               </Link>
               <Link href="/sku-labels" className="secondary-button">
                 ▦ QR SKU labels

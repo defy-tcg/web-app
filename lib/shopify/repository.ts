@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import type { Delivery, SyncBatch, SyncStore } from "./sync-core.ts";
+import { INVENTORY_RECONCILE_PATTERNS, syncTopics } from "./sync-core.ts";
 
 const TABLES = { products: "shopify_products", variants: "shopify_variants", inventory: "shopify_inventory", orders: "shopify_orders", orderLines: "shopify_order_lines" } as const;
+// Parameters are the enabled flag, inventory topics, and canonical cursor patterns.
+// Apply the same filter to leases and status so disabled order jobs remain durable
+// without consuming worker capacity or reporting unrelated inventory failures.
+function deliveryModeSql(parameter: number) {
+  return `($${parameter}::boolean OR topic = ANY($${parameter + 1}::text[]) OR (topic='reconcile' AND resource_id LIKE ANY($${parameter + 2}::text[])))`;
+}
+const modeParameters = (ordersEnabled: boolean) => [ordersEnabled, syncTopics(false), INVENTORY_RECONCILE_PATTERNS];
 function connection() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not configured.");
   return neon(process.env.DATABASE_URL);
@@ -18,14 +26,15 @@ export class ShopifySyncRepository implements SyncStore {
     const rows = await this.sql.query("SELECT id FROM shopify_webhook_inbox WHERE shop=$1 AND id=$2 AND status='complete'", [shop, id]);
     return rows.length > 0;
   }
-  async acquire(shop: string, id?: string): Promise<InboxDelivery | null> {
+  async acquire(shop: string, id?: string, ordersEnabled = true): Promise<InboxDelivery | null> {
     const token = randomUUID();
     const rows = await this.sql.query(`WITH candidate AS (
       SELECT shop,id FROM shopify_webhook_inbox WHERE shop=$1 AND ($2::text IS NULL OR id=$2)
+        AND ${deliveryModeSql(4)}
         AND status <> 'complete' AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until < now())
       ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
     ) UPDATE shopify_webhook_inbox i SET status='processing', lease_token=$3, lease_until=now()+interval '90 seconds', attempts=attempts+1, updated_at=now()
-      FROM candidate c WHERE i.shop=c.shop AND i.id=c.id RETURNING i.*`, [shop, id ?? null, token]);
+      FROM candidate c WHERE i.shop=c.shop AND i.id=c.id RETURNING i.*`, [shop, id ?? null, token, ...modeParameters(ordersEnabled)]);
     const row = rows[0];
     if (!row) return null;
     return { id: row.id as string, topic: row.topic as string, resourceId: row.resource_id as string,
@@ -87,25 +96,26 @@ export class ShopifySyncRepository implements SyncStore {
     const ids = rows.slice(0, limit).map(row => row.id as string);
     return { ids, hasNextPage: rows.length > limit, endCursor: ids.at(-1) ?? null };
   }
-  async dashboard(shop: string, locationId: string) {
+  async dashboard(shop: string, locationId: string, ordersEnabled = true) {
     const [inventory, orders, summaries, errors] = await Promise.all([
       this.sql.query(`SELECT v.id AS "variantId",p.id AS "productId",p.data->>'title' AS title,v.data->>'title' AS "variantTitle",v.data->>'sku' AS sku,
+        COALESCE(v.data->>'barcode','') AS barcode,(v.data->>'tracked')::boolean AS tracked,p.data->>'status' AS status,
         v.data->>'price' AS price,i.data->>'locationId' AS "locationId",(i.data->>'available')::integer AS available,
         (i.data->>'onHand')::integer AS "onHand",(i.data->>'committed')::integer AS committed,i.source_updated_at AS "updatedAt"
         FROM shopify_inventory i JOIN shopify_variants v ON v.shop=i.shop AND v.id=i.parent_id JOIN shopify_products p ON p.shop=v.shop AND p.id=v.parent_id
         WHERE i.shop=$1 AND i.data->>'locationId'=$2 AND NOT i.deleted AND NOT v.deleted AND NOT p.deleted ORDER BY p.data->>'title',v.id LIMIT 100`, [shop, locationId]),
-      this.sql.query(`SELECT id,data->>'name' AS name,data->>'createdAt' AS "createdAt",source_updated_at AS "updatedAt",data->>'cancelledAt' AS "cancelledAt",
+      ordersEnabled ? this.sql.query(`SELECT id,data->>'name' AS name,data->>'createdAt' AS "createdAt",source_updated_at AS "updatedAt",data->>'cancelledAt' AS "cancelledAt",
         data->>'financialStatus' AS "financialStatus",data->>'fulfillmentStatus' AS "fulfillmentStatus",data->>'total' AS total,
-        data->>'currencyCode' AS "currencyCode",(data->>'itemCount')::integer AS "itemCount" FROM shopify_orders WHERE shop=$1 AND NOT deleted ORDER BY source_updated_at DESC LIMIT 50`, [shop]),
+        data->>'currencyCode' AS "currencyCode",(data->>'itemCount')::integer AS "itemCount" FROM shopify_orders WHERE shop=$1 AND NOT deleted ORDER BY source_updated_at DESC LIMIT 50`, [shop]) : Promise.resolve([]),
       this.sql.query(`SELECT
         (SELECT count(*)::integer FROM shopify_products WHERE shop=$1 AND NOT deleted) AS products,
         (SELECT count(*)::integer FROM shopify_variants v JOIN shopify_products p ON p.shop=v.shop AND p.id=v.parent_id WHERE v.shop=$1 AND NOT v.deleted AND NOT p.deleted) AS variants,
         (SELECT count(*)::integer FROM shopify_inventory i JOIN shopify_variants v ON v.shop=i.shop AND v.id=i.parent_id JOIN shopify_products p ON p.shop=v.shop AND p.id=v.parent_id WHERE i.shop=$1 AND i.data->>'locationId'=$2 AND NOT i.deleted AND NOT v.deleted AND NOT p.deleted) AS inventory,
-        (SELECT count(*)::integer FROM shopify_orders WHERE shop=$1 AND NOT deleted) AS orders,
-        (SELECT count(*)::integer FROM shopify_webhook_inbox WHERE shop=$1 AND status IN ('pending','processing')) AS pending,
-        (SELECT count(*)::integer FROM shopify_webhook_inbox WHERE shop=$1 AND status='failed') AS failed,
-        (SELECT max(updated_at) FROM shopify_webhook_inbox WHERE shop=$1 AND status='complete') AS "lastSyncedAt"`, [shop, locationId]),
-      this.sql.query("SELECT topic,last_error AS error,updated_at AS \"updatedAt\" FROM shopify_webhook_inbox WHERE shop=$1 AND status='failed' ORDER BY updated_at DESC LIMIT 10", [shop]),
+        CASE WHEN $3::boolean THEN (SELECT count(*)::integer FROM shopify_orders WHERE shop=$1 AND NOT deleted) ELSE NULL END AS orders,
+        (SELECT count(*)::integer FROM shopify_webhook_inbox WHERE shop=$1 AND ${deliveryModeSql(3)} AND status IN ('pending','processing')) AS pending,
+        (SELECT count(*)::integer FROM shopify_webhook_inbox WHERE shop=$1 AND ${deliveryModeSql(3)} AND status='failed') AS failed,
+        (SELECT max(updated_at) FROM shopify_webhook_inbox WHERE shop=$1 AND ${deliveryModeSql(3)} AND status='complete') AS "lastSyncedAt"`, [shop, locationId, ...modeParameters(ordersEnabled)]),
+      this.sql.query(`SELECT topic,last_error AS error,updated_at AS "updatedAt" FROM shopify_webhook_inbox WHERE shop=$1 AND ${deliveryModeSql(2)} AND status='failed' ORDER BY updated_at DESC LIMIT 10`, [shop, ...modeParameters(ordersEnabled)]),
     ]);
     return { inventory, orders, summary: summaries[0], recentErrors: errors };
   }

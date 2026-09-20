@@ -7,6 +7,11 @@ the same Shopify products. Sync never adjusts Shopify stock, creates sales in th
 legacy POS ledger, or changes spreadsheet inventory. Receiving remains the only
 workflow in this integration that adds stock.
 
+The existing Shopify POS **Receive sealed stock** tile also receives directly
+into Shopify. Its confirmed receipt history is visible in the same DefyOS
+dashboard. See [SHOPIFY_POS_RECEIVING.md](SHOPIFY_POS_RECEIVING.md) for the staff
+workflow and the distinction between receipt costs and selling prices.
+
 The separate [Scrydex pricing refresh](SHOPIFY_PRICING.md) updates existing
 Shopify selling prices for POS and online use. It has its own daily schedule,
 manual refresh panel, and durable progress; stock/order projection stays read-only.
@@ -33,6 +38,10 @@ variant's price on demand. Neither pricing flow adjusts stock or cost.
    is 60 days. Older order access requires approval for `read_all_orders`.
    Permission errors remain visible; no empty successful order snapshot is
    fabricated when Shopify denies access.
+   For stock receiving without order history, set
+   `SHOPIFY_SYNC_ORDERS_ENABLED=false`. That explicit mode only needs product,
+   inventory, and location permissions. Omission preserves full inventory/order
+   synchronization and its order-access errors.
 4. Set `SHOPIFY_WEBHOOK_SECRET` to the signing secret for the app/subscriptions
    sending these deliveries. For app-owned subscriptions, use that app's client
    secret. Use the configured webhook secret for an Admin-created subscription.
@@ -49,6 +58,9 @@ variant's price on demand. Neither pricing flow adjusts stock or cost.
    `orders/paid`, `orders/cancelled`, and `orders/delete`.
    Subscription setup is an explicit operational step; enabling this feature
    does not silently create or alter Shopify app subscriptions.
+   In inventory-only mode, register only the six product/inventory topics. The
+   setup script selects these from `SHOPIFY_SYNC_ORDERS_ENABLED=false`, leaves
+   existing order subscriptions untouched, and does not request `read_orders`.
 7. Open the Shopify dashboard and explicitly run reconciliation through its
    final page. Continue any paused run. Confirm known products, stock, and
    recent order totals against Shopify. For a receiving test, use development
@@ -76,6 +88,12 @@ is a fallback for interrupted requests; normal deliveries start immediately
 using Next.js `after()`. A scheduler calling the protected endpoint more often
 can reduce fallback delay when the hosting plan permits it. Manual reconciliation
 also drains one due delivery after each completed page.
+
+Inventory-only mode ignores incoming order topics and excludes queued order
+deliveries and order reconciliation pages from its worker. It leaves those rows
+available for a later explicit full-sync setup. Reconciliation finishes after
+inventory, product, and variant audits; the dashboard states that orders are not
+connected instead of showing an empty successful order import.
 
 Snapshots compare the object's Shopify `updatedAt`, then the time its read
 started. Inventory uses **InventoryLevel.updatedAt**, independently of the

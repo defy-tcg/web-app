@@ -1,15 +1,15 @@
 import type { ReadGraphQL } from "./read-client.ts";
-import { ShopifySyncError, encodeCursor, type Delivery, type Projection, type ReconcileCursor, type SyncBatch } from "./sync-core.ts";
+import { ShopifySyncError, encodeCursor, requireEnabledCursor, type Delivery, type Projection, type ReconcileCursor, type SyncBatch } from "./sync-core.ts";
 
 interface PageInfo { hasNextPage: boolean; endCursor: string | null }
 interface Product { id: string; title: string; handle: string; status: string; updatedAt: string }
 interface Level { updatedAt: string; quantities: { name: string; quantity: number }[] }
-interface Variant { id: string; title: string; sku: string | null; price: string; updatedAt: string; product: Product; inventoryItem: { id: string; tracked: boolean; inventoryLevel: Level | null } }
+interface Variant { id: string; title: string; sku: string | null; barcode: string | null; price: string; updatedAt: string; product: Product; inventoryItem: { id: string; tracked: boolean; inventoryLevel: Level | null } }
 interface OrderLine { id: string; title: string; sku: string | null; quantity: number; currentQuantity: number; originalUnitPriceSet: { shopMoney: { amount: string; currencyCode: string } }; variant: Pick<Variant, "id"> | Variant | null }
 interface Order { id: string; name: string; createdAt: string; updatedAt: string; cancelledAt: string | null; displayFinancialStatus: string | null; displayFulfillmentStatus: string; currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }; lineItems: { nodes: OrderLine[]; pageInfo: PageInfo } }
 const PRODUCT_FIELDS = "id title handle status updatedAt";
 const LEVEL_FIELDS = `updatedAt quantities(names: ["available", "on_hand", "committed"]) { name quantity }`;
-const VARIANT_FIELDS = `id title sku price updatedAt product { ${PRODUCT_FIELDS} } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }`;
+const VARIANT_FIELDS = `id title sku barcode price updatedAt product { ${PRODUCT_FIELDS} } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }`;
 const ORDER_FIELDS = `id name createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus currentTotalPriceSet { shopMoney { amount currencyCode } }
   lineItems(first: 100) { nodes { id title sku quantity currentQuantity originalUnitPriceSet { shopMoney { amount currencyCode } } variant { id } } pageInfo { hasNextPage endCursor } }`;
 function empty(): SyncBatch { return { projections: [], replaceChildren: [] }; }
@@ -28,7 +28,7 @@ export function inventoryProjection(itemId: string, variantId: string | null, lo
 function addVariant(batch: SyncBatch, variant: Variant, locationId: string, observedAt: string) {
   const product = variant.product;
   batch.projections.push(projection("products", product.id, null, product.updatedAt, observedAt, { title: product.title, handle: product.handle, status: product.status }));
-  batch.projections.push(projection("variants", variant.id, product.id, variant.updatedAt, observedAt, { title: variant.title, sku: variant.sku ?? "", price: variant.price, inventoryItemId: variant.inventoryItem.id, tracked: variant.inventoryItem.tracked }));
+  batch.projections.push(projection("variants", variant.id, product.id, variant.updatedAt, observedAt, { title: variant.title, sku: variant.sku ?? "", barcode: variant.barcode ?? "", price: variant.price, inventoryItemId: variant.inventoryItem.id, tracked: variant.inventoryItem.tracked }));
   batch.projections.push(inventoryProjection(variant.inventoryItem.id, variant.id, locationId, variant.inventoryItem.inventoryLevel, observedAt));
 }
 function addOrder(batch: SyncBatch, order: Order, locationId: string, observedAt: string) {
@@ -72,7 +72,8 @@ export function deduplicateBatch(batch: SyncBatch): SyncBatch {
   }
   return { ...batch, projections: [...projections.values()] };
 }
-export async function fetchDeliverySnapshot(graphql: ReadGraphQL, delivery: Delivery, locationId: string): Promise<SyncBatch> {
+export async function fetchDeliverySnapshot(graphql: ReadGraphQL, delivery: Delivery, locationId: string, ordersEnabled = true): Promise<SyncBatch> {
+  if (!ordersEnabled && delivery.topic.startsWith("orders/")) throw new ShopifySyncError("ORDERS_DISABLED", "Order sync is disabled; this delivery remains pending.");
   const observedAt = new Date().toISOString();
   const batch = empty();
   if (delivery.topic.startsWith("inventory_levels/")) {
@@ -112,7 +113,8 @@ export async function fetchDeliverySnapshot(graphql: ReadGraphQL, delivery: Deli
   return deduplicateBatch(batch);
 }
 export type AuditPageLoader = (kind: "products" | "variants" | "orders", after: string | null) => Promise<{ ids: string[]; hasNextPage: boolean; endCursor: string | null }>;
-export async function fetchReconcilePage(graphql: ReadGraphQL, cursor: ReconcileCursor, locationId: string, loadAuditPage?: AuditPageLoader) {
+export async function fetchReconcilePage(graphql: ReadGraphQL, cursor: ReconcileCursor, locationId: string, loadAuditPage?: AuditPageLoader, ordersEnabled = true) {
+  requireEnabledCursor(cursor, ordersEnabled);
   const observedAt = new Date().toISOString();
   const batch = empty();
   let processed: number;
@@ -155,7 +157,7 @@ export async function fetchReconcilePage(graphql: ReadGraphQL, cursor: Reconcile
     }
   }
   if (pageInfo.hasNextPage && !pageInfo.endCursor) throw new ShopifySyncError("INVALID_PAGE", "Shopify did not return a continuation cursor.");
-  const nextPhase = { inventory: "productsAudit", productsAudit: "variantsAudit", variantsAudit: "orders", orders: "ordersAudit", ordersAudit: null } as const;
+  const nextPhase = { inventory: "productsAudit", productsAudit: "variantsAudit", variantsAudit: ordersEnabled ? "orders" : null, orders: "ordersAudit", ordersAudit: null } as const;
   const nextCursor = pageInfo.hasNextPage ? encodeCursor({ phase: cursor.phase, after: pageInfo.endCursor })
     : nextPhase[cursor.phase] ? encodeCursor({ phase: nextPhase[cursor.phase]!, after: null }) : null;
   return { batch: deduplicateBatch(batch), processed, nextCursor, done: nextCursor === null };

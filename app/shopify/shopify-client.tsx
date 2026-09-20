@@ -5,13 +5,17 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ThemeToggle from "../theme-toggle";
 import PricingPanel from "./pricing-panel";
+import ReceivingPanel from "./receiving-panel";
 
 type InventoryRow = {
   variantId: string;
   productId: string;
   title: string;
   variantTitle: string;
+  status: string | null;
   sku: string;
+  barcode: string;
+  tracked: boolean | null;
   price: string | number;
   locationId: string;
   available: number | null;
@@ -34,6 +38,7 @@ type OrderRow = {
 type SyncSnapshot = {
   configured: boolean;
   enabled: boolean;
+  ordersEnabled: boolean;
   shop: string;
   locationId: string;
   status: "disabled" | "setup_required" | "ready" | "error";
@@ -44,7 +49,7 @@ type SyncSnapshot = {
     products: number;
     variants: number;
     inventory: number;
-    orders: number;
+    orders: number | null;
     pending: number;
     failed: number;
     lastSyncedAt: string | null;
@@ -96,7 +101,7 @@ const errorMessage = (value: unknown, fallback: string): string => {
   return fallback;
 };
 const checkpointKey = (snapshot: SyncSnapshot) =>
-  `defy-shopify-sync:v1:${snapshot.shop}:${snapshot.locationId}`;
+  `defy-shopify-sync:v2:${snapshot.shop}:${snapshot.locationId}:${snapshot.ordersEnabled ? "full" : "inventory"}`;
 
 async function readSnapshot(signal?: AbortSignal): Promise<SyncSnapshot> {
   const response = await fetch("/api/shopify/sync", {
@@ -231,7 +236,7 @@ export default function ShopifyClient() {
     let cursor = checkpoint?.cursor;
     let processed = checkpoint?.processed ?? 0;
     let pendingProcessed = 0;
-    setMessage("Reading the latest inventory and orders from Shopify…");
+    setMessage(snapshot.ordersEnabled ? "Reading the latest inventory and orders from Shopify…" : "Reading the latest inventory from Shopify…");
     try {
       for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
         if (!mounted.current || pauseRequested.current) break;
@@ -270,17 +275,17 @@ export default function ShopifyClient() {
         );
         if (!mounted.current) break;
         setMessage(
-          `${count.format(processed)} records checked${pendingProcessed ? ` · ${count.format(pendingProcessed)} queued updates processed` : ""}.`,
+          `${count.format(processed)} record${processed === 1 ? "" : "s"} checked${pendingProcessed ? ` · ${count.format(pendingProcessed)} queued update${pendingProcessed === 1 ? "" : "s"} processed` : ""}.`,
         );
         if (progress.done) {
           setMessage(
-            `Sync complete. ${count.format(processed)} records checked${pendingProcessed ? ` and ${count.format(pendingProcessed)} queued updates processed` : ""}.`,
+            `Sync complete. ${count.format(processed)} record${processed === 1 ? "" : "s"} checked${pendingProcessed ? ` and ${count.format(pendingProcessed)} queued update${pendingProcessed === 1 ? "" : "s"} processed` : ""}.`,
           );
           break;
         }
         if (pauseRequested.current || page + 1 === MAX_PAGES_PER_RUN) {
           setMessage(
-            `Sync paused after ${count.format(processed)} records. Resume to continue from this point.`,
+            `Sync paused after ${count.format(processed)} record${processed === 1 ? "" : "s"}. Resume to continue from this point.`,
           );
           break;
         }
@@ -288,7 +293,7 @@ export default function ShopifyClient() {
     } catch (reason) {
       if (mounted.current) {
         setMessage(
-          `Sync stopped after ${count.format(processed)} records checked. You can retry when the connection is ready.`,
+          `Sync stopped after ${count.format(processed)} record${processed === 1 ? "" : "s"} checked. You can retry when the connection is ready.`,
         );
         setError(
           errorMessage(reason, "This sync stopped. You can retry safely."),
@@ -320,11 +325,13 @@ export default function ShopifyClient() {
     !!snapshot?.configured &&
     snapshot.enabled &&
     snapshot.blockers.length === 0;
-  const search = query.trim().toLowerCase();
+  const ordersEnabled = snapshot?.ordersEnabled !== false;
+  const visibleSection = ordersEnabled ? section : "inventory";
+  const search = (visibleSection === section ? query : "").trim().toLowerCase();
   const inventory = (snapshot?.inventory ?? [])
     .slice(0, MAX_VISIBLE_ROWS)
     .filter((row) =>
-      [row.title, row.variantTitle, row.sku]
+      [row.title, row.variantTitle, row.sku, row.barcode]
         .join(" ")
         .toLowerCase()
         .includes(search),
@@ -357,25 +364,22 @@ export default function ShopifyClient() {
         <section className="shopify-heading">
           <div>
             <p className="shopify-eyebrow">CONNECTED COMMERCE</p>
-            <h1>Shopify stock &amp; orders</h1>
+            <h1>{ordersEnabled ? "Shopify stock & orders" : "Shopify receiving & stock"}</h1>
             <p className="shopify-intro">
-              Your Shopify inventory and sales, together in Defy OS. Receive
-              singles into the same stock your website sells.
+              {ordersEnabled ? "Your Shopify inventory and sales, together in Defy OS." : "Your Shopify inventory and receiving history, together in Defy OS."} Receive stock through Shopify POS and review it here.
             </p>
           </div>
-          <Link href="/singles" className="shopify-button is-primary">
-            ＋ Receive singles
-          </Link>
+          <a href="#shopify-receive-stock" className="shopify-button is-primary">＋ Receive stock</a>
         </section>
+
+        <ReceivingPanel onRefreshed={refresh} />
 
         <PricingPanel />
 
         <div className="shopify-boundary">
           <span aria-hidden="true">↔</span>
           <p>
-            Shopify manages this inventory. Process its sales in Shopify; these
-            orders do not deduct stock again in the separate sheet-backed Defy
-            OS checkout.
+            Shopify is the source of truth for this stock. Receive and sell it through Shopify. These balances stay separate from the sheet-backed Defy OS inventory and checkout.
           </p>
         </div>
 
@@ -407,6 +411,7 @@ export default function ShopifyClient() {
             <p>
               Last synced: {dateTime(snapshot?.summary.lastSyncedAt ?? null)}
             </p>
+            {snapshot && !ordersEnabled && <p>Orders are not connected. Inventory and receiving remain available here.</p>}
             {snapshot?.status === "disabled" && (
               <p>
                 Enable Shopify synchronization in the store configuration to
@@ -473,7 +478,7 @@ export default function ShopifyClient() {
 
         {loading ? (
           <div className="shopify-empty" role="status">
-            Loading Shopify stock and orders…
+            Loading Shopify connection and stock…
           </div>
         ) : snapshot ? (
           <>
@@ -482,7 +487,7 @@ export default function ShopifyClient() {
                 [
                   ["Products", snapshot.summary.products],
                   ["Variants", snapshot.summary.variants],
-                  ["Orders", snapshot.summary.orders],
+                  [ordersEnabled ? "Orders" : "Stock records", ordersEnabled ? snapshot.summary.orders ?? 0 : snapshot.summary.inventory],
                   ["Queued updates", snapshot.summary.pending],
                 ] as const
               ).map(([label, value]) => (
@@ -507,24 +512,24 @@ export default function ShopifyClient() {
               <header>
                 <div>
                   <h2 id="shopify-records-heading">
-                    {section === "inventory"
+                    {visibleSection === "inventory"
                       ? "Shopify inventory"
                       : "Shopify orders"}
                   </h2>
                   <p>
-                    {section === "inventory"
+                    {visibleSection === "inventory"
                       ? "Stock at the configured receiving location."
                       : "Recent order totals and fulfillment status. Customer details are excluded."}
                   </p>
                 </div>
-                <div
+                {ordersEnabled && <div
                   className="shopify-sections"
                   role="group"
                   aria-label="Choose Shopify records"
                 >
                   <button
                     type="button"
-                    aria-pressed={section === "inventory"}
+                    aria-pressed={visibleSection === "inventory"}
                     onClick={() => {
                       setSection("inventory");
                       setQuery("");
@@ -534,7 +539,7 @@ export default function ShopifyClient() {
                   </button>
                   <button
                     type="button"
-                    aria-pressed={section === "orders"}
+                    aria-pressed={visibleSection === "orders"}
                     onClick={() => {
                       setSection("orders");
                       setQuery("");
@@ -542,38 +547,38 @@ export default function ShopifyClient() {
                   >
                     Orders
                   </button>
-                </div>
+                </div>}
               </header>
               <div className="shopify-filters">
                 <label>
                   <span>
                     Search loaded{" "}
-                    {section === "inventory" ? "inventory" : "orders"}
+                    {visibleSection === "inventory" ? "inventory" : "orders"}
                   </span>
                   <input
                     type="search"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
+                    value={visibleSection === section ? query : ""}
+                    onChange={(event) => { setSection(visibleSection); setQuery(event.target.value); }}
                     placeholder={
-                      section === "inventory"
-                        ? "Card name, variant, or SKU"
+                      visibleSection === "inventory"
+                        ? "Product, variant, SKU, or barcode"
                         : "Order number or status"
                     }
                   />
                 </label>
                 <p>
                   Showing up to{" "}
-                  {section === "inventory"
+                  {visibleSection === "inventory"
                     ? MAX_VISIBLE_ROWS
                     : MAX_VISIBLE_ORDERS}{" "}
                   saved{" "}
-                  {section === "inventory" ? "inventory records" : "orders"}.
-                  {section === "orders" &&
+                  {visibleSection === "inventory" ? "inventory records" : "orders"}.
+                  {visibleSection === "orders" &&
                     " Shopify access determines available order history."}
                 </p>
               </div>
 
-              {section === "inventory" ? (
+              {visibleSection === "inventory" ? (
                 inventory.length ? (
                   <div
                     className="shopify-table-scroll"
@@ -584,8 +589,10 @@ export default function ShopifyClient() {
                     <table>
                       <thead>
                         <tr>
-                          <th scope="col">Card / variant</th>
+                          <th scope="col">Product / variant</th>
                           <th scope="col">SKU</th>
+                          <th scope="col">Barcode</th>
+                          <th scope="col">Stock tracking</th>
                           <th scope="col">Price (USD)</th>
                           <th scope="col">Available</th>
                           <th scope="col">On hand</th>
@@ -599,8 +606,11 @@ export default function ShopifyClient() {
                             <th scope="row">
                               <strong>{row.title}</strong>
                               <small>{row.variantTitle}</small>
+                              <small>Product status: {row.status ? statusLabel(row.status) : "Not yet synced"}</small>
                             </th>
                             <td className="shopify-sku">{row.sku || "—"}</td>
+                            <td className="shopify-sku">{row.barcode || "Not set"}</td>
+                            <td>{row.tracked === true ? "Tracked" : row.tracked === false ? "Not tracked" : "Not yet synced"}</td>
                             <td>{money(row.price, "USD")}</td>
                             <td>
                               <strong>
@@ -634,7 +644,7 @@ export default function ShopifyClient() {
                     </h3>
                     <p>
                       {query
-                        ? "Try another card name or SKU among the loaded records."
+                        ? "Try another product name, SKU, or barcode among the loaded records."
                         : ready
                           ? "Use Sync now to load stock for the configured location."
                           : "Complete the connection setup to load Shopify inventory."}

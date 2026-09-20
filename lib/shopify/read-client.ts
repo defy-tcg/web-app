@@ -1,12 +1,12 @@
 // Server-only credentials; this transport deliberately accepts GraphQL queries only.
-import { ShopifySyncError } from "./sync-core.ts";
+import { ShopifySyncError, syncOrdersEnabled } from "./sync-core.ts";
 
-export interface SyncConfig { shop: string; clientId: string; clientSecret: string; locationId: string; webhookSecret: string; enabled: boolean }
+export interface SyncConfig { shop: string; clientId: string; clientSecret: string; locationId: string; webhookSecret: string; enabled: boolean; ordersEnabled: boolean }
 export function syncConfig(): SyncConfig {
   if (typeof window !== "undefined") throw new Error("Shopify credentials are server-only.");
   return { shop: process.env.SHOPIFY_SHOP_DOMAIN?.trim() ?? "", clientId: process.env.SHOPIFY_CLIENT_ID?.trim() ?? "",
     clientSecret: process.env.SHOPIFY_CLIENT_SECRET?.trim() ?? "", locationId: process.env.SHOPIFY_LOCATION_ID?.trim() ?? "",
-    webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET?.trim() ?? "", enabled: process.env.SHOPIFY_SYNC_ENABLED === "true" };
+    webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET?.trim() ?? "", enabled: process.env.SHOPIFY_SYNC_ENABLED === "true", ordersEnabled: syncOrdersEnabled() };
 }
 export function configBlockers(config: SyncConfig): string[] {
   const blockers: string[] = [];
@@ -41,7 +41,9 @@ export async function createReadClient(config: SyncConfig): Promise<ReadGraphQL>
     if (result.errors?.length) {
       const denied = result.errors.some(error => error.extensions?.code === "ACCESS_DENIED" || /access denied|permission|protected customer/i.test(error.message));
       throw new ShopifySyncError(denied ? "SHOPIFY_ACCESS_REQUIRED" : "SHOPIFY_READ_FAILED", denied
-        ? "Shopify denied access. Grant read_products, read_inventory, read_locations, and read_orders to this app, and approve the required order access in Shopify. Older orders require read_all_orders."
+        ? config.ordersEnabled
+          ? "Shopify denied access. Grant read_products, read_inventory, read_locations, and read_orders to this app, and approve the required order access in Shopify. Older orders require read_all_orders."
+          : "Shopify denied inventory access. Grant read_products, read_inventory, and read_locations to this app. Order sync is disabled."
         : "Shopify could not provide a complete snapshot. Retry synchronization.");
     }
     if (!result.data) throw new ShopifySyncError("SHOPIFY_READ_FAILED", "Shopify returned no snapshot. Retry synchronization.");

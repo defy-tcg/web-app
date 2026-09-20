@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ShopifySyncRepository } from "./repository.ts";
 import { configBlockers, createReadClient, type ReadGraphQL, type SyncConfig } from "./read-client.ts";
-import { decodeCursor, encodeCursor, processDelivery, ShopifySyncError, type Delivery } from "./sync-core.ts";
+import { decodeCursor, encodeCursor, processDelivery, requireEnabledCursor, ShopifySyncError, type Delivery } from "./sync-core.ts";
 import { fetchDeliverySnapshot, fetchReconcilePage } from "./snapshots.ts";
 
 export function syncErrorMessage(error: unknown): string {
@@ -20,14 +20,14 @@ export async function drainInbox(config: SyncConfig, limit = 3) {
   let failed = 0;
   const started = Date.now();
   for (let index = 0; index < limit && Date.now() - started < 30_000; index++) {
-    const delivery = await repository.acquire(config.shop);
+    const delivery = await repository.acquire(config.shop, undefined, config.ordersEnabled);
     if (!delivery) break;
     try {
       graphql ??= await createReadClient(config);
       const client = graphql;
       await processDelivery(config.shop, delivery, repository, async () => delivery.topic === "reconcile"
-        ? (await fetchReconcilePage(client, decodeCursor(delivery.resourceId), config.locationId, (kind, after) => repository.auditPage(config.shop, kind, after))).batch
-        : fetchDeliverySnapshot(client, delivery, config.locationId), delivery.leaseToken);
+        ? (await fetchReconcilePage(client, decodeCursor(delivery.resourceId), config.locationId, (kind, after) => repository.auditPage(config.shop, kind, after), config.ordersEnabled)).batch
+        : fetchDeliverySnapshot(client, delivery, config.locationId, config.ordersEnabled), delivery.leaseToken);
       processed++;
     } catch (error) {
       await repository.fail(config.shop, delivery, syncErrorMessage(error));
@@ -39,14 +39,15 @@ export async function drainInbox(config: SyncConfig, limit = 3) {
 export async function reconcilePage(config: SyncConfig, cursorValue: unknown) {
   requireSync(config);
   const cursor = decodeCursor(cursorValue);
+  requireEnabledCursor(cursor, config.ordersEnabled);
   const graphql = await createReadClient(config);
   const repository = new ShopifySyncRepository();
   const delivery: Delivery = { id: `reconcile:${randomUUID()}`, topic: "reconcile", resourceId: encodeCursor(cursor), triggeredAt: new Date().toISOString() };
   await repository.enqueue(config.shop, delivery);
-  const lease = await repository.acquire(config.shop, delivery.id);
+  const lease = await repository.acquire(config.shop, delivery.id, config.ordersEnabled);
   if (!lease) throw new ShopifySyncError("SYNC_BUSY", "This reconciliation page is already running.");
   try {
-    const page = await fetchReconcilePage(graphql, cursor, config.locationId, (kind, after) => repository.auditPage(config.shop, kind, after));
+    const page = await fetchReconcilePage(graphql, cursor, config.locationId, (kind, after) => repository.auditPage(config.shop, kind, after), config.ordersEnabled);
     if (!await repository.apply(config.shop, delivery, page.batch, lease.leaseToken)) throw new ShopifySyncError("SYNC_BUSY", "The sync lease changed. Retry this page.");
     // Work is bounded per request; cron/after() handle larger webhook backlogs.
     const pending = await drainInbox(config, 1);

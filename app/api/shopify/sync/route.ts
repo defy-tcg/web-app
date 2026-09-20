@@ -12,11 +12,11 @@ export async function GET() {
   if (!(await getAuthorizedSession())) return Response.json({ error: "Unauthorized" }, { status: 401, headers });
   const config = syncConfig();
   const blockers = configBlockers(config);
-  const base = { configured: blockers.length === 0, enabled: config.enabled, shop: config.shop, locationId: config.locationId, blockers,
-    inventory: [], orders: [], summary: { products: 0, variants: 0, inventory: 0, orders: 0, pending: 0, failed: 0, lastSyncedAt: null }, recentErrors: [] };
+  const base = { configured: blockers.length === 0, enabled: config.enabled, ordersEnabled: config.ordersEnabled, shop: config.shop, locationId: config.locationId, blockers,
+    inventory: [], orders: [], summary: { products: 0, variants: 0, inventory: 0, orders: config.ordersEnabled ? 0 : null, pending: 0, failed: 0, lastSyncedAt: null }, recentErrors: [] };
   if (!config.enabled || blockers.length) return Response.json({ ...base, status: !config.enabled ? "disabled" : "setup_required" }, { headers });
   try {
-    const dashboard = await new ShopifySyncRepository().dashboard(config.shop, config.locationId);
+    const dashboard = await new ShopifySyncRepository().dashboard(config.shop, config.locationId, config.ordersEnabled);
     return Response.json({ ...base, ...dashboard, status: dashboard.recentErrors.length ? "error" : "ready" }, { headers });
   } catch {
     return Response.json({ ...base, status: "setup_required", blockers: ["The Shopify sync tables are unavailable. Apply the reviewed additive migration before syncing."] }, { headers });

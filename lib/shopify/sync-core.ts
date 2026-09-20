@@ -4,6 +4,12 @@ export const SYNC_TOPICS = new Set([
   "products/create", "products/update", "products/delete", "inventory_levels/update", "inventory_levels/connect",
   "inventory_levels/disconnect", "orders/create", "orders/updated", "orders/paid", "orders/cancelled", "orders/delete",
 ]);
+export function syncTopics(ordersEnabled = true): string[] {
+  return [...SYNC_TOPICS].filter(topic => ordersEnabled || !topic.startsWith("orders/"));
+}
+export function syncOrdersEnabled(value = process.env.SHOPIFY_SYNC_ORDERS_ENABLED): boolean {
+  return value !== "false";
+}
 export const MAX_WEBHOOK_BYTES = 2_000_000;
 export type ProjectionKind = "products" | "variants" | "inventory" | "orders" | "orderLines";
 export interface Projection {
@@ -57,10 +63,10 @@ function numericId(value: unknown, type: string): string {
   }
   return `gid://shopify/${type}/${value}`;
 }
-export function parseDelivery(headers: Headers, body: unknown, expectedShop: string): Delivery | null {
+export function parseDelivery(headers: Headers, body: unknown, expectedShop: string, ordersEnabled = true): Delivery | null {
   if (headers.get("x-shopify-shop-domain") !== expectedShop) throw new ShopifySyncError("SHOP_MISMATCH", "Unexpected Shopify shop.", 403);
   const topic = headers.get("x-shopify-topic") ?? "";
-  if (!SYNC_TOPICS.has(topic)) return null;
+  if (!syncTopics(ordersEnabled).includes(topic)) return null;
   const webhookId = headers.get("x-shopify-webhook-id");
   const id = webhookId || headers.get("x-shopify-event-id") || "";
   const triggeredAt = headers.get("x-shopify-triggered-at") ?? "";
@@ -101,7 +107,19 @@ export function decodeCursor(value: unknown): ReconcileCursor {
   if (!["inventory", "productsAudit", "variantsAudit", "orders", "ordersAudit"].includes(cursor.phase) || (cursor.after !== null && (typeof cursor.after !== "string" || cursor.after.length > 2048))) throw new ShopifySyncError("INVALID_CURSOR", "Invalid sync cursor.", 400);
   return { phase: cursor.phase, after: cursor.after };
 }
-export function encodeCursor(cursor: ReconcileCursor): string { return Buffer.from(JSON.stringify(cursor)).toString("base64url"); }
+export function encodeCursor(cursor: ReconcileCursor): string { return Buffer.from(JSON.stringify({ phase: cursor.phase, after: cursor.after })).toString("base64url"); }
+export function requireEnabledCursor(cursor: ReconcileCursor, ordersEnabled = true): void {
+  if (!ordersEnabled && (cursor.phase === "orders" || cursor.phase === "ordersAudit")) {
+    throw new ShopifySyncError("ORDERS_DISABLED", "Order sync is disabled. Start a new inventory reconciliation.", 409);
+  }
+}
+// Reconciliation inbox resources use encodeCursor's canonical JSON. Match only
+// complete base64 groups before `after`, so SQL can skip old order jobs without
+// decoding arbitrary cursor data or leasing/acknowledging jobs we cannot process.
+export const INVENTORY_RECONCILE_PATTERNS = ["inventory", "productsAudit", "variantsAudit"].map(phase => {
+  const prefix = Buffer.from(`{"phase":"${phase}",`);
+  return `${prefix.subarray(0, Math.floor(prefix.length / 3) * 3).toString("base64url")}%`;
+});
 export function hasSyncOrigin(request: Request, configuredOrigin: string | undefined, production: boolean): boolean {
   if (request.headers.get("x-defy-sync") !== "1" || request.headers.get("sec-fetch-site") === "cross-site") return false;
   let trusted = configuredOrigin?.trim();

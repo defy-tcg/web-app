@@ -66,6 +66,22 @@ test("missing read_orders fails before listing or creating subscriptions", async
   assert.equal(f.calls.length, 1);
 });
 
+test("inventory-only setup creates six topics without order scopes and leaves existing order subscriptions untouched", async () => {
+  const oldOrder = subscription("ORDERS_UPDATED");
+  const f = fixture([oldOrder], 100);
+  f.state.scopes = f.state.scopes.filter(scope => scope !== "read_orders");
+  const plan = await setupShopifyWebhooks(f.graphql, { shop, origin, ordersEnabled: false });
+  assert.equal(plan.ordersEnabled, false); assert.equal(plan.missing.length, 6);
+  assert.ok(plan.missing.every(topic => !topic.startsWith("ORDERS_")));
+  assert.equal(f.calls.some(call => call.query.includes("mutation")), false);
+  const applied = await setupShopifyWebhooks(f.graphql, { shop, origin, ordersEnabled: false, apply: true });
+  assert.equal(applied.created.length, 6);
+  assert.deepEqual(f.records.find(item => item.id === oldOrder.id), oldOrder);
+  assert.equal(f.calls.filter(call => call.query.includes("mutation")).some(call => String(call.variables.topic).startsWith("ORDERS_")), false);
+  assert.deepEqual((await setupShopifyWebhooks(f.graphql, { shop, origin, ordersEnabled: false, apply: true })).created, []);
+  await assert.rejects(setupShopifyWebhooks(f.graphql, { shop, origin, ordersEnabled: true }), /needs read_orders/);
+});
+
 test("incomplete pagination and conflicting existing subscriptions block writes", async () => {
   const incomplete = fixture(); incomplete.state.incomplete = true;
   await assert.rejects(setupShopifyWebhooks(incomplete.graphql, { shop, origin, apply: true }), /pagination/);

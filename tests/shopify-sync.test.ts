@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { decodeCursor, encodeCursor, hasSyncOrigin, parseDelivery, processDelivery, readBoundedBody, shouldApplyProjection, verifyWebhookHmac, type Delivery, type Projection, type SyncBatch, type SyncStore } from "../lib/shopify/sync-core.ts";
+import { decodeCursor, encodeCursor, hasSyncOrigin, INVENTORY_RECONCILE_PATTERNS, parseDelivery, processDelivery, readBoundedBody, shouldApplyProjection, syncOrdersEnabled, syncTopics, verifyWebhookHmac, type Delivery, type Projection, type SyncBatch, type SyncStore } from "../lib/shopify/sync-core.ts";
 import { fetchDeliverySnapshot, fetchReconcilePage } from "../lib/shopify/snapshots.ts";
 import { configBlockers, type ReadGraphQL } from "../lib/shopify/read-client.ts";
 
@@ -135,7 +135,7 @@ test("orders projection retains financial state and totals, discards customer fi
   await assert.rejects(fetchDeliverySnapshot(graphql, { ...delivery, topic: "orders/updated", resourceId: order.id }, location), /no partial order/);
 });
 test("sync configuration restricts domains and requires explicit webhook secret and receiving location", () => {
-  const settings = { enabled: false, shop, clientId: "id", clientSecret: "secret", webhookSecret: "secret", locationId: location };
+  const settings = { enabled: false, ordersEnabled: true, shop, clientId: "id", clientSecret: "secret", webhookSecret: "secret", locationId: location };
   assert.deepEqual(configBlockers(settings), []);
   assert.equal(configBlockers({ ...settings, shop: "attacker.example" }).length, 1);
   assert.equal(configBlockers({ ...settings, webhookSecret: "", locationId: "1" }).length, 2);
@@ -180,4 +180,58 @@ test("large orders are durably deferred while subsequent reconciliation pages ca
   assert.equal(page.batch.projections.length, 0);
   assert.equal(page.batch.deferred?.[0].resourceId, "gid://shopify/Order/1");
   assert.deepEqual(decodeCursor(page.nextCursor), { phase: "orders", after: "next-order" });
+});
+
+test("inventory-only mode is explicit and ignores order webhooks without weakening shop validation", () => {
+  assert.equal(syncOrdersEnabled("false"), false);
+  for (const value of ["", "true", "FALSE"]) assert.equal(syncOrdersEnabled(value), true);
+  assert.equal(syncTopics().length, 11);
+  assert.equal(syncTopics(false).length, 6);
+  const headers = new Headers({ "x-shopify-shop-domain": shop, "x-shopify-topic": "orders/updated", "x-shopify-event-id": "event-12345678", "x-shopify-triggered-at": newer });
+  assert.equal(parseDelivery(headers, { id: 456 }, shop, false), null);
+  assert.throws(() => parseDelivery(headers, { id: 456 }, "other.myshopify.com", false), /Unexpected Shopify shop/);
+  assert.equal(parseDelivery(headers, { id: 456 }, shop)?.topic, "orders/updated");
+  headers.set("x-shopify-topic", "inventory_levels/update");
+  assert.equal(parseDelivery(headers, { inventory_item_id: 1, location_id: 1 }, shop, false)?.topic, "inventory_levels/update");
+});
+
+test("inventory-only reconciliation completes after variant audits and refuses old order cursors before remote reads", async () => {
+  let reads = 0;
+  const graphql: ReadGraphQL = async <T>() => { reads++; return { nodes: [] } as T; };
+  const audit = async () => ({ ids: [], hasNextPage: false, endCursor: null });
+  const page = await fetchReconcilePage(graphql, { phase: "variantsAudit", after: null }, location, audit, false);
+  assert.equal(page.done, true); assert.equal(page.nextCursor, null);
+  const fullPage = await fetchReconcilePage(graphql, { phase: "variantsAudit", after: null }, location, audit);
+  assert.deepEqual(decodeCursor(fullPage.nextCursor), { phase: "orders", after: null });
+  for (const phase of ["orders", "ordersAudit"] as const) {
+    await assert.rejects(fetchReconcilePage(graphql, { phase, after: "old-page" }, location, audit, false), /Order sync is disabled/);
+  }
+  await assert.rejects(fetchDeliverySnapshot(graphql, { ...delivery, topic: "orders/updated" }, location, false), /remains pending/);
+  assert.equal(reads, 0);
+});
+
+test("inventory cursor filters accept canonical inventory pages and exclude pending order pages", () => {
+  for (const phase of ["inventory", "productsAudit", "variantsAudit", "orders", "ordersAudit"] as const) {
+    for (const after of [null, "next-page", "unicode-次のページ"]) {
+      const encoded = encodeCursor({ phase, after });
+      assert.equal(encodeCursor({ after, phase }), encoded);
+      assert.equal(INVENTORY_RECONCILE_PATTERNS.some(pattern => encoded.startsWith(pattern.slice(0, -1))), !phase.startsWith("orders"));
+    }
+  }
+});
+
+test("inventory snapshots preserve Shopify barcode and tracking without writing a legacy balance", async () => {
+  const graphql: ReadGraphQL = async <T>(query: string) => {
+    assert.match(query, /sku barcode price/);
+    return { productVariants: { nodes: [{ id: "variant1", title: "Default Title", sku: "DEFY-1", barcode: "0196214150478", price: "36.38", updatedAt: newer,
+      product: { id: "product1", title: "Bundle", handle: "bundle", status: "ACTIVE", updatedAt: newer },
+      inventoryItem: { id: "item1", tracked: true, inventoryLevel: { updatedAt: newer, quantities: [{ name: "available", quantity: 3 }, { name: "on_hand", quantity: 5 }, { name: "committed", quantity: 2 }] } },
+    }], pageInfo: { hasNextPage: false, endCursor: null } } } as T;
+  };
+  const page = await fetchReconcilePage(graphql, { phase: "inventory", after: null }, location, undefined, false);
+  const variant = page.batch.projections.find(row => row.kind === "variants")!;
+  assert.equal(variant.data.barcode, "0196214150478"); assert.equal(variant.data.tracked, true);
+  const level = page.batch.projections.find(row => row.kind === "inventory")!;
+  assert.equal(level.data.available, 3); assert.equal(level.data.onHand, 5); assert.equal(level.data.committed, 2);
+  assert.deepEqual(decodeCursor(page.nextCursor), { phase: "productsAudit", after: null });
 });
