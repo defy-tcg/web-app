@@ -16,16 +16,16 @@ WIDTH, HEIGHT = A4
 INVITE = "https://discord.gg/ytzCuk7VKy"
 
 pdf = canvas.Canvas(str(DESTINATION), pagesize=A4, pageCompression=1)
-pdf.setTitle("Defy TCG - Join Our Discord - A4")
+pdf.setTitle("Defy TCG - Join Our Discord - Minimal A4")
 pdf.setAuthor("Defy TCG")
 pdf.setSubject("Portrait A4 in-store Discord poster; profile invite with no scheduled expiry")
 pdf.drawImage(str(SOURCE / "artwork.png"), 0, 0, width=WIDTH, height=HEIGHT)
 
-# Artwork's white card is x=238..817, y=604..1181 in its 1054x1492 image.
+# Artwork's white panel is x=149..906, y=289..1041 in its 1054x1492 image.
 # A vector QR with four modules of quiet zone, plus the card's outer margin.
-qr_size = 106 * mm
+qr_size = 143 * mm
 cx = 527.5 / 1054 * WIDTH
-cy = (1 - 892.5 / 1492) * HEIGHT
+cy = (1 - 665 / 1492) * HEIGHT
 left, bottom = cx - qr_size / 2, cy - qr_size / 2
 qr = QrCodeWidget(INVITE, barLevel="H", barBorder=4,
                   barWidth=qr_size, barHeight=qr_size)

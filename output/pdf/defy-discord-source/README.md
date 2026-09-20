@@ -1,12 +1,14 @@
-# Defy TCG Discord poster
+# Defy TCG Discord poster - minimal revision
 
 Deliverables: `../defy-tcg-discord-a4.pdf` (one portrait A4 page, 210 x 297 mm)
 and `../defy-tcg-discord-a4.png` (2481 x 3508 pixels, rendered at 300 dpi).
 Print the PDF on A4 in portrait orientation. Select fit to printable area for
 printers that cannot print to the edge.
 
-The design follows the supplied Defy TCG Instagram reference: electric blue,
-cream lettering, warm yellow accents, trading-card motifs, and the cat mascot.
+The design follows the user's simpler Defy TCG reference: electric blue,
+clean white lowercase lettering, generous open space, and a dominant QR panel.
+The mascot appears only as a small central QR badge. The decorative cards,
+sparkles, border, yellow accents, and extra promotional copy were removed.
 Artwork was generated with the built-in image generation tool; its complete
 prompt is saved in `imagegen-prompt.txt`. The poster artwork is a 1054 x 1492
 pixel original. The PNG export's higher resolution does not add source detail.
@@ -23,7 +25,9 @@ poster has no scheduled invite expiration. Any invite can still be revoked by
 the server administrator.
 
 The final QR uses level H error correction and a four-module quiet zone, with
-extra clear space from the white card. The supplied cat badge appears in a
+extra clear space from the white panel. Its 143 mm footprint (including quiet
+zone) is 35% wider than the earlier design. Actual black modules span about
+115 mm. The supplied cat badge appears in a
 small central inset. The reference JPEG is retained unchanged; the builder
 uses a PDF clipping window to display its badge. The QR is also a clickable
 link in the PDF.

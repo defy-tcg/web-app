@@ -1,17 +1,17 @@
-Use case: ads-marketing
-Asset type: finished flat print artwork for a portrait A4 in-store Discord community poster, 210:297 aspect ratio. Render as large and crisp as possible.
-Primary request: Design a polished, playful Defy TCG poster based on the supplied brand screenshot. It must prominently invite customers to join the store's Discord.
-Input images: Image 1 (Instagram screenshot) is the brand reference for electric periwinkle/royal blue, bold white sans serif lettering and the exact cute tan cat mascot with blue cap, green hatband, yellow leaf medallion, blue neckerchief, happy closed eyes and small forehead lightning stripe. Do not reproduce Instagram UI, stats, product photos or screenshot text. Image 2 (QR code) is only a reference for the mascot; DO NOT draw or imitate the QR code. A genuine QR will be placed afterward.
-Design: sophisticated clean 2D vector-like illustration, electric blue #4B54FF background, creamy white and warm golden yellow accents, near-black outlines. Friendly collectible trading card shop feel. Subtle large tone-on-tone blue card outlines and small four-point sparkles at edges only, generous breathing room. Flat artwork, no photographed paper, no wall, no perspective, no mockup.
-Composition: thin cream inset border with softly rounded corners, all important content inset at least 7% from edges. Top left small bold wordmark "DEFY TCG". Top right the faithful happy cat mascot, about 23% page width, unobstructed and fully inside margins; it may overlap a decorative card shape but never overlap lettering. Very large bold condensed cream headline across upper portion in two lines "JOIN OUR" then "DISCORD". Under it a small centered sentence "Find your people. Find your next game."
-CRITICAL QR AREA: leave a perfectly plain solid white square centered horizontally, covering x=20% through 80% of page width and y=41% through 83.43% of page height (square in A4 dimensions). A discreet dark-blue offset shadow behind it gives a premium trading-card panel effect. Its interior must be completely blank pure white with NO texture, text, symbols, mascot, QR, or decoration; keep rounded corners confined to the outside 2%. It will contain a real QR inserted later. Do not let any decorative element or typography cross this square.
-Below the square a yellow rounded capsule centered at y=87% reading "SCAN TO JOIN". Below that at y=92% print "EVENTS  •  TRADES  •  LOCAL PLAYERS". Tiny bottom center at y=96% "BUY • SELL • TRADE • PLAY".
-Exact visible text only:
-"DEFY TCG"
-"JOIN OUR"
-"DISCORD"
-"Find your people. Find your next game."
-"SCAN TO JOIN"
-"EVENTS  •  TRADES  •  LOCAL PLAYERS"
-"BUY • SELL • TRADE • PLAY"
-Avoid extraneous copy, URLs, invented logos, watermarks, gradients, clutter, illegible small text, distortion of the cat identity. Prioritize strong clean typography and the reserved central QR square.
+Use case: ads-marketing, revision of an existing poster.
+Asset type: portrait A4 print poster, flat full-page artwork in exact 210:297 proportions. Aim for a large crisp output.
+Primary request: Greatly simplify the Defy TCG Discord poster. Match the quiet typography and blue brand color of the supplied reference, but make a large QR area the overwhelming focal point.
+Input: the attached screenshot is only a visual reference for blue color, understated type layout, and generous spacing. Do not reproduce its screenshot UI. Do not copy its mascot composition or sales message.
+Create exactly this minimal composition:
+- One perfectly flat solid electric periwinkle blue background, approximately #4A48FF. No texture, gradient, glow or pattern.
+- At x=9%, y=8%, small spaced white sans-serif 'DEFY TCG'. At x=91%, y=8%, small right-aligned 'REDMOND, WA'. Both on one baseline.
+- Main focal area: one perfectly square pure-white panel, centered horizontally, from x=14% to x=86%; its top edge is y=20% and bottom edge y=70.91%, making it a physical square on A4. Corners only slightly rounded. Absolutely no border, stroke or shadow. Interior is totally blank white. This blank panel is a reserved area for a real functional QR that will be inserted later. No QR-like pattern, placeholder icon or mascot inside.
+- Beneath the panel at y=82%, one large beautifully typeset bold lowercase white headline 'join our discord.' on ONE LINE, centered, sized to stay at least 8% from side edges. Typeface: modern rounded geometric sans-serif, similar to the reference's 'buy singles.' but without text shadows or outlines.
+- At y=88%, one small quiet white sentence 'Scan to join the local card crew.' centered.
+- Everything else is empty blue negative space.
+Exact text:
+'DEFY TCG'
+'REDMOND, WA'
+'join our discord.'
+'Scan to join the local card crew.'
+Important: The design must feel dramatically calmer and less busy than typical gaming posters. Only the two small top labels, the one large blank white square, and the two lines underneath. No additional mascot illustrations (a tiny cat badge will be embedded in the real QR later), no cards, no sparkles, no rings, no sticker, no icons, no frames, no yellow accents, no decorative lines, no URL, no extra footer. Straight-on flat artwork, no paper mockup, no perspective, no screenshot controls. Keep typography crisp and professional.
