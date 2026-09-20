@@ -2,10 +2,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
 import ThemeToggle from "../theme-toggle";
+import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
 
 type Label = { sku: string; name: string };
 type SavedBatch = { version: 1; labels: Label[] };
@@ -17,7 +18,7 @@ function readSavedBatch(): Label[] {
   if (!raw) return [];
   const saved = JSON.parse(raw) as SavedBatch;
   if (saved.version !== 1 || !Array.isArray(saved.labels) || saved.labels.length > 100 ||
-    saved.labels.some((label) => !label || !isGeneratedSku(label.sku) || typeof label.name !== "string" || label.name.length > 48) ||
+    saved.labels.some((label) => !label || !isGeneratedSku(label.sku) || typeof label.name !== "string" || label.name.length > 1000) ||
     new Set(saved.labels.map((label) => label.sku)).size !== saved.labels.length) {
     throw new Error("Invalid saved batch");
   }
@@ -26,7 +27,7 @@ function readSavedBatch(): Label[] {
 
 function QrLabel({ label }: { label: Label }) {
   const svg = useMemo(() => skuQrSvg(label.sku), [label.sku]);
-  const displayName = label.name.trim().replace(/\s+/g, " ");
+  const displayName = Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
   return (
     <div className="sku-paper">
       <div className="sku-qr" role="img" aria-label={`QR code for ${label.sku}`} dangerouslySetInnerHTML={{ __html: svg }} />
@@ -48,16 +49,33 @@ export default function SkuLabelsClient() {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [savedProducts, setSavedProducts] = useState<SavedSkuProduct[]>([]);
+  const [printReady, setPrintReady] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [storageWarning, setStorageWarning] = useState("");
   const generated = useRef(new Set<string>());
   const generating = useRef(false);
   const downloadingPdf = useRef(false);
+  const printDialog = useRef<HTMLDialogElement>(null);
+  const savedSkus = useMemo(() => new Set(savedProducts.map((product) => product.sku)), [savedProducts]);
   const total = labels.length * Number(copies);
   const validCopies = Number.isInteger(Number(copies)) && Number(copies) >= 1 && Number(copies) <= 100;
   const canPrint = labels.length > 0 && validCopies && total <= 1000;
-  const printLabels = useMemo(() => labels.map((label) => ({ ...label, name: label.name.trim().replace(/\s+/g, " "), svg: skuQrSvg(label.sku) })), [labels]);
+  const printLabels = useMemo(() => labels.map((label) => ({ ...label, name: Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join(""), svg: skuQrSvg(label.sku) })), [labels]);
+
+  const inventoryLoaded = useCallback((products: SavedSkuProduct[]) => {
+    setSavedProducts(products);
+    setLabels((current) => current.map((label) => {
+      const saved = products.find((product) => product.sku === label.sku);
+      return saved ? { sku: saved.sku, name: saved.name } : label;
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (printReady && !printDialog.current?.open) printDialog.current?.showModal();
+  }, [printReady]);
 
   useEffect(() => {
     let saved: Label[] = [];
@@ -87,7 +105,7 @@ export default function SkuLabelsClient() {
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (generating.current || !ready) return;
+    if (generating.current || inventoryBusy || !ready) return;
     setError("");
     setMessage("");
     try {
@@ -122,6 +140,22 @@ export default function SkuLabelsClient() {
       generating.current = false;
       setBusy(false);
     }
+  }
+
+  function savedForPrint(products: SavedSkuProduct[], createdCount: number, existingCount: number) {
+    saveBatch(products.map(({ sku, name }) => ({ sku, name })));
+    setError("");
+    const confirmation = `${createdCount} new single${createdCount === 1 ? "" : "s"} saved to inventory.${existingCount ? ` ${existingCount} already saved; stock and prices unchanged.` : ""}`;
+    setMessage(confirmation);
+    setPrintReady(confirmation);
+  }
+
+  function loadSavedLabel(product: SavedSkuProduct) {
+    saveBatch([{ sku: product.sku, name: product.name }]);
+    setCopies("1");
+    setError("");
+    setMessage(`Loaded ${product.sku}. Print or download its label below. Reprinting does not change stock.`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function copySkus(values: string[]) {
@@ -199,7 +233,7 @@ export default function SkuLabelsClient() {
       <div className="sku-main">
         <header className="sku-hero">
           <div><p className="eyebrow">SINGLES · LABEL STUDIO</p><h1>Make it yours.<br /><span>Scan it in.</span></h1>
-            <p>Custom QR SKUs for your singles. Generate a batch, add card names, and print on your thermal labels.</p>
+            <p>Custom QR SKUs for your singles. Generate a batch, save the cards to inventory, and print your thermal labels.</p>
           </div>
           <div className="sku-size-badge"><b>38 × 13</b><span>mm thermal label</span></div>
         </header>
@@ -208,11 +242,11 @@ export default function SkuLabelsClient() {
           <section className="sku-panel sku-controls" aria-labelledby="sku-settings-title">
             <div className="sku-panel-heading"><span className="sku-step">01</span><div><h2 id="sku-settings-title">Customize your batch</h2><p>A short prefix, a random number, your card.</p></div></div>
             <form onSubmit={generate}>
-              <label>SKU prefix<input value={prefix} onChange={(event) => setPrefix(event.target.value.toUpperCase())} maxLength={4} pattern="[A-Za-z0-9]{0,4}" placeholder="DEFY" autoComplete="off" /><small>Up to 4 letters or numbers. Leave blank for numbers only.</small></label>
-              <label>Card name (optional)<input value={name} onChange={(event) => setName(event.target.value)} maxLength={48} placeholder="e.g. Ahri · Spirit Blossom" /><small>You can edit each card name after generating.</small></label>
-              <label>Number of SKUs<input type="number" inputMode="numeric" min={1} max={100} step={1} required value={count} onChange={(event) => setCount(event.target.value)} /><small>1–100 different SKUs per batch.</small></label>
-              <button className="primary-button" disabled={!ready || busy}>{busy ? "Checking inventory…" : labels.length ? "Generate new batch" : "Generate QR labels"}<span aria-hidden="true">↗</span></button>
-              {labels.length > 0 && <p className="sku-replace-note">A new batch replaces the preview. Download this batch first if you need to keep it.</p>}
+              <label>SKU prefix<input disabled={inventoryBusy} value={prefix} onChange={(event) => setPrefix(event.target.value.toUpperCase())} maxLength={4} pattern="[A-Za-z0-9]{0,4}" placeholder="DEFY" autoComplete="off" /><small>Up to 4 letters or numbers. Leave blank for numbers only.</small></label>
+              <label>Card name (optional)<input disabled={inventoryBusy} value={name} onChange={(event) => setName(event.target.value)} maxLength={48} placeholder="e.g. Ahri · Spirit Blossom" /><small>Add a name for each card before saving to inventory.</small></label>
+              <label>Number of SKUs<input disabled={inventoryBusy} type="number" inputMode="numeric" min={1} max={100} step={1} required value={count} onChange={(event) => setCount(event.target.value)} /><small>1–100 different SKUs per batch.</small></label>
+              <button className="primary-button" disabled={!ready || busy || inventoryBusy || pdfBusy}>{busy ? "Checking inventory…" : labels.length ? "Generate new batch" : "Generate QR labels"}<span aria-hidden="true">↗</span></button>
+              {labels.length > 0 && <p className="sku-replace-note">A new batch replaces the preview. Save this batch to inventory to keep it in your library.</p>}
             </form>
           </section>
 
@@ -220,15 +254,16 @@ export default function SkuLabelsClient() {
             <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Small label. Ready to scan.</h2><p>Defy TCG - Redmond + QR + card name + SKU</p></div></div>
             <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div><QrLabel label={labels[0] ?? example} /><p>{labels.length ? "First label preview · enlarged for clarity" : "Example label · generate a batch to preview yours"}</p></div>
             <div className="sku-print-settings">
-              <label>Copies per SKU<input type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
+              <label>Copies per SKU<input disabled={inventoryBusy || pdfBusy} type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
               <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>labels to print</span></div>
               <div className="sku-print-actions">
-                <button className="dark-button" disabled={!canPrint || busy || pdfBusy} onClick={() => void downloadPdf()}>{pdfBusy ? "Preparing PDF…" : "Download PDF"}</button>
-                <button className="secondary-button" disabled={!canPrint || busy || pdfBusy} onClick={print}>Print {canPrint ? total : ""} label{total === 1 ? "" : "s"}</button>
+                <button className="dark-button" disabled={!canPrint || busy || pdfBusy || inventoryBusy} onClick={() => void downloadPdf()}>{pdfBusy ? "Preparing PDF…" : "Download PDF"}</button>
+                <button className="secondary-button" disabled={!canPrint || busy || pdfBusy || inventoryBusy} onClick={print}>Print {canPrint ? total : ""} label{total === 1 ? "" : "s"}</button>
               </div>
             </div>
             {(!validCopies || total > 1000) && <p className="sku-inline-error" role="alert">Use 1–100 copies per SKU, up to 1,000 labels per print job.</p>}
             <p className="sku-print-help"><strong>No print dialog?</strong> Download the PDF and open it in Preview or a browser to print. Your existing SKUs stay the same.</p>
+            {labels.some((label) => !savedSkus.has(label.sku)) && <p className="sku-print-help">This batch contains drafts. Use <strong>Save to Inventory &amp; Print</strong> below to add their stock before printing.</p>}
             <p className="sku-print-help">Printer settings: <strong>38 × 13 mm</strong> paper, <strong>100% / actual size</strong>, no margins, headers, or footers. Scan a test label first. Use a QR-capable scanner; a 1D barcode scanner cannot read QR codes.</p>
           </section>
         </div>
@@ -239,12 +274,18 @@ export default function SkuLabelsClient() {
           <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button></div></header>
           <div className="sku-label-list">{labels.map((label, index) => <article className="sku-label-row" key={label.sku}>
             <span className="sku-row-number">{String(index + 1).padStart(2, "0")}</span><QrLabel label={label} />
-            <label>Card name {index + 1}<input maxLength={48} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /></label>
+            <label>Card name {index + 1}<input disabled={inventoryBusy || busy || pdfBusy || savedSkus.has(label.sku)} maxLength={48} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />{savedSkus.has(label.sku) && <small>Saved card · edit its name in Inventory.</small>}</label>
             <button className="secondary-button" onClick={() => void copySkus([label.sku])} aria-label={`Copy SKU ${label.sku}`}>Copy SKU</button>
           </article>)}</div>
         </section>}
-        <footer className="sku-footer"><strong>Connect the label to your single.</strong><p>In Inventory → ＋ Product, paste the generated code into the SKU field. The QR contains that exact SKU. Creating labels does not add products or change stock.</p><p>Your latest batch is saved in this browser. Codes are checked against current Defy inventory, but are only reserved when you save the product. Keep your CSV for older batches.</p></footer>
+        <SkuInventoryPanel labels={labels} disabled={busy || pdfBusy || inventoryBusy} canPrint={canPrint} onSavingChange={setInventoryBusy} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} />
+        <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>The QR contains the exact SKU saved in Defy inventory. Use the saved-label library to reprint it; adjust stock and prices in Inventory.</p><p>Drafts stay in this browser until you save. Saving reserves each SKU and records starting stock once. Downloading or printing alone does not save inventory.</p></footer>
       </div>
+      <dialog ref={printDialog} className="sku-print-dialog" aria-labelledby="sku-print-dialog-title" onClose={() => setPrintReady("")}>
+        <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are ready.</h2><p>{printReady}</p><p>Print {total} label{total === 1 ? "" : "s"} on <strong>38 × 13 mm</strong> paper at <strong>100% / actual size</strong>.</p>
+        <div className="sku-dialog-actions"><button className="primary-button" onClick={() => { printDialog.current?.close(); print(); }}>Print labels</button><button className="secondary-button" onClick={() => { printDialog.current?.close(); void downloadPdf(); }}>Download PDF</button><button className="secondary-button" onClick={() => printDialog.current?.close()}>Print later</button></div>
+        <p className="sku-print-help">If no print dialog appears, use Download PDF and open it in Preview. Your cards are already saved, even if you print later.</p>
+      </dialog>
     </main>
     {ready && createPortal(
       <div className="sku-print-sheet" aria-hidden="true">

@@ -1,0 +1,189 @@
+"use client";
+
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { LABEL_CONDITIONS, LABEL_FINISHES, validateInventoryLabels } from "@/lib/sku-label-inventory";
+import { isGeneratedSku } from "@/lib/sku-labels";
+import { TCG_GAME_OPTIONS } from "@/lib/tcg-games";
+
+type Label = { sku: string; name: string };
+export type SavedSkuProduct = Label & {
+  id: number; productType: string; game: string; setName: string; cardNumber: string;
+  condition: string; finish: string; quantity: number; costCents: number;
+  listPriceCents: number; location: string; tcgplayerId: number | null;
+};
+type Draft = {
+  game: string; setName: string; cardNumber: string; condition: string; finish: string;
+  quantity: string; cost: string; price: string; location: string; tcgplayerId: string;
+};
+const DRAFT_KEY = "defy-qr-sku-inventory-drafts:v1";
+const emptyDraft: Draft = { game: "", setName: "", cardNumber: "", condition: "Near Mint", finish: "Normal", quantity: "1", cost: "0.00", price: "0.00", location: "REDMOND", tcgplayerId: "" };
+
+function productDraft(product: SavedSkuProduct): Draft {
+  return { game: product.game, setName: product.setName, cardNumber: product.cardNumber,
+    condition: product.condition, finish: product.finish, quantity: String(product.quantity),
+    cost: (product.costCents / 100).toFixed(2), price: (product.listPriceCents / 100).toFixed(2),
+    location: product.location, tcgplayerId: product.tcgplayerId ? String(product.tcgplayerId) : "" };
+}
+
+function cents(value: string, field: string): number {
+  if (!/^\d+(\.\d{1,2})?$/.test(value.trim())) throw new Error(`${field} must be a dollar amount with up to two decimal places.`);
+  return Math.round(Number(value) * 100);
+}
+
+export default function SkuInventoryPanel({ labels, disabled, canPrint, onSavingChange, onInventoryLoaded, onSaved, onLoad }: {
+  labels: Label[]; disabled: boolean; canPrint: boolean;
+  onSavingChange: (busy: boolean) => void;
+  onInventoryLoaded: (products: SavedSkuProduct[]) => void;
+  onSaved: (products: SavedSkuProduct[], createdCount: number, existingCount: number) => void;
+  onLoad: (product: SavedSkuProduct) => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [products, setProducts] = useState<SavedSkuProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [libraryError, setLibraryError] = useState("");
+  const [warning, setWarning] = useState("");
+  const submitting = useRef(false);
+  const refreshSequence = useRef(0);
+  const details = useRef(new Map<string, HTMLDetailsElement>());
+
+  const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
+    setLoading(true);
+    setLibraryError("");
+    try {
+      const response = await fetch("/api/inventory", { cache: "no-store" });
+      if (!response.ok) throw new Error(response.status === 401 ? "Sign in again to load saved labels." : "Saved labels could not be loaded. Try Refresh.");
+      const data = await response.json() as { products: SavedSkuProduct[] };
+      if (!Array.isArray(data.products)) throw new Error("Saved labels could not be loaded. Try Refresh.");
+      if (sequence !== refreshSequence.current) return;
+      const saved = data.products.filter((product) => product.productType === "Single" && isGeneratedSku(product.sku));
+      setProducts(saved);
+      onInventoryLoaded(saved);
+    } catch (caught) {
+      if (sequence === refreshSequence.current) setLibraryError(caught instanceof Error ? caught.message : "Saved labels could not be loaded.");
+    } finally { if (sequence === refreshSequence.current) setLoading(false); }
+  }, [onInventoryLoaded]);
+
+  useEffect(() => {
+    let restored: Record<string, Draft> = {};
+    let notice = "";
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { version?: number; drafts?: Record<string, unknown> };
+        if (parsed.version !== 1 || !parsed.drafts || typeof parsed.drafts !== "object") throw new Error("Invalid drafts");
+        restored = Object.fromEntries(Object.entries(parsed.drafts).filter(([sku, draft]) => isGeneratedSku(sku) && draft && typeof draft === "object" &&
+          Object.keys(emptyDraft).every((key) => typeof (draft as Record<string, unknown>)[key] === "string")).slice(-100)) as Record<string, Draft>;
+      }
+    } catch { notice = "Card details could not be restored from this browser. Saved inventory is still available below."; }
+    startTransition(() => { setDrafts(restored); setWarning(notice); setReady(true); void refresh(); });
+  }, [refresh]);
+
+  function update(sku: string, key: keyof Draft, value: string) {
+    const next = { ...drafts, [sku]: { ...(drafts[sku] ?? emptyDraft), [key]: value } };
+    setDrafts(next);
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 1, drafts: Object.fromEntries(Object.entries(next).slice(-100)) }));
+      setWarning("");
+    } catch { setWarning("This browser cannot keep draft card details. Save to Inventory before leaving."); }
+  }
+
+  async function save() {
+    if (submitting.current || loading || disabled || !ready || !canPrint || !labels.length) return;
+    setError("");
+    try {
+      const newLabels = labels.filter((label) => !products.some((product) => product.sku === label.sku));
+      if (!newLabels.length) {
+        onSaved(labels.map((label) => products.find((product) => product.sku === label.sku)!), 0, labels.length);
+        return;
+      }
+      const inputs = newLabels.map((label) => {
+        const draft = drafts[label.sku] ?? emptyDraft;
+        try {
+          return validateInventoryLabels({ labels: [{ ...label, ...draft,
+            quantity: draft.quantity.trim() ? Number(draft.quantity) : NaN,
+            costCents: cents(draft.cost, "Cost"), listPriceCents: cents(draft.price, "Sell price"),
+            tcgplayerId: draft.tcgplayerId.trim() ? Number(draft.tcgplayerId) : null,
+          }] })[0];
+        } catch (caught) {
+          const element = details.current.get(label.sku);
+          if (element) { element.open = true; element.scrollIntoView({ behavior: "smooth", block: "center" }); }
+          throw new Error(`${label.sku}: ${caught instanceof Error ? caught.message : "Check the card details."}`);
+        }
+      });
+      const normalized = validateInventoryLabels({ labels: inputs });
+      submitting.current = true;
+      refreshSequence.current += 1;
+      setSaving(true);
+      onSavingChange(true);
+      const response = await fetch("/api/sku-labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels: normalized }) });
+      const data = await response.json() as { products?: SavedSkuProduct[]; createdCount?: number; existingCount?: number; error?: string };
+      if (!response.ok) throw new Error(data.error || "Inventory could not be saved. Your draft is still here; try again.");
+      if (!Array.isArray(data.products) || data.products.length !== newLabels.length ||
+        data.products.some((product, index) => product.sku !== newLabels[index].sku) ||
+        typeof data.createdCount !== "number" || typeof data.existingCount !== "number") {
+        throw new Error("The save response could not be confirmed. Refresh saved labels or retry with these same SKUs.");
+      }
+      const returned = data.products;
+      const combined = [...returned, ...products.filter((product) => !returned.some((saved) => saved.sku === product.sku))];
+      setProducts(combined);
+      onInventoryLoaded(combined);
+      onSaved(labels.map((label) => combined.find((product) => product.sku === label.sku)!), data.createdCount, data.existingCount + labels.length - newLabels.length);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Inventory could not be saved. Retry with these same SKUs.");
+    } finally {
+      submitting.current = false;
+      setSaving(false);
+      onSavingChange(false);
+    }
+  }
+
+  const query = search.trim().toLowerCase();
+  const matches = products.filter((product) => [product.sku, product.name, product.game, product.setName, product.cardNumber].some((value) => value.toLowerCase().includes(query)));
+  return <>
+    {labels.length > 0 && <section className="sku-panel sku-inventory" aria-labelledby="sku-inventory-title">
+      <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">Save your singles</h2><p>One SKU per card variant. Use quantity for identical copies.</p></div></div>
+      <div className="sku-inventory-cards">{labels.map((label, index) => {
+        const product = products.find((item) => item.sku === label.sku);
+        const draft = product ? productDraft(product) : drafts[label.sku] ?? emptyDraft;
+        const field = (key: keyof Draft, title: string, options: { type?: string; maxLength?: number; min?: number; max?: number; step?: string } = {}) =>
+          <label>{title}<input aria-label={`${title} for ${label.sku}`} {...options} value={draft[key]} onChange={(event) => update(label.sku, key, event.target.value)} /></label>;
+        return <details className="sku-inventory-card" key={label.sku} open={index === 0 ? true : undefined} ref={(element) => { if (element) details.current.set(label.sku, element); else details.current.delete(label.sku); }}>
+          <summary><span><strong>{label.name || `Card ${index + 1}`}</strong><code>{label.sku}</code></span><span className={`sku-save-status${product ? " is-saved" : ""}`}>{product ? "Saved" : "Draft"}</span></summary>
+          <fieldset className="sku-inventory-fields" disabled={disabled || saving || Boolean(product)} aria-label={`Inventory details for ${label.sku}`}>
+            <label>Game<select aria-label={`Game for ${label.sku}`} value={draft.game} onChange={(event) => update(label.sku, "game", event.target.value)}><option value="">Choose a game</option>{TCG_GAME_OPTIONS.map((game) => <option key={game.name} value={game.name}>{game.label}</option>)}</select></label>
+            {field("setName", "Set name", { maxLength: 120 })}
+            {field("cardNumber", "Card number", { maxLength: 40 })}
+            <label>Condition<select aria-label={`Condition for ${label.sku}`} value={draft.condition} onChange={(event) => update(label.sku, "condition", event.target.value)}>{LABEL_CONDITIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label>Finish<select aria-label={`Finish for ${label.sku}`} value={draft.finish} onChange={(event) => update(label.sku, "finish", event.target.value)}>{LABEL_FINISHES.map((value) => <option key={value}>{value}</option>)}</select></label>
+            {field("quantity", product ? "Stock on hand" : "Starting quantity", { type: "number", min: 0, max: 100000, step: "1" })}
+            {field("cost", "Cost per card ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
+            {field("price", "Sell price ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
+            {field("location", "Location", { maxLength: 80 })}
+            {field("tcgplayerId", "TCGplayer ID (optional)", { type: "number", min: 1, max: 2147483647, step: "1" })}
+          </fieldset>
+          {product && <p className="sku-print-help">Already saved. Reprinting keeps its SKU and stock unchanged. Edit this card or adjust stock in Inventory.</p>}
+        </details>;
+      })}</div>
+      <div className="sku-save-bar"><div><strong>Save first. Keep the same SKU.</strong><p>Starting quantity adds stock once. Copies per SKU only controls printed labels.</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving inventory…" : "Save to Inventory & Print"}</button></div>
+      {error && <p className="sku-inline-error" role="alert">{error}</p>}
+      {warning && <p className="sku-storage-warning" role="status">{warning}</p>}
+    </section>}
+    <section className="sku-panel sku-library" aria-labelledby="sku-library-title">
+      <header className="sku-batch-heading"><div><p className="eyebrow">SAVED IN DEFY INVENTORY</p><h2 id="sku-library-title">Saved custom labels <span className="sku-library-count">{products.length}</span></h2></div><button className="secondary-button" disabled={loading || saving || disabled} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
+      <p className="sku-print-help">Find a saved single and load its original SKU to print again, from any signed-in device.</p>
+      <label className="sku-library-search">Search saved labels<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Card name, SKU, set or card number" /></label>
+      {libraryError && <p className="sku-inline-error" role="alert">{libraryError}</p>}
+      {!loading && !libraryError && !matches.length && <p className="sku-library-empty">{products.length ? "No saved labels match your search." : "Save your first single above. It will appear here for reprints."}</p>}
+      <div className="sku-library-list">{matches.slice(0, 100).map((product) => <article className="sku-library-row" key={product.id}>
+        <div><strong>{product.name}</strong><code>{product.sku}</code><p>{product.game} · {product.setName} · {product.cardNumber} · {product.condition} · {product.finish}</p></div>
+        <span className="sku-stock">{product.quantity}<small>in stock</small></span><button className="secondary-button" disabled={disabled || saving} onClick={() => onLoad(product)}>Load label</button>
+      </article>)}</div>
+      {matches.length > 100 && <p className="sku-print-help">Showing the first 100 matches. Search to narrow the list.</p>}
+    </section>
+  </>;
+}

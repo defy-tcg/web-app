@@ -144,6 +144,30 @@ with its Neon branch. Merging that branch into `main` remains a separate action.
 
 ## Database and schema changes
 
+### Custom QR SKU inventory
+
+The authenticated `/sku-labels` page generates draft SKUs and saves singles with
+**Save to Inventory & Print**. Game, name, set, card number, condition, and finish
+identify a card variant. Identical copies share one SKU and a starting quantity;
+the print-copy count does not change stock. Custom labels use manually entered
+cost and sell prices and save to Defy inventory, without publishing to Shopify.
+
+`POST /api/sku-labels` validates the entire batch and atomically creates products
+with their initial inventory movements using the existing schema. Retrying a
+saved SKU with the same identity reuses it without changing stock or prices;
+SKU, barcode, and existing-variant conflicts reject the batch. The transaction
+uses a short products write lock with a five-second lock timeout and a
+15-second statement timeout. Saved-label reprints only read inventory and keep
+the original SKU. Custom-label singles are excluded from master-sheet matching
+and retirement, even if their pricing source later changes.
+
+Drafts are kept in browser storage. Saved labels are loaded from the shared
+inventory database and can be reprinted from another signed-in device. Physical
+printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;
+saving does not depend on a printer connection or a completed print job.
+
+### Schema baseline
+
 Inventory, sales, expenses, events, and authentication data persist in Neon
 independently of Git and Vercel builds. This checkout contains source and schema
 definitions, not a copy of production records. Keep Production pointed at the

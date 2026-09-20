@@ -3,7 +3,7 @@ import { getDb } from "../db";
 import { inventoryMovements, products } from "../db/schema";
 import { findExactCatalogMatch } from "@/lib/catalog-match";
 import { gameFromAlias, inferGameFromName, type TcgGameName } from "@/lib/tcg-games";
-import { matchSheetProducts } from "@/lib/inventory-identity";
+import { isMasterSheetManagedProduct, matchMasterSheetProducts } from "@/lib/master-inventory-policy";
 import { sheetProductSku } from "@/lib/product-sku";
 import { SCRYDEX_PRICE_SOURCE, preserveScrydexPricing } from "@/lib/pricing-policy";
 import { protectedPricingColumns, protectedSheetIdentityColumns } from "@/lib/pricing-storage";
@@ -197,7 +197,7 @@ export async function syncMasterInventorySheet() {
   const now = new Date().toISOString();
 
   for (const sheetProduct of parsed.products) {
-    const matches = sortMatches(matchSheetProducts(knownProducts, sheetProduct));
+    const matches = sortMatches(matchMasterSheetProducts(knownProducts, sheetProduct));
     const current = matches[0];
     if (!current) {
       if (!sheetProduct.gameReliable || !sheetProduct.game) {
@@ -332,11 +332,7 @@ export async function syncMasterInventorySheet() {
 
   for (const product of currentProducts) {
     if (matchedProductIds.has(product.id)) continue;
-    const wasSheetManaged =
-      product.sheetQuantity !== null ||
-      product.priceSource === "master-sheet" ||
-      product.priceSource === "google-sheet" ||
-      product.sku.startsWith("DEFY-SHEET-");
+    const wasSheetManaged = isMasterSheetManagedProduct(product);
     if (!wasSheetManaged || (product.quantity === 0 && product.sheetQuantity === 0))
       continue;
     const previousSheetQuantity = product.sheetQuantity ?? 0;
