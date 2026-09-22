@@ -15,7 +15,7 @@ const product = (id: string, variants = [variant("normal", plan().sku)], source 
 function fixture(initial: Product[] = [], pageSize = 100, shop = "defy-receiving-test.myshopify.com") {
   const products = new Map(initial.map(item => [item.id, structuredClone(item)]));
   const calls: { query: string; variables: Record<string, unknown> }[] = [];
-  const state = { loseCreate: false, loseVariant: false, publications: [{ id: "online", name: "Online Store", catalog: { title: "Online Store" } }, { id: "pos", name: "Point of Sale", catalog: { title: "Point of Sale" } }, { id: "gid://shopify/Publication/202600611926", name: "Defy TCG website", catalog: { title: "Headless" } }] };
+  const state = { loseCreate: false, loseVariant: false, receivingCatalogType: "id", publications: [{ id: "online", name: "Online Store", catalog: { title: "Online Store" } }, { id: "pos", name: "Point of Sale", catalog: { title: "Point of Sale" } }, { id: "gid://shopify/Publication/202600611926", name: "Defy TCG website", catalog: { title: "Headless" } }] };
   const graphql: SinglesGraphQL = async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
     calls.push({ query, variables });
     if (query.includes("query SinglesMappings")) {
@@ -32,8 +32,10 @@ function fixture(initial: Product[] = [], pageSize = 100, shop = "defy-receiving
       return structuredClone({ productByIdentifier: [...products.values()].find(p => p.catalogId?.value === id) ?? null }) as T;
     }
     if (query.includes("mutation SinglesCreate")) {
-      const input = variables.product as { title: string; metafields: { namespace: string; key: string; value: string }[]; productOptions: { name: string; values: { name: string }[] }[] };
-      const identity = input.metafields.find(f => f.namespace.includes("receiving") && f.key === "catalog_id")!.value;
+      const input = variables.product as { title: string; metafields: { namespace: string; key: string; type?: string; value: string }[]; productOptions: { name: string; values: { name: string }[] }[] };
+      const catalogField = input.metafields.find(f => f.namespace.includes("receiving") && f.key === "catalog_id")!;
+      if (catalogField.type && catalogField.type !== state.receivingCatalogType) return { productCreate: { product: null, userErrors: [{ message: `Type ${catalogField.type} must be consistent with the definition's type: ${state.receivingCatalogType}.` }] } } as T;
+      const identity = catalogField.value;
       const existing = [...products.values()].find(p => p.catalogId?.value === identity);
       if (existing) return { productCreate: { product: null, userErrors: [{ message: "Catalog ID must be unique" }] } } as T;
       const id = `created-${products.size}`;
@@ -141,6 +143,23 @@ test("a lost new-product response is recovered by unique mapping without another
   assert.equal((creation.variables.product as { productType: string }).productType, "Riftbound single");
   assert.equal((creation.variables.media as { originalSource: string }[])[0].originalSource, "https://tcgplayer-cdn.tcgplayer.com/product/652819_in_1000x1000.jpg");
   assert.ok(!f.calls.some(call => call.query.includes("productSet(")));
+});
+
+test("new single inherits the existing catalog ID definition type and reuses its unique mapping", async () => {
+  for (const definitionType of ["id", "single_line_text_field"]) {
+    const f = fixture(); f.state.receivingCatalogType = definitionType;
+    const row = plan({ key: "652905:Foil", productId: 652905, name: "Time Warp", number: "122/298", rarity: "Epic", finish: "Foil" });
+    const item = await f.adapter.resolve(row, await f.adapter.preflight(false));
+    assert.equal(item.sku, "DEFY-RFB-652905-FOIL-EN-NM");
+    assert.deepEqual(await f.adapter.lookupExisting(row), item);
+    assert.deepEqual(await f.adapter.resolve(row, context), item);
+    assert.equal(f.products.size, 1);
+    const creations = f.calls.filter(call => call.query.includes("mutation SinglesCreate"));
+    assert.equal(creations.length, 1);
+    const fields = (creations[0].variables.product as { metafields: { namespace: string; key: string; type?: string; value: string }[] }).metafields;
+    assert.deepEqual(fields.find(field => field.namespace === context.receivingNamespace), { namespace: context.receivingNamespace, key: "catalog_id", value: "single:riftbound:printing:652905" });
+    assert.ok(fields.filter(field => field.namespace !== context.receivingNamespace).every(field => field.type === "single_line_text_field"));
+  }
 });
 
 test("a lost new-variant response is recovered without inserting the condition twice", async () => {

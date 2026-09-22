@@ -329,7 +329,8 @@ export class ShopifySinglesAdapter implements SinglesAdapter {
         product: { title, status: "DRAFT", vendor: "Riot Games", productType: "Riftbound single", tags: ["Riftbound", "Singles", "English", card.setName, `defy-catalog-${card.productId}`],
           descriptionHtml: `<p>${html(card.name)} · ${html(card.setName)}${card.number ? ` · ${html(card.number)}` : ""}</p>`,
           productOptions: optionsFor(row).map(option => ({ name: option.name, values: [{ name: option.value }] })),
-          metafields: [{ namespace: context.receivingNamespace, key: "catalog_id", type: "single_line_text_field", value: printingId(row) }, { namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(card.productId) },
+          // The existing unique-ID definition supplies its type (id or legacy text).
+          metafields: [{ namespace: context.receivingNamespace, key: "catalog_id", value: printingId(row) }, { namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(card.productId) },
             ...Object.entries(fields).filter(([, value]) => value).map(([key, value]) => ({ namespace: "card", key, type: "single_line_text_field", value }))] },
         media: image ? [{ originalSource: image, mediaContentType: "IMAGE", alt: title }] : [],
       });
