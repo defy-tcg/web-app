@@ -181,7 +181,7 @@ rejected. Games outside the registry are labeled **Other** with an explicit
 notice. Catalog availability determines link coverage; manual entry remains
 available for cards that cannot be looked up.
 
-Linked cards append to the current batch and retain full names up to 240
+Saving a linked card selects its one confirmed label and retains full names up to 240
 characters, while printed names remain shortened to fit the label. Cards
 without a printed number can use their TCGplayer product ID. Named finishes
 and editions remain distinct; known Foil/Holofoil, Normal/Nonfoil, and
@@ -193,6 +193,30 @@ save. Shopify receives that original quantity once. Linked-card selling prices
 come from an exact Scrydex quote under the existing pricing policy; manual cards
 need a positive entered selling price. Clearing the current batch, retrying a
 save, and reprinting do not receive more stock.
+
+The label preview's **Add cards to inventory** panel receives additional copies
+of a saved card. Enter **Number of cards to add**, then choose **Add stock**.
+This is an additive receipt against the live Shopify location, not an absolute
+stock count. **Copies per SKU** only controls printing. Starting quantity still
+transfers once on first save; looking up an existing link or reprinting never
+creates an additional receipt. Multi-card batches require choosing the card
+whose stock is being received.
+
+`POST /api/sku-labels/stock` authenticates a same-origin request and loads the
+saved QR from Defy. It requires a verified live Shopify link and a confirmed
+original starting-stock transfer. A separate Shopify app-owned receipt pins
+the request ID, card identity, variant, inventory item, location, and quantity.
+CAS and Shopify's idempotency key protect retries; an unconfirmed mutation
+outside the safe retry window requires review. This path only adds stock and
+does not rewrite selling prices, unit costs, barcodes, or sales channels. It
+leaves the original Defy inventory record and initial receipt unchanged; the UI
+shows Shopify's available count.
+
+The browser saves a stock request before sending it and retains its original
+card and quantity across a lost response, reload, or label change. **Retry stock
+addition** uses the same request until Shopify confirms its result. New stock
+requests require an explicit click. A damaged or unavailable browser receipt
+store blocks new submissions instead of risking an unrepeatable addition.
 
 `POST /api/sku-labels/reserve` authenticates and validates one linked card, then
 atomically reuses its saved variant or creates a product and its original

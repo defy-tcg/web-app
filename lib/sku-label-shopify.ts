@@ -24,6 +24,10 @@ export interface SkuLabelShopifyDependencies {
   clock: () => number;
   resolvePrice?: (product: ScrydexProduct) => Promise<ScrydexPrice>;
 }
+export interface SkuLabelStockTarget {
+  identity: string; productId: string; variantId: string; inventoryItemId: string;
+  locationId: string; shopifySku: string; publicationId: string; availableQuantity: number;
+}
 interface Field { value: string; namespace?: string; compareDigest?: string }
 interface Variant {
   id: string; sku: string | null; barcode: string | null; price: string; inventoryQuantity: number;
@@ -117,6 +121,43 @@ function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
   if (error instanceof SinglesError && ["QR_LINK_BLOCKED", "QR_LINK_PENDING", "PRODUCT_IDENTITY_CONFLICT"].includes(error.code)) return { sku, status: error.retryable ? "pending" : "blocked", message: error.message };
   if (error instanceof SinglesError && !error.retryable) return { sku, status: "blocked", message: "The QR is saved, but Shopify could not verify its connection or card mapping. Review the Shopify connection and retry the saved QR." };
   return { sku, status: "pending", message: "The QR is saved. Shopify has not confirmed POS readiness yet; retry this same QR code." };
+}
+
+/** Read-only proof for a separate stock receipt; never repairs or reprices a saved link. */
+export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, deps: SkuLabelShopifyDependencies): Promise<SkuLabelStockTarget> {
+  const identity = identityFor(product);
+  const adapter = new ShopifySinglesAdapter(deps.graphql, deps.settings, deps.clock);
+  const { value: record } = await adapter.read<Journal>(journalKey(product.sku));
+  if (record?.version !== 1 || record.sku !== product.sku || record.identity !== identity.identity || record.initialQuantity !== product.initialQuantity || record.status?.status !== "ready" || record.status.sku !== product.sku || !record.productId || !record.variantId || !record.publicationId || record.shopifySku === undefined || (record.initialQuantity !== 0 && !record.adjustmentId) || record.adoptionPending) {
+    fail("Finish linking this saved QR to Shopify POS before adding stock.");
+  }
+  const saved = record!;
+  if (saved.owner && saved.expiresAt > deps.clock()) pending("This QR link is being updated. Retry adding stock with the same request shortly.");
+  const data = await deps.graphql<{ productVariant: (Variant & { product: Product; inventoryItem: Variant["inventoryItem"] & { inventoryLevel: { location: { id: string }; quantities: { name: string; quantity: number }[] } | null } }) | null }>(`query QrStockTarget($id: ID!, $pos: ID!, $location: ID!) {
+    productVariant(id: $id) { ${V_FIELDS}
+      product { id status pos: publishedOnPublication(publicationId: $pos) catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value } sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value } manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value } variants(first: 2) { nodes { id } pageInfo { hasNextPage } } }
+      inventoryItem { id tracked inventoryLevel(locationId: $location) { location { id } quantities(names: ["available"]) { name quantity } } }
+    }
+  }`, { id: saved.variantId, pos: saved.publicationId, location: deps.settings.locationId });
+  const variant = data.productVariant;
+  if (!variant || variant.id !== saved.variantId || variant.product.id !== saved.productId || variant.qrIdentity?.value !== saved.identity || (variant.sku || "") !== saved.shopifySku || !matchesSavedVariant(variant, variant.product, identity, deps.settings.shop) || variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === product.sku)) {
+    fail("The saved Shopify card or QR identity changed. Review its link before adding stock.");
+  }
+  const verified = variant!;
+  const level = verified.inventoryItem.inventoryLevel;
+  const availableQuantity = level?.quantities.find(item => item.name === "available")?.quantity;
+  if (verified.product.status !== "ACTIVE" || !verified.product.pos || !verified.pos || priceCents(verified.price) <= 0 || level?.location.id !== deps.settings.locationId || !Number.isSafeInteger(availableQuantity)) {
+    fail("This card is not ready at the configured Shopify POS stock location. Review its saved link before adding stock.");
+  }
+  // A QR moved or copied to another variant must never receive inventory silently.
+  const duplicates = await deps.graphql<{ productVariants: { nodes: { id: string; barcodes: Variant["barcodes"] }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrStockScanCode($query: String!) {
+    productVariants(first: 10, query: $query) { nodes { id barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } } pageInfo { hasNextPage } }
+  }`, { query: `barcode:"${product.sku}"` });
+  const candidates = duplicates.productVariants;
+  const exact = candidates.nodes.filter(item => item.barcodes.nodes.some(code => code.value === product.sku));
+  if (candidates.pageInfo.hasNextPage || candidates.nodes.some(item => item.barcodes.pageInfo.hasNextPage) || exact.length !== 1 || exact[0].id !== saved.variantId) fail("This QR does not uniquely identify one Shopify card. Review its barcode mapping before adding stock.");
+  return { identity: saved.identity, productId: saved.productId!, variantId: saved.variantId!, inventoryItemId: verified.inventoryItem.id,
+    locationId: deps.settings.locationId, shopifySku: saved.shopifySku!, publicationId: saved.publicationId!, availableQuantity: availableQuantity! };
 }
 
 /** Read-only status: persisted progress plus live barcode, POS, price, and location stock verification. */

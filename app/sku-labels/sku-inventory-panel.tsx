@@ -169,7 +169,7 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
             {field("location", "Location", { maxLength: 80 })}
             {field("tcgplayerId", "TCGplayer ID (optional)", { type: "number", min: 1, max: 2147483647, step: "1" })}
           </fieldset>
-          {product && <p className="sku-print-help">Already saved. Reprinting keeps its original SKU and adds no stock. After transfer, manage stock and selling prices in Shopify; the fields above show the Defy inventory record.</p>}
+          {product && <p className="sku-print-help">Already saved. Use Add stock beside the label preview to receive more cards. Reprinting keeps its original SKU and adds no stock. The fields above show the original Defy inventory record; the live available count comes from Shopify.</p>}
           <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} saved={Boolean(product)} busy={saving || linkingSkus.includes(label.sku)} disabled={disabled || saving} onRetry={onRetryShopify} />
         </details>;
       })}</div>

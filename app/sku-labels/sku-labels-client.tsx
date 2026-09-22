@@ -11,6 +11,7 @@ import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
 import TcgplayerCardImport, { type LinkedLabelSelection } from "./tcgplayer-card-import";
+import SkuStockPanel from "./sku-stock-panel";
 import ShopifyLinkStatus, { isShopifyLabelLink, pendingShopifyLink, type ShopifyLabelLink } from "./shopify-link-status";
 
 type Label = SkuDraftLabel;
@@ -172,6 +173,17 @@ export default function SkuLabelsClient() {
     shopifySequence.current += 1;
     setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(links.map((link) => [link.sku, link])) }));
   }, []);
+
+  const stockReceived = useCallback((sku: string, availableQuantity?: number) => {
+    shopifySequence.current += 1;
+    setShopifyLinks((current) => current[sku] ? { ...current, [sku]: { ...current[sku], availableQuantity } } : current);
+    if (availableQuantity === undefined) {
+      const sequence = shopifySequence.current;
+      void readShopifyLinks([sku]).then((links) => {
+        if (sequence === shopifySequence.current) updateShopifyLinks(links);
+      }).catch(() => { /* A confirmed receipt remains complete even if the live count is unavailable. */ });
+    }
+  }, [updateShopifyLinks]);
 
   const queueAutomaticLinks = useCallback((links: ShopifyLabelLink[]) => {
     for (const link of links) {
@@ -562,6 +574,8 @@ export default function SkuLabelsClient() {
                   : "Confirm the variant and save its QR above to preview and print this card.")}</p>
               </div> : <><QrLabel label={labels[0] ?? example} /><p>{labels.length === 1 ? "Selected label · enlarged for clarity" : labels.length ? "First label preview · enlarged for clarity" : "Example label · generate a batch to preview yours"}</p></>}
             </div>
+            <SkuStockPanel cards={labels.filter((label) => savedSkus.has(label.sku))} links={shopifyLinks}
+              disabled={!ready || busy || inventoryBusy || inventoryLoading || shopifyBusy} onReceived={stockReceived} />
             <div className="sku-print-settings">
               <label>Copies per SKU<input disabled={inventoryBusy || pdfBusy} type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
               <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>labels to print</span></div>
@@ -601,7 +615,7 @@ export default function SkuLabelsClient() {
           </article>)}</div>
         </section>}
         <SkuInventoryPanel labels={labels} products={savedProducts} disabled={busy || pdfBusy || inventoryBusy || shopifyBusy} canPrint={canPrint} shopifyLinks={shopifyLinks} linkingSkus={allLinkingSkus} onRetryShopify={(sku) => void retryShopifyLink(sku)} onSavingChange={setInventoryBusy} onLoadingChange={setInventoryLoading} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} onDraftChange={(sku, inventory) => saveBatch(labels.map((label) => label.sku === sku ? { ...label, inventory } : label))} />
-        <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>Saving links the exact QR to Shopify POS and keeps it in your shared Defy library. Wait for <strong>Shopify POS ready</strong>, then refresh POS before scanning.</p><p>Starting quantity is transferred once. After transfer, manage stock and selling prices in Shopify. Importing the same card, condition, and finish reuses its original QR without adding stock. Manual drafts stay in this browser until you save them; downloading or printing alone does not save or link a draft.</p></footer>
+        <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>Saving links the exact QR to Shopify POS and keeps it in your shared Defy library. Wait for <strong>Shopify POS ready</strong>, then refresh POS before scanning.</p><p>Starting quantity is transferred once. Use <strong>Add stock</strong> above for additional physical cards; the available count comes from Shopify. Importing the same card, condition, and finish reuses its original QR without adding stock. Manual drafts stay in this browser until you save them; downloading or printing alone does not save or link a draft.</p></footer>
       </div>
       <dialog ref={printDialog} className="sku-print-dialog" aria-labelledby="sku-print-dialog-title" onClose={() => setPrintReady("")}>
         <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are saved.</h2><p>{printReady}</p><p>Print {total} label{total === 1 ? "" : "s"} on paper <strong>38 mm across the roll × 13 mm in the feed direction</strong>, at <strong>100% / actual size</strong>.</p>
