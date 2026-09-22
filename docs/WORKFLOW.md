@@ -152,15 +152,16 @@ with its Neon branch. Merging that branch into `main` remains a separate action.
 
 ### Custom QR SKU inventory
 
-The authenticated `/sku-labels` page generates draft SKUs and saves singles with
-**Save to Inventory & Print**. Game, name, set, card number, condition, and finish
+The authenticated `/sku-labels` page saves linked-card QR codes automatically and
+keeps **Save to Inventory & Print** for manually generated drafts. Game, name, set, card number, condition, and finish
 identify a card variant. Identical copies share one SKU and a starting quantity;
 the print-copy count does not change stock. Custom labels use manually entered
 cost and sell prices and save to Defy inventory, without publishing to Shopify.
 
 **Add a single from TCGplayer** accepts a full HTTPS TCGplayer product link,
-loads its exact card identity and image, and creates a draft QR SKU after the
-operator chooses condition and finish. The authenticated, read-only
+loads its exact card identity and image. After the operator chooses condition and
+finish, **Save QR & add to batch** reserves its permanent SKU in shared inventory
+before displaying the saved label. The authenticated, read-only
 `POST /api/sku-labels/lookup` reads TCGplayer's public product-details endpoint
 and TCGCSV's source-listed finishes with bounded timeouts and 24-hour caching.
 It uses fixed upstream hosts and validated product IDs; it never fetches a
@@ -176,8 +177,19 @@ without a printed number can use their TCGplayer product ID. Named finishes
 and editions remain distinct; known Foil/Holofoil, Normal/Nonfoil, and
 Reverse Holo/Reverse Holofoil aliases share duplicate detection. Importing a
 saved custom variant loads its original SKU for reprints; existing legacy SKUs
-are identified for stock management in Inventory. Starting quantity, cost,
-and sell price still require review before saving.
+are identified for stock management in Inventory. New linked cards start at zero
+stock, cost, and sell price; adjust these in Inventory. Adding a link, clearing the
+current batch, and reprinting never receive stock or overwrite existing prices.
+
+`POST /api/sku-labels/reserve` authenticates and validates one linked card, then
+atomically reuses its saved variant or creates a zero-stock product in the existing
+schema. It uses the same products write lock and timeouts as batch saves, so
+concurrent requests receive one original SKU. A browser draft's SKU is preferred
+when first saving that card, preserving labels already printed from the draft.
+Unconfirmed requests retain their proposed SKU for retries; a server-confirmed
+saved variant always takes precedence. No stock movement is created. The shared
+saved-label library includes zero-stock cards and works on another signed-in
+device with empty browser storage.
 
 `POST /api/sku-labels` validates the entire batch and atomically creates products
 with their initial inventory movements using the existing schema. Retrying a
@@ -188,7 +200,7 @@ uses a short products write lock with a five-second lock timeout and a
 the original SKU. Custom-label singles are excluded from master-sheet matching
 and retirement, even if their pricing source later changes.
 
-Drafts are kept in browser storage. Saved labels are loaded from the shared
+Manual drafts are kept in browser storage. Saved labels are loaded from the shared
 inventory database and can be reprinted from another signed-in device. Physical
 printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;
 saving does not depend on a printer connection or a completed print job.
@@ -201,6 +213,14 @@ select the **38 × 13 mm** paper preset, and use **Portrait** with no additional
 rotation. The browser cannot force the printer's orientation. Print and scan
 one test label before a batch; the downloaded PDF can also be printed in Preview
 with these settings.
+
+Mac Chrome can normalize custom paper sizes to short-edge-first, turning a native
+38 × 13 mm stock size into 13 × 38 mm. Changing the artwork or printing the PDF in
+Chrome does not correct that printer-media setting. The macOS system dialog with
+the **Defy 38x13 Upright** preset has been physically verified on the store printer.
+Chrome's supported `DisablePrintPreview` preference can make Print open that
+dialog directly; it affects Chrome printing generally and requires a browser
+restart, so obtain the operator's agreement before changing that local preference.
 
 ### Schema baseline
 

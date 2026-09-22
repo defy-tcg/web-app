@@ -139,10 +139,11 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
   }
 
   const query = search.trim().toLowerCase();
+  const allSaved = labels.length > 0 && labels.every((label) => products.some((product) => product.sku === label.sku));
   const matches = products.filter((product) => [product.sku, product.name, product.game, product.setName, product.cardNumber].some((value) => value.toLowerCase().includes(query)));
   return <>
     {labels.length > 0 && <section className="sku-panel sku-inventory" aria-labelledby="sku-inventory-title">
-      <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">Save your singles</h2><p>One SKU per card variant. Use quantity for identical copies.</p></div></div>
+      <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">{allSaved ? "Saved card details" : "Save your singles"}</h2><p>{allSaved ? "Your original QR codes are ready for every reprint." : "One SKU per card variant. Use quantity for identical copies."}</p></div></div>
       <div className="sku-inventory-cards">{labels.map((label, index) => {
         const product = products.find((item) => item.sku === label.sku);
         const draft = product ? productDraft(product) : label.inventory ?? drafts[label.sku] ?? emptyDraft;
@@ -166,7 +167,7 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
         </details>;
       })}</div>
       <datalist id="sku-finish-presets">{LABEL_FINISHES.map((value) => <option key={value} value={value} />)}</datalist>
-      <div className="sku-save-bar"><div><strong>Save first. Keep the same SKU.</strong><p>Starting quantity adds stock once. Copies per SKU only controls printed labels.</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving inventory…" : "Save to Inventory & Print"}</button></div>
+      <div className="sku-save-bar"><div><strong>{allSaved ? "Your QR codes are saved." : "Save first. Keep the same SKU."}</strong><p>{allSaved ? "Reprint anytime. Manage stock and prices in Inventory." : "Starting quantity adds stock once. Copies per SKU only controls printed labels."}</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving inventory…" : allSaved ? "Print saved labels" : "Save to Inventory & Print"}</button></div>
       {error && <p className="sku-inline-error" role="alert">{error}</p>}
       {warning && <p className="sku-storage-warning" role="status">{warning}</p>}
     </section>}

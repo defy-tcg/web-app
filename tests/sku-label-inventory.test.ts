@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inventoryLabelVariantKey, planInventoryLabels, SkuLabelInventoryError, validateInventoryLabels,
+import { inventoryLabelVariantKey, planInventoryLabels, SkuLabelInventoryError, validateInventoryLabels, validateSkuLabelReservation,
   type InventoryLabelInput } from "../lib/sku-label-inventory.ts";
 
 const input: InventoryLabelInput = {
@@ -127,4 +127,25 @@ test("mixed new/reprint planning does not mutate source records and rejects a la
   assert.deepEqual(plan.existing.map((row) => row.sku), [input.sku]);
   assert.throws(() => planInventoryLabels(labels(fresh, { ...input, name: "Different card" }), [product]), status(409));
   assert.equal(product.quantity, 7);
+});
+
+test("evergreen reservations validate a linked card and never accept stock or prices as a receipt", () => {
+  const candidate = { ...input, tcgplayerId: 652905, quantity: 12, costCents: 175, listPriceCents: 299, location: " shelf 3 " };
+  const original = structuredClone(candidate);
+  const label = validateSkuLabelReservation({ label: candidate });
+  assert.equal(label.sku, input.sku);
+  assert.equal(label.tcgplayerId, 652905);
+  assert.equal(label.quantity, 0);
+  assert.equal(label.costCents, 0);
+  assert.equal(label.listPriceCents, 0);
+  assert.equal(label.location, "SHELF 3");
+  assert.deepEqual(candidate, original);
+});
+
+test("evergreen reservations reject missing catalog identity or malformed full label input", () => {
+  for (const payload of [null, {}, { labels: [input] }, { label: null }, { label: input },
+    { label: { ...input, tcgplayerId: 0 } }, { label: { ...input, tcgplayerId: 12, sku: "LEGACY-SKU" } },
+    { label: { ...input, tcgplayerId: 12, quantity: -1 } },
+    { label: { ...input, tcgplayerId: 12, costCents: "100" } },
+  ]) assert.throws(() => validateSkuLabelReservation(payload), status(400));
 });

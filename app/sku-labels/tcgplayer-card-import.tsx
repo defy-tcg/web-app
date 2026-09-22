@@ -78,7 +78,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
   return <section className="sku-panel sku-card-import" aria-labelledby="sku-card-import-title" aria-busy={loading || adding}>
     <div className="sku-panel-heading">
       <span className="sku-step" aria-hidden="true">↗</span>
-      <div><h2 id="sku-card-import-title">Add a single from TCGplayer</h2><p>Paste a product link, confirm the card variant, and create its SKU.</p></div>
+      <div><h2 id="sku-card-import-title">Add a single from TCGplayer</h2><p>Paste a product link, confirm the card variant, and save its QR for every future print.</p></div>
     </div>
     <form className="sku-import-link-form" onSubmit={(event) => void lookup(event)}>
       <label>TCGplayer product link
@@ -88,7 +88,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
       </label>
       <button className="primary-button" disabled={locked || !url.trim()}>{loading ? "Loading card…" : "Load card"}</button>
     </form>
-    <p className="sku-import-help">One SKU per card, condition, and finish. Review quantity, cost, and sell price in the batch before saving to inventory.</p>
+    <p className="sku-import-help">One permanent SKU per card, condition, and finish. Adding it saves the QR in your shared library automatically. New cards start at zero stock; manage quantity, cost, and sell price in Inventory.</p>
     {card ? <div className="sku-import-result">
       <div className="sku-import-image">
         {card.imageUrl && !imageFailed ? <Image src={card.imageUrl} alt={card.name} width={160} height={224} unoptimized onError={() => setImageFailed(true)} /> : <span>Card image unavailable</span>}
@@ -109,7 +109,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
               </select> : <><input required maxLength={80} value={finish} list="sku-import-finishes" placeholder="Choose or enter a finish" onChange={(event) => setFinish(event.target.value)} /><datalist id="sku-import-finishes">{LABEL_FINISHES.map((value) => <option key={value} value={value} />)}</datalist><small>Confirm the finish printed on your card.</small></>}
             </label>
           </fieldset>
-          <button className="primary-button sku-import-add" disabled={locked || !finish.trim()}>{adding ? "Creating SKU…" : "Create SKU & add to batch"}<span aria-hidden="true">↗</span></button>
+          <button className="primary-button sku-import-add" disabled={locked || !finish.trim()}>{adding ? "Saving QR…" : "Save QR & add to batch"}<span aria-hidden="true">↗</span></button>
         </form>
       </div>
     </div> : null}

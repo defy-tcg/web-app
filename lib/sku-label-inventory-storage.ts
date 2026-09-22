@@ -2,11 +2,12 @@ import { neon } from "@neondatabase/serverless";
 import type { products } from "../db/schema.ts";
 import { tcgplayerImageUrl } from "./catalog-image.ts";
 import { TCG_GAME_REGISTRY } from "./tcg-games.ts";
-import { INVENTORY_LABEL_FINISH_ALIASES, inventoryLabelConflictError, inventoryLabelIdentityText, inventoryLabelVariantKey, validateInventoryLabels,
+import { INVENTORY_LABEL_FINISH_ALIASES, inventoryLabelConflictError, inventoryLabelIdentityText, inventoryLabelVariantKey, validateInventoryLabels, validateSkuLabelReservation,
   type InventoryLabelConflict, type InventoryLabelInput } from "./sku-label-inventory.ts";
 
 export type SavedSkuLabelProduct = typeof products.$inferSelect & { imageUrl: string | null };
 export type SaveSkuLabelsResult = { products: SavedSkuLabelProduct[]; createdCount: number; existingCount: number };
+export type ReserveSkuLabelResult = { product: SavedSkuLabelProduct; created: boolean };
 
 // All interpolated SQL fragments below are fixed identifiers or our checked-in game registry.
 function identitySql(column: string) {
@@ -75,6 +76,65 @@ SELECT
   (SELECT count(*)::integer FROM initial_movements) AS "movementCount"
 `;
 
+const RESERVE_LABEL_SQL = `
+WITH incoming AS MATERIALIZED (
+  SELECT * FROM jsonb_to_record($1::jsonb) AS i(
+    sku text, name text, game text, "setName" text, "cardNumber" text,
+    condition text, finish text, location text, "tcgplayerId" integer, "variantKey" jsonb)
+), current_products AS MATERIALIZED (
+  SELECT p.*, upper(trim(p.sku)) AS sku_key, upper(trim(p.barcode)) AS barcode_key,
+    ${variantSql} AS variant_key, ${gameSql} AS game_key,
+    ${identitySql("p.condition")} AS condition_key, ${finishSql} AS finish_key
+  FROM products p
+), matching_products AS MATERIALIZED (
+  SELECT p.* FROM current_products p CROSS JOIN incoming i
+  WHERE p.product_type = 'Single' AND
+    ((p.variant_key = i."variantKey" AND (p.tcgplayer_id IS NULL OR p.tcgplayer_id = i."tcgplayerId")) OR
+      (p.tcgplayer_id = i."tcgplayerId" AND p.game_key = i."variantKey"->>0 AND
+       p.condition_key = i."variantKey"->>4 AND p.finish_key = i."variantKey"->>5))
+), selected_product AS MATERIALIZED (
+  SELECT p.* FROM matching_products p CROSS JOIN incoming i
+  ORDER BY (p.sku_key = i.sku) DESC, p.created_at, p.id LIMIT 1
+), conflicts AS MATERIALIZED (
+  SELECT 1 AS priority, 'sku' AS kind, i.sku, p.sku AS existing_sku
+  FROM incoming i JOIN current_products p ON p.sku_key = i.sku
+  WHERE NOT EXISTS (SELECT 1 FROM matching_products m WHERE m.id = p.id)
+  UNION ALL
+  SELECT 2, 'barcode', i.sku, p.sku
+  FROM incoming i JOIN current_products p ON p.barcode_key = i.sku
+  WHERE NOT EXISTS (SELECT 1 FROM selected_product m WHERE m.id = p.id)
+  UNION ALL
+  SELECT 2, 'barcode', m.sku, p.sku
+  FROM selected_product m JOIN current_products p ON p.barcode_key = m.sku_key AND p.id <> m.id
+  UNION ALL
+  SELECT 3, 'variant', i.sku, m.sku
+  FROM selected_product m CROSS JOIN incoming i
+  WHERE m.sku !~ '^(?:[A-Z0-9]{1,4}-)?[1-9][0-9]{9}$'
+  UNION ALL
+  SELECT 3, 'variant', i.sku, p.sku
+  FROM incoming i JOIN current_products p ON p.product_type = 'Single' AND p.variant_key = i."variantKey"
+  WHERE p.tcgplayer_id IS NOT NULL AND p.tcgplayer_id <> i."tcgplayerId"
+), inserted AS (
+  INSERT INTO products (sku, name, product_type, game, set_name, card_number, condition, finish,
+    quantity, cost_cents, list_price_cents, location, tcgplayer_id, tcgplayer_url, price_source)
+  SELECT i.sku, i.name, 'Single', i.game, i."setName", i."cardNumber", i.condition, i.finish,
+    0, 0, 0, i.location, i."tcgplayerId", 'https://www.tcgplayer.com/product/' || i."tcgplayerId", 'manual'
+  FROM incoming i
+  WHERE NOT EXISTS (SELECT 1 FROM conflicts) AND NOT EXISTS (SELECT 1 FROM selected_product)
+  RETURNING *
+), result_product AS (
+  SELECT to_jsonb(p) AS product, true AS created FROM inserted p
+  UNION ALL
+  SELECT to_jsonb(p) - 'sku_key' - 'barcode_key' - 'variant_key' - 'game_key' - 'condition_key' - 'finish_key', false
+  FROM selected_product p WHERE NOT EXISTS (SELECT 1 FROM conflicts)
+)
+SELECT
+  (SELECT jsonb_build_object('kind', kind, 'sku', sku, 'existingSku', existing_sku)
+   FROM conflicts ORDER BY priority, existing_sku LIMIT 1) AS conflict,
+  (SELECT product FROM result_product) AS product,
+  (SELECT created FROM result_product) AS created
+`;
+
 const COLUMN_NAMES = {
   product_type: "productType", tcgplayer_id: "tcgplayerId", tcgplayer_url: "tcgplayerUrl", set_name: "setName",
   card_number: "cardNumber", sheet_quantity: "sheetQuantity", cost_cents: "costCents", market_price_cents: "marketPriceCents",
@@ -108,4 +168,27 @@ export async function saveSkuLabelsToInventory(inputs: readonly InventoryLabelIn
   if (result.conflict) throw inventoryLabelConflictError(result.conflict);
   if (result.products.length !== labels.length) throw new Error("Inventory save returned an incomplete batch.");
   return { products: result.products.map(productRecord), createdCount: result.createdCount, existingCount: result.existingCount };
+}
+
+/** Persist one reusable QR identity; concurrent requests receive the first saved SKU. */
+export async function reserveSkuLabel(input: InventoryLabelInput): Promise<ReserveSkuLabelResult> {
+  const label = validateSkuLabelReservation({ label: input });
+  if (!process.env.DATABASE_URL) throw new Error("Inventory database is unavailable.");
+  const sql = neon(process.env.DATABASE_URL);
+  const incoming = { ...label, variantKey: JSON.parse(inventoryLabelVariantKey(label)) };
+  // This conflicts with every products writer, including the regular label save.
+  // The following statement gets a fresh snapshot after any lock wait finishes.
+  const results = await sql.transaction([
+    sql.query("SET LOCAL lock_timeout = '5s'"),
+    sql.query("SET LOCAL statement_timeout = '15s'"),
+    sql.query("LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE"),
+    sql.query(RESERVE_LABEL_SQL, [JSON.stringify(incoming)]),
+  ], { isolationLevel: "ReadCommitted" });
+  const result = results[3][0] as {
+    conflict: InventoryLabelConflict | null; product: Record<string, unknown> | null; created: boolean | null;
+  } | undefined;
+  if (!result) throw new Error("QR code save returned no result.");
+  if (result.conflict) throw inventoryLabelConflictError(result.conflict);
+  if (!result.product || result.created === null) throw new Error("QR code save returned no product.");
+  return { product: productRecord(result.product), created: result.created };
 }

@@ -33,10 +33,12 @@ export type InventoryLabelConflict = { kind: "sku" | "barcode" | "variant"; sku:
 
 export class SkuLabelInventoryError extends Error {
   status: 400 | 409;
-  constructor(status: 400 | 409, message: string) {
+  existingSku?: string;
+  constructor(status: 400 | 409, message: string, existingSku?: string) {
     super(message);
     this.name = "SkuLabelInventoryError";
     this.status = status;
+    this.existingSku = existingSku;
   }
 }
 
@@ -63,9 +65,19 @@ function sameCatalogVariant(left: InventoryLabelIdentity, right: InventoryLabelI
 }
 
 export function inventoryLabelConflictError(conflict: InventoryLabelConflict): SkuLabelInventoryError {
-  if (conflict.kind === "barcode") return new SkuLabelInventoryError(409, `${conflict.sku} is already a barcode for ${conflict.existingSku}. Generate a different SKU.`);
-  if (conflict.kind === "variant") return new SkuLabelInventoryError(409, `This card variant already exists as ${conflict.existingSku}. Use that SKU to reprint or manage its stock in Inventory.`);
-  return new SkuLabelInventoryError(409, `${conflict.sku} already belongs to a different card. Generate a different SKU or restore the original card details.`);
+  if (conflict.kind === "barcode") return new SkuLabelInventoryError(409, `${conflict.sku} is already a barcode for ${conflict.existingSku}. Generate a different SKU.`, conflict.existingSku);
+  if (conflict.kind === "variant") return new SkuLabelInventoryError(409, `This card variant already exists as ${conflict.existingSku}. Use that SKU to reprint or manage its stock in Inventory.`, conflict.existingSku);
+  return new SkuLabelInventoryError(409, `${conflict.sku} already belongs to a different card. Generate a different SKU or restore the original card details.`, conflict.existingSku);
+}
+
+/** Reserve the identity of a linked card without receiving stock or setting prices. */
+export function validateSkuLabelReservation(payload: unknown): NormalizedInventoryLabel {
+  if (!payload || typeof payload !== "object" || !("label" in payload)) {
+    throw new SkuLabelInventoryError(400, "Send one card label to save its QR code.");
+  }
+  const [label] = validateInventoryLabels({ labels: [payload.label] });
+  if (!label.tcgplayerId) throw new SkuLabelInventoryError(400, "A TCGplayer-linked card is required to save this QR code.");
+  return { ...label, quantity: 0, costCents: 0, listPriceCents: 0 };
 }
 
 /** Plans retries without changing any existing product's stock, prices, or metadata. */
