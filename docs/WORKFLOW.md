@@ -158,6 +158,27 @@ identify a card variant. Identical copies share one SKU and a starting quantity;
 the print-copy count does not change stock. Custom labels use manually entered
 cost and sell prices and save to Defy inventory, without publishing to Shopify.
 
+**Add a single from TCGplayer** accepts a full HTTPS TCGplayer product link,
+loads its exact card identity and image, and creates a draft QR SKU after the
+operator chooses condition and finish. The authenticated, read-only
+`POST /api/sku-labels/lookup` reads TCGplayer's public product-details endpoint
+and TCGCSV's source-listed finishes with bounded timeouts and 24-hour caching.
+It uses fixed upstream hosts and validated product IDs; it never fetches a
+user-supplied URL or uses catalog prices. If finish lookup is unavailable, the
+operator must enter the physical card's finish. Sealed and accessory links are
+rejected. Games outside the registry are labeled **Other** with an explicit
+notice. Catalog availability determines link coverage; manual entry remains
+available for cards that cannot be looked up.
+
+Linked cards append to the current batch and retain full names up to 240
+characters, while printed names remain shortened to fit the label. Cards
+without a printed number can use their TCGplayer product ID. Named finishes
+and editions remain distinct; known Foil/Holofoil, Normal/Nonfoil, and
+Reverse Holo/Reverse Holofoil aliases share duplicate detection. Importing a
+saved custom variant loads its original SKU for reprints; existing legacy SKUs
+are identified for stock management in Inventory. Starting quantity, cost,
+and sell price still require review before saving.
+
 `POST /api/sku-labels` validates the entire batch and atomically creates products
 with their initial inventory movements using the existing schema. Retrying a
 saved SKU with the same identity reuses it without changing stock or prices;

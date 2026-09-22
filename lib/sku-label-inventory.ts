@@ -3,6 +3,11 @@ import { canonicalizeGame, isCanonicalGameName, type TcgGameName } from "./tcg-g
 
 export const LABEL_CONDITIONS = ["Near Mint", "Lightly Played", "Moderately Played", "Heavily Played", "Damaged"] as const;
 export const LABEL_FINISHES = ["Normal", "Foil", "Reverse Holo"] as const;
+export const INVENTORY_LABEL_FINISH_ALIASES = [
+  ["Normal", ["Normal", "Nonfoil", "Non-Foil", "Non Foil"]],
+  ["Foil", ["Foil", "Holofoil"]],
+  ["Reverse Holo", ["Reverse Holo", "Reverse Holofoil"]],
+] as const;
 export const MAX_LABEL_MONEY_CENTS = 100_000_000;
 
 export type InventoryLabelInput = {
@@ -12,7 +17,7 @@ export type InventoryLabelInput = {
   setName: string;
   cardNumber: string;
   condition: (typeof LABEL_CONDITIONS)[number];
-  finish: (typeof LABEL_FINISHES)[number];
+  finish: string;
   quantity: number;
   costCents: number;
   listPriceCents: number;
@@ -39,8 +44,14 @@ export function inventoryLabelIdentityText(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
+/** Normalize established aliases only; named treatments remain distinct variants. */
+export function canonicalInventoryLabelFinish(value: string): string {
+  const key = inventoryLabelIdentityText(value);
+  return INVENTORY_LABEL_FINISH_ALIASES.find(([, aliases]) => aliases.some((alias) => inventoryLabelIdentityText(alias) === key))?.[0] ?? value.trim();
+}
+
 export function inventoryLabelVariantKey(label: Omit<InventoryLabelIdentity, "sku" | "productType">): string {
-  return JSON.stringify([canonicalizeGame(label.game), label.name, label.setName, label.cardNumber, label.condition, label.finish]
+  return JSON.stringify([canonicalizeGame(label.game), label.name, label.setName, label.cardNumber, label.condition, canonicalInventoryLabelFinish(label.finish)]
     .map(inventoryLabelIdentityText));
 }
 
@@ -48,7 +59,7 @@ function sameCatalogVariant(left: InventoryLabelIdentity, right: InventoryLabelI
   return Boolean(left.tcgplayerId && left.tcgplayerId === right.tcgplayerId &&
     canonicalizeGame(left.game) === canonicalizeGame(right.game) &&
     inventoryLabelIdentityText(left.condition) === inventoryLabelIdentityText(right.condition) &&
-    inventoryLabelIdentityText(left.finish) === inventoryLabelIdentityText(right.finish));
+    inventoryLabelIdentityText(canonicalInventoryLabelFinish(left.finish)) === inventoryLabelIdentityText(canonicalInventoryLabelFinish(right.finish)));
 }
 
 export function inventoryLabelConflictError(conflict: InventoryLabelConflict): SkuLabelInventoryError {
@@ -109,20 +120,19 @@ export function validateInventoryLabels(payload: unknown): NormalizedInventoryLa
     if (!isGeneratedSku(row.sku)) throw new SkuLabelInventoryError(400, `Label ${index + 1} must use a generated SKU.`);
     if (!isCanonicalGameName(row.game)) throw new SkuLabelInventoryError(400, `Choose a game for label ${index + 1}.`);
     if (!LABEL_CONDITIONS.includes(row.condition as InventoryLabelInput["condition"])) throw new SkuLabelInventoryError(400, `Choose a valid condition for ${row.sku}.`);
-    if (!LABEL_FINISHES.includes(row.finish as InventoryLabelInput["finish"])) throw new SkuLabelInventoryError(400, `Choose a valid finish for ${row.sku}.`);
     const tcgplayerId = row.tcgplayerId == null ? null : integer(row.tcgplayerId, "TCGplayer ID", 2_147_483_647);
     if (tcgplayerId === 0) throw new SkuLabelInventoryError(400, "TCGplayer ID must be positive.");
     const label: NormalizedInventoryLabel = {
-      sku: row.sku, name: text(row.name, "Card name", 48), game: row.game,
-      setName: text(row.setName, "Set name", 120), cardNumber: text(row.cardNumber, "Card number", 40),
-      condition: row.condition as InventoryLabelInput["condition"], finish: row.finish as InventoryLabelInput["finish"],
+      sku: row.sku, name: text(row.name, "Card name", 240), game: row.game,
+      setName: text(row.setName, "Set name", 120), cardNumber: text(row.cardNumber, "Card number", 40, tcgplayerId !== null),
+      condition: row.condition as InventoryLabelInput["condition"], finish: canonicalInventoryLabelFinish(text(row.finish, "Finish", 80)),
       quantity: integer(row.quantity, "Quantity", 100_000), costCents: integer(row.costCents, "Cost in cents", MAX_LABEL_MONEY_CENTS),
       listPriceCents: integer(row.listPriceCents, "Price in cents", MAX_LABEL_MONEY_CENTS),
       location: text(row.location, "Location", 80, true).toUpperCase() || "REDMOND", tcgplayerId,
     };
     if (skus.has(label.sku)) throw new SkuLabelInventoryError(400, `SKU ${label.sku} appears more than once in this batch.`);
     const variantKey = inventoryLabelVariantKey(label);
-    const catalogKey = label.tcgplayerId ? JSON.stringify([label.game, label.tcgplayerId, label.condition, label.finish]) : "";
+    const catalogKey = label.tcgplayerId ? JSON.stringify([label.game, label.tcgplayerId, label.condition, inventoryLabelIdentityText(label.finish)]) : "";
     if (variants.has(variantKey) || (catalogKey && catalogs.has(catalogKey))) {
       throw new SkuLabelInventoryError(409, `The same card variant appears more than once in this batch (${label.sku}). Use one SKU and set its quantity instead.`);
     }

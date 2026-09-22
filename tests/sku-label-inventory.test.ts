@@ -27,9 +27,48 @@ test("validation rejects invalid batch shape, required single metadata and unkno
     assert.throws(() => validateInventoryLabels(payload), status(400));
   }
   for (const patch of [
-    { sku: "bad" }, { name: " " }, { name: "A".repeat(49) }, { name: "A\u0000B" }, { game: "pokemon" },
-    { game: "" }, { setName: "" }, { cardNumber: "" }, { condition: "NM" }, { finish: "Glossy" },
+    { sku: "bad" }, { name: " " }, { name: "A".repeat(241) }, { name: "A\u0000B" }, { game: "pokemon" },
+    { game: "" }, { setName: "" }, { cardNumber: "" }, { condition: "NM" }, { finish: " " },
+    { finish: "A".repeat(81) }, { finish: "Foil\u0000" },
   ]) assert.throws(() => labels({ ...input, ...patch } as InventoryLabelInput), status(400));
+});
+
+test("catalog identities preserve full names, numberless cards, and specific finish treatments", () => {
+  const name = "A".repeat(240);
+  const [label] = labels({ ...input, name, cardNumber: "", tcgplayerId: 123, finish: "Textured Foil" });
+  assert.equal(label.name, name);
+  assert.equal(label.cardNumber, "");
+  assert.equal(label.finish, "Textured Foil");
+  assert.equal(labels({ ...input, name: "🃏".repeat(240) })[0].name.length, 480);
+  assert.equal(labels({ ...input, cardNumber: "  ", tcgplayerId: 123 })[0].cardNumber, "");
+  assert.throws(() => labels({ ...input, cardNumber: "  " }), status(400));
+  assert.throws(() => labels({ ...input, cardNumber: "", tcgplayerId: 0 }), status(400));
+  assert.equal(labels({ ...input, finish: "A".repeat(80) })[0].finish.length, 80);
+});
+
+test("known finish aliases share an identity and save canonically without merging specific treatments", () => {
+  for (const [finish, canonical] of [[" Nonfoil ", "Normal"], ["Non-Foil", "Normal"], ["Non Foil", "Normal"], ["HOLOFOIL", "Foil"], ["Reverse   Holofoil", "Reverse Holo"]]) {
+    const [label] = labels({ ...input, finish });
+    assert.equal(label.finish, canonical);
+    assert.equal(inventoryLabelVariantKey({ ...input, finish }), inventoryLabelVariantKey({ ...input, finish: canonical }));
+    assert.throws(() => labels({ ...input, finish }, { ...input, finish: canonical, sku: "DEFY-1234567891" }), status(409));
+    assert.throws(() => labels({ ...input, finish, tcgplayerId: 123 }, {
+      ...input, finish: canonical, tcgplayerId: 123, sku: "DEFY-1234567891", name: "Another spelling",
+    }), status(409));
+    const prior = existing({ finish });
+    assert.equal(planInventoryLabels(labels({ ...input, finish: canonical }), [prior]).existing[0], prior);
+    assert.throws(() => planInventoryLabels(labels({ ...input, finish: canonical }), [existing({ sku: "OLD-SKU", finish })]), /already exists as OLD-SKU/);
+    assert.throws(() => planInventoryLabels(labels({ ...input, finish: canonical, tcgplayerId: 123 }), [existing({
+      sku: "CATALOG-SKU", finish, tcgplayerId: 123, name: "Another spelling",
+    })]), /already exists as CATALOG-SKU/);
+  }
+  for (const finish of ["Textured Foil", "Cold Foil", "Rainbow Foil", "Glossy"]) {
+    assert.equal(labels({ ...input, finish })[0].finish, finish);
+    assert.equal(planInventoryLabels(labels({ ...input, finish }), [existing({ sku: "FOIL-SKU", finish: "Foil" })]).create.length, 1);
+  }
+  assert.throws(() => labels({ ...input, finish: "Textured Foil", tcgplayerId: 123 }, {
+    ...input, finish: "textured   foil", tcgplayerId: 123, sku: "DEFY-1234567891", name: "Another spelling",
+  }), status(409));
 });
 
 test("validation rejects fractional, negative, unsafe, and out-of-range quantities and money", () => {

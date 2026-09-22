@@ -62,6 +62,7 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-label-row { display: grid; grid-template-columns: 24px minmax(230px, 300px) minmax(120px, 1fr) auto; gap: 24px; align-items: center; padding: 18px 0; border-top: 1px solid var(--line); }
 .sku-row-number { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sku-label-row .sku-paper { border: 1px solid #e5e9e6; box-shadow: none; }
+.sku-label-row .sku-remove-draft { grid-column: -2 / -1; justify-self: start; }
 .sku-footer { max-width: 760px; padding: 30px 2px 4px; font-size: 12px; line-height: 1.7; }
 .sku-footer > strong { font-size: 13px; }
 .sku-footer p { color: var(--muted); margin: 6px 0; }
@@ -150,4 +151,38 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-thermal-brand { display: flex; align-items: center; height: 3mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
   .sku-thermal-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
   .sku-thermal-code { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
+}
+.sku-card-import { margin-bottom: 24px; border-top: 3px solid var(--green2); }
+.sku-card-import .sku-panel-heading { margin-bottom: 20px; }
+.sku-card-import .sku-step { background: var(--soft); border-color: transparent; font-size: 20px; }
+.sku-card-import h2 { font-size: 20px; }
+.sku-import-link-form { display: flex; align-items: flex-end; gap: 12px; }
+.sku-import-link-form > label { flex: 1; min-width: 0; }
+.sku-import-link-form > button { flex-shrink: 0; min-height: 43px; }
+.sku-import-help { color: var(--muted); font-size: 12px; line-height: 1.7; margin: 12px 0 0; }
+.sku-import-result { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: start; gap: 26px; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+.sku-import-image { min-height: 160px; display: grid; place-items: center; }
+.sku-import-image img { width: 100%; height: auto; max-height: 250px; object-fit: contain; border-radius: 8px; }
+.sku-import-image > span { padding: 25px 12px; color: var(--muted); font-size: 12px; text-align: center; line-height: 1.7; border: 1px dashed var(--line); border-radius: 8px; }
+.sku-import-details { min-width: 0; }
+.sku-import-details .eyebrow { margin: 0 0 9px; }
+.sku-import-details h3 { margin: 0 0 15px; font-size: 23px; letter-spacing: -.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.sku-import-details dl { display: flex; flex-wrap: wrap; gap: 14px 28px; margin: 0 0 14px; }
+.sku-import-details dl > div { display: grid; gap: 5px; }
+.sku-import-details dt { color: var(--muted); font-size: 10px; }
+.sku-import-details dd { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.sku-import-source { font-size: 12px; color: var(--ink); text-underline-offset: 3px; }
+.sku-import-warnings { padding-left: 18px; margin: 14px 0 0; color: var(--orange); font-size: 12px; line-height: 1.7; }
+.sku-import-variant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; border: 0; padding: 0; margin: 22px 0 16px; max-width: 560px; }
+.sku-import-variant:disabled { opacity: .65; }
+.sku-import-add { display: flex; gap: 28px; justify-content: space-between; min-height: 44px; }
+.sku-import-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  .sku-card-import h2 { font-size: 18px; }
+  .sku-import-link-form { flex-direction: column; align-items: stretch; }
+  .sku-import-result { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .sku-import-image { width: 125px; min-height: 125px; justify-self: center; }
+  .sku-import-details h3 { font-size: 21px; }
+  .sku-import-variant { grid-template-columns: minmax(0, 1fr); }
+  .sku-import-add { width: 100%; }
 }

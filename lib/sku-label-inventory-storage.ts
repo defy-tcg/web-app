@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import type { products } from "../db/schema.ts";
 import { tcgplayerImageUrl } from "./catalog-image.ts";
 import { TCG_GAME_REGISTRY } from "./tcg-games.ts";
-import { inventoryLabelConflictError, inventoryLabelIdentityText, inventoryLabelVariantKey, validateInventoryLabels,
+import { INVENTORY_LABEL_FINISH_ALIASES, inventoryLabelConflictError, inventoryLabelIdentityText, inventoryLabelVariantKey, validateInventoryLabels,
   type InventoryLabelConflict, type InventoryLabelInput } from "./sku-label-inventory.ts";
 
 export type SavedSkuLabelProduct = typeof products.$inferSelect & { imageUrl: string | null };
@@ -16,7 +16,9 @@ const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const gameSql = `CASE ${identitySql("p.game")} ${TCG_GAME_REGISTRY.flatMap((game) =>
   [...new Set([game.key, game.name, game.label, ...game.aliases].map(inventoryLabelIdentityText))]
     .map((alias) => `WHEN ${literal(alias)} THEN ${literal(inventoryLabelIdentityText(game.name))}`)).join(" ")} ELSE 'other' END`;
-const variantSql = `jsonb_build_array(${gameSql}, ${["name", "set_name", "card_number", "condition", "finish"].map((column) => identitySql(`p.${column}`)).join(", ")})`;
+const finishSql = `CASE ${identitySql("p.finish")} ${INVENTORY_LABEL_FINISH_ALIASES.flatMap(([canonical, aliases]) =>
+  aliases.map((alias) => `WHEN ${literal(inventoryLabelIdentityText(alias))} THEN ${literal(inventoryLabelIdentityText(canonical))}`)).join(" ")} ELSE ${identitySql("p.finish")} END`;
+const variantSql = `jsonb_build_array(${gameSql}, ${["name", "set_name", "card_number", "condition"].map((column) => identitySql(`p.${column}`)).join(", ")}, ${finishSql})`;
 
 const SAVE_LABELS_SQL = `
 WITH incoming AS MATERIALIZED (
@@ -27,7 +29,7 @@ WITH incoming AS MATERIALIZED (
 ), current_products AS MATERIALIZED (
   SELECT p.*, upper(trim(p.sku)) AS sku_key, upper(trim(p.barcode)) AS barcode_key,
     ${variantSql} AS variant_key, ${gameSql} AS game_key,
-    ${identitySql("p.condition")} AS condition_key, ${identitySql("p.finish")} AS finish_key
+    ${identitySql("p.condition")} AS condition_key, ${finishSql} AS finish_key
   FROM products p
 ), conflicts AS MATERIALIZED (
   SELECT 1 AS priority, i.ordinal, 'sku' AS kind, i.sku, p.sku AS existing_sku

@@ -2277,7 +2277,7 @@ export default function StoreOS() {
               Riftbound singles
             </Link>
             <Link className="secondary-button" href="/sku-labels">
-              QR SKU labels
+              Add single from link
             </Link>
             <button
               className="secondary-button sheet-sync-button"
@@ -3747,6 +3747,7 @@ export default function StoreOS() {
               <div className="modal-heading">
                 <p className="eyebrow">INVENTORY</p>
                 <h2>Add a product</h2>
+                <p><Link href="/sku-labels">Have a TCGplayer card link? Add the single and create its SKU →</Link></p>
                 <p>
                   Each card variation gets its own unique Defy SKU. After
                   saving, its price label is ready to print.

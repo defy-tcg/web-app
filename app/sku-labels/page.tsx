@@ -7,7 +7,7 @@ import "./sku-labels.css";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "QR SKU labels · Defy TCG",
-  description: "Make custom QR SKU labels for singles on 38 × 13 mm thermal paper.",
+  description: "Add singles from a TCGplayer link and make custom QR SKU labels on 38 × 13 mm thermal paper.",
   robots: { index: false, follow: false },
 };
 

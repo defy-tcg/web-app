@@ -5,10 +5,15 @@ import Link from "next/link";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
+import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, inventoryLabelVariantKey } from "@/lib/sku-label-inventory";
+import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-draft";
+import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
+import { canonicalizeGame } from "@/lib/tcg-games";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
+import TcgplayerCardImport from "./tcgplayer-card-import";
 
-type Label = { sku: string; name: string };
+type Label = SkuDraftLabel;
 type SavedBatch = { version: 1; labels: Label[] };
 const STORAGE_KEY = "defy-qr-sku-labels:v1";
 const example: Label = { sku: "DEFY-1234567890", name: "Your single goes here" };
@@ -18,10 +23,22 @@ function readSavedBatch(): Label[] {
   if (!raw) return [];
   const saved = JSON.parse(raw) as SavedBatch;
   if (saved.version !== 1 || !Array.isArray(saved.labels) || saved.labels.length > 100 ||
-    saved.labels.some((label) => !label || !isGeneratedSku(label.sku) || typeof label.name !== "string" || label.name.length > 1000) ||
+    saved.labels.some((label) => !label || !isGeneratedSku(label.sku) || typeof label.name !== "string" || label.name.length > 1000 ||
+      (label.inventory !== undefined && (!label.inventory || typeof label.inventory !== "object" ||
+        Object.keys(EMPTY_SKU_INVENTORY_DRAFT).some((key) => typeof label.inventory?.[key as keyof typeof EMPTY_SKU_INVENTORY_DRAFT] !== "string")))) ||
     new Set(saved.labels.map((label) => label.sku)).size !== saved.labels.length) {
     throw new Error("Invalid saved batch");
   }
+  // Older drafts kept details separately. Carry them into the batch before link matching.
+  try {
+    const stored = JSON.parse(localStorage.getItem("defy-qr-sku-inventory-drafts:v1") || "null") as { version?: number; drafts?: Record<string, unknown> } | null;
+    if (stored?.version === 1 && stored.drafts) return saved.labels.map((label) => {
+      const draft = stored.drafts?.[label.sku];
+      if (label.inventory || !draft || typeof draft !== "object" ||
+        Object.keys(EMPTY_SKU_INVENTORY_DRAFT).some((key) => typeof (draft as Record<string, unknown>)[key] !== "string")) return label;
+      return { ...label, inventory: draft as NonNullable<Label["inventory"]> };
+    });
+  } catch { /* Existing draft validation in the inventory panel reports a storage warning. */ }
   return saved.labels;
 }
 
@@ -50,6 +67,7 @@ export default function SkuLabelsClient() {
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
   const [savedProducts, setSavedProducts] = useState<SavedSkuProduct[]>([]);
   const [printReady, setPrintReady] = useState("");
   const [error, setError] = useState("");
@@ -116,6 +134,7 @@ export default function SkuLabelsClient() {
       setBusy(true);
       // Read inventory only. This workspace never mounts the store's sheet-sync timers.
       const response = await fetch("/api/inventory", { cache: "no-store" });
+      if (response.redirected) throw new Error("Your session expired. Sign in again before generating labels.");
       if (!response.ok) throw new Error(response.status === 401
         ? "Your session expired. Sign in again before generating labels."
         : "Inventory could not be checked for duplicate SKUs. Try again.");
@@ -136,6 +155,56 @@ export default function SkuLabelsClient() {
       setMessage(`${skus.length} QR label${skus.length === 1 ? "" : "s"} ready. Each SKU was checked against current Defy inventory.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Labels could not be generated. Try again.");
+    } finally {
+      generating.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function addLinkedCard(card: TcgplayerCardLookup, condition: string, finish: string) {
+    if (generating.current || inventoryBusy || inventoryLoading || !ready) throw new Error("Wait for the current batch to finish.");
+    generating.current = true;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/inventory", { cache: "no-store" });
+      if (response.redirected) throw new Error("Your session expired. Sign in again before adding a card.");
+      if (!response.ok) throw new Error(response.status === 401 ? "Sign in again before adding a card." : "Inventory could not be checked. Try again.");
+      const data = await response.json() as { products?: (SavedSkuProduct & { barcode?: string | null })[] };
+      if (!Array.isArray(data.products)) throw new Error("Inventory could not be checked. Try again.");
+      const identity = { ...card, condition, finish, tcgplayerId: card.productId };
+      const existing = data.products.find((product) => product.productType === "Single" &&
+        (inventoryLabelVariantKey(product) === inventoryLabelVariantKey(identity) ||
+          (product.tcgplayerId === card.productId && canonicalizeGame(product.game) === card.game &&
+            inventoryLabelIdentityText(product.condition) === inventoryLabelIdentityText(condition) && inventoryLabelIdentityText(canonicalInventoryLabelFinish(product.finish)) === inventoryLabelIdentityText(canonicalInventoryLabelFinish(finish)))));
+      if (existing) {
+        if (!isGeneratedSku(existing.sku)) throw new Error(`This variant already uses SKU ${existing.sku}. Open Inventory to manage its stock or print its existing barcode.`);
+        if (!labels.some((label) => label.sku === existing.sku) && labels.length >= 100) throw new Error("Save this batch before adding more than 100 SKUs.");
+        setSavedProducts((current) => [...current.filter((product) => product.sku !== existing.sku), existing]);
+        saveBatch([...labels.filter((label) => label.sku !== existing.sku), { sku: existing.sku, name: existing.name }]);
+        setMessage(`This variant already has SKU ${existing.sku}. Its original label is loaded; manage stock in Inventory.`);
+        return;
+      }
+      if (labels.length >= 100) throw new Error("Save this batch before adding more than 100 SKUs.");
+      const duplicate = labels.find((label) => label.inventory &&
+        (inventoryLabelVariantKey({ ...label, ...label.inventory, tcgplayerId: null }) === inventoryLabelVariantKey(identity) ||
+          (label.inventory.tcgplayerId === String(card.productId) && label.inventory.game === card.game &&
+            label.inventory.condition === condition && inventoryLabelIdentityText(canonicalInventoryLabelFinish(label.inventory.finish)) === inventoryLabelIdentityText(canonicalInventoryLabelFinish(finish)))));
+      if (duplicate) throw new Error(`This variant is already in your batch as ${duplicate.sku}. Set its starting quantity for identical copies.`);
+      const excluded = new Set([...generated.current, ...labels.map((label) => label.sku)]);
+      for (const product of data.products) {
+        excluded.add(product.sku.trim().toUpperCase());
+        if (product.barcode) excluded.add(product.barcode.trim().toUpperCase());
+      }
+      try { readSavedBatch().forEach((label) => excluded.add(label.sku)); } catch { /* saveBatch reports storage errors. */ }
+      const [sku] = generateSkuBatch(1, excluded, normalizeSkuPrefix(prefix));
+      generated.current.add(sku);
+      saveBatch([...labels, { sku, name: card.name, inventory: {
+        ...EMPTY_SKU_INVENTORY_DRAFT, game: card.game, setName: card.setName, cardNumber: card.cardNumber,
+        condition, finish, tcgplayerId: String(card.productId),
+      } }]);
+      setMessage(`${card.name} added with SKU ${sku}. Check starting quantity, cost, and sell price below, then save to inventory.`);
     } finally {
       generating.current = false;
       setBusy(false);
@@ -233,17 +302,19 @@ export default function SkuLabelsClient() {
       <div className="sku-main">
         <header className="sku-hero">
           <div><p className="eyebrow">SINGLES · LABEL STUDIO</p><h1>Make it yours.<br /><span>Scan it in.</span></h1>
-            <p>Custom QR SKUs for your singles. Generate a batch, save the cards to inventory, and print your thermal labels.</p>
+            <p>Paste a TCGplayer card link to fill in your single and create its SKU. Save to inventory, then print your thermal labels.</p>
           </div>
           <div className="sku-size-badge"><b>38 × 13</b><span>mm thermal label</span></div>
         </header>
+
+        <TcgplayerCardImport disabled={!ready || busy || inventoryBusy || inventoryLoading || pdfBusy} onAdd={addLinkedCard} />
 
         <div className="sku-workbench">
           <section className="sku-panel sku-controls" aria-labelledby="sku-settings-title">
             <div className="sku-panel-heading"><span className="sku-step">01</span><div><h2 id="sku-settings-title">Customize your batch</h2><p>A short prefix, a random number, your card.</p></div></div>
             <form onSubmit={generate}>
               <label>SKU prefix<input disabled={inventoryBusy} value={prefix} onChange={(event) => setPrefix(event.target.value.toUpperCase())} maxLength={4} pattern="[A-Za-z0-9]{0,4}" placeholder="DEFY" autoComplete="off" /><small>Up to 4 letters or numbers. Leave blank for numbers only.</small></label>
-              <label>Card name (optional)<input disabled={inventoryBusy} value={name} onChange={(event) => setName(event.target.value)} maxLength={48} placeholder="e.g. Ahri · Spirit Blossom" /><small>Add a name for each card before saving to inventory.</small></label>
+              <label>Card name (optional)<input disabled={inventoryBusy} value={name} onChange={(event) => setName(event.target.value)} maxLength={240} placeholder="e.g. Ahri · Spirit Blossom" /><small>Add a name for each card before saving to inventory.</small></label>
               <label>Number of SKUs<input disabled={inventoryBusy} type="number" inputMode="numeric" min={1} max={100} step={1} required value={count} onChange={(event) => setCount(event.target.value)} /><small>1–100 different SKUs per batch.</small></label>
               <button className="primary-button" disabled={!ready || busy || inventoryBusy || pdfBusy}>{busy ? "Checking inventory…" : labels.length ? "Generate new batch" : "Generate QR labels"}<span aria-hidden="true">↗</span></button>
               {labels.length > 0 && <p className="sku-replace-note">A new batch replaces the preview. Save this batch to inventory to keep it in your library.</p>}
@@ -274,11 +345,12 @@ export default function SkuLabelsClient() {
           <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button></div></header>
           <div className="sku-label-list">{labels.map((label, index) => <article className="sku-label-row" key={label.sku}>
             <span className="sku-row-number">{String(index + 1).padStart(2, "0")}</span><QrLabel label={label} />
-            <label>Card name {index + 1}<input disabled={inventoryBusy || busy || pdfBusy || savedSkus.has(label.sku)} maxLength={48} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />{savedSkus.has(label.sku) && <small>Saved card · edit its name in Inventory.</small>}</label>
+            <label>Card name {index + 1}<input disabled={inventoryBusy || busy || pdfBusy || savedSkus.has(label.sku)} maxLength={240} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />{savedSkus.has(label.sku) && <small>Saved card · edit its name in Inventory.</small>}</label>
             <button className="secondary-button" onClick={() => void copySkus([label.sku])} aria-label={`Copy SKU ${label.sku}`}>Copy SKU</button>
+            {!savedSkus.has(label.sku) && <button className="secondary-button sku-remove-draft" disabled={inventoryBusy || busy || pdfBusy} aria-label={`Remove draft ${label.sku}`} onClick={() => saveBatch(labels.filter((item) => item.sku !== label.sku))}>Remove draft</button>}
           </article>)}</div>
         </section>}
-        <SkuInventoryPanel labels={labels} disabled={busy || pdfBusy || inventoryBusy} canPrint={canPrint} onSavingChange={setInventoryBusy} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} />
+        <SkuInventoryPanel labels={labels} products={savedProducts} disabled={busy || pdfBusy || inventoryBusy} canPrint={canPrint} onSavingChange={setInventoryBusy} onLoadingChange={setInventoryLoading} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} onDraftChange={(sku, inventory) => saveBatch(labels.map((label) => label.sku === sku ? { ...label, inventory } : label))} />
         <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>The QR contains the exact SKU saved in Defy inventory. Use the saved-label library to reprint it; adjust stock and prices in Inventory.</p><p>Drafts stay in this browser until you save. Saving reserves each SKU and records starting stock once. Downloading or printing alone does not save inventory.</p></footer>
       </div>
       <dialog ref={printDialog} className="sku-print-dialog" aria-labelledby="sku-print-dialog-title" onClose={() => setPrintReady("")}>

@@ -4,19 +4,14 @@ import { startTransition, useCallback, useEffect, useRef, useState } from "react
 import { LABEL_CONDITIONS, LABEL_FINISHES, validateInventoryLabels } from "@/lib/sku-label-inventory";
 import { isGeneratedSku } from "@/lib/sku-labels";
 import { TCG_GAME_OPTIONS } from "@/lib/tcg-games";
+import { EMPTY_SKU_INVENTORY_DRAFT as emptyDraft, type SkuInventoryDraft as Draft, type SkuDraftLabel as Label } from "@/lib/sku-label-draft";
 
-type Label = { sku: string; name: string };
 export type SavedSkuProduct = Label & {
   id: number; productType: string; game: string; setName: string; cardNumber: string;
   condition: string; finish: string; quantity: number; costCents: number;
   listPriceCents: number; location: string; tcgplayerId: number | null;
 };
-type Draft = {
-  game: string; setName: string; cardNumber: string; condition: string; finish: string;
-  quantity: string; cost: string; price: string; location: string; tcgplayerId: string;
-};
 const DRAFT_KEY = "defy-qr-sku-inventory-drafts:v1";
-const emptyDraft: Draft = { game: "", setName: "", cardNumber: "", condition: "Near Mint", finish: "Normal", quantity: "1", cost: "0.00", price: "0.00", location: "REDMOND", tcgplayerId: "" };
 
 function productDraft(product: SavedSkuProduct): Draft {
   return { game: product.game, setName: product.setName, cardNumber: product.cardNumber,
@@ -30,15 +25,16 @@ function cents(value: string, field: string): number {
   return Math.round(Number(value) * 100);
 }
 
-export default function SkuInventoryPanel({ labels, disabled, canPrint, onSavingChange, onInventoryLoaded, onSaved, onLoad }: {
-  labels: Label[]; disabled: boolean; canPrint: boolean;
+export default function SkuInventoryPanel({ labels, products, disabled, canPrint, onSavingChange, onLoadingChange, onInventoryLoaded, onSaved, onLoad, onDraftChange }: {
+  labels: Label[]; products: SavedSkuProduct[]; disabled: boolean; canPrint: boolean;
   onSavingChange: (busy: boolean) => void;
+  onLoadingChange: (busy: boolean) => void;
   onInventoryLoaded: (products: SavedSkuProduct[]) => void;
   onSaved: (products: SavedSkuProduct[], createdCount: number, existingCount: number) => void;
   onLoad: (product: SavedSkuProduct) => void;
+  onDraftChange: (sku: string, draft: Draft) => void;
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [products, setProducts] = useState<SavedSkuProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
@@ -53,6 +49,7 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
   const refresh = useCallback(async () => {
     const sequence = ++refreshSequence.current;
     setLoading(true);
+    onLoadingChange(true);
     setLibraryError("");
     try {
       const response = await fetch("/api/inventory", { cache: "no-store" });
@@ -61,12 +58,11 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
       if (!Array.isArray(data.products)) throw new Error("Saved labels could not be loaded. Try Refresh.");
       if (sequence !== refreshSequence.current) return;
       const saved = data.products.filter((product) => product.productType === "Single" && isGeneratedSku(product.sku));
-      setProducts(saved);
       onInventoryLoaded(saved);
     } catch (caught) {
       if (sequence === refreshSequence.current) setLibraryError(caught instanceof Error ? caught.message : "Saved labels could not be loaded.");
-    } finally { if (sequence === refreshSequence.current) setLoading(false); }
-  }, [onInventoryLoaded]);
+    } finally { if (sequence === refreshSequence.current) { setLoading(false); onLoadingChange(false); } }
+  }, [onInventoryLoaded, onLoadingChange]);
 
   useEffect(() => {
     let restored: Record<string, Draft> = {};
@@ -84,8 +80,9 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
   }, [refresh]);
 
   function update(sku: string, key: keyof Draft, value: string) {
-    const next = { ...drafts, [sku]: { ...(drafts[sku] ?? emptyDraft), [key]: value } };
+    const next = { ...drafts, [sku]: { ...(labels.find((label) => label.sku === sku)?.inventory ?? drafts[sku] ?? emptyDraft), [key]: value } };
     setDrafts(next);
+    onDraftChange(sku, next[sku]);
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 1, drafts: Object.fromEntries(Object.entries(next).slice(-100)) }));
       setWarning("");
@@ -102,7 +99,7 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
         return;
       }
       const inputs = newLabels.map((label) => {
-        const draft = drafts[label.sku] ?? emptyDraft;
+        const draft = label.inventory ?? drafts[label.sku] ?? emptyDraft;
         try {
           return validateInventoryLabels({ labels: [{ ...label, ...draft,
             quantity: draft.quantity.trim() ? Number(draft.quantity) : NaN,
@@ -130,7 +127,6 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
       }
       const returned = data.products;
       const combined = [...returned, ...products.filter((product) => !returned.some((saved) => saved.sku === product.sku))];
-      setProducts(combined);
       onInventoryLoaded(combined);
       onSaved(labels.map((label) => combined.find((product) => product.sku === label.sku)!), data.createdCount, data.existingCount + labels.length - newLabels.length);
     } catch (caught) {
@@ -149,7 +145,7 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
       <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">Save your singles</h2><p>One SKU per card variant. Use quantity for identical copies.</p></div></div>
       <div className="sku-inventory-cards">{labels.map((label, index) => {
         const product = products.find((item) => item.sku === label.sku);
-        const draft = product ? productDraft(product) : drafts[label.sku] ?? emptyDraft;
+        const draft = product ? productDraft(product) : label.inventory ?? drafts[label.sku] ?? emptyDraft;
         const field = (key: keyof Draft, title: string, options: { type?: string; maxLength?: number; min?: number; max?: number; step?: string } = {}) =>
           <label>{title}<input aria-label={`${title} for ${label.sku}`} {...options} value={draft[key]} onChange={(event) => update(label.sku, key, event.target.value)} /></label>;
         return <details className="sku-inventory-card" key={label.sku} open={index === 0 ? true : undefined} ref={(element) => { if (element) details.current.set(label.sku, element); else details.current.delete(label.sku); }}>
@@ -159,7 +155,7 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
             {field("setName", "Set name", { maxLength: 120 })}
             {field("cardNumber", "Card number", { maxLength: 40 })}
             <label>Condition<select aria-label={`Condition for ${label.sku}`} value={draft.condition} onChange={(event) => update(label.sku, "condition", event.target.value)}>{LABEL_CONDITIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
-            <label>Finish<select aria-label={`Finish for ${label.sku}`} value={draft.finish} onChange={(event) => update(label.sku, "finish", event.target.value)}>{LABEL_FINISHES.map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label>Finish<input aria-label={`Finish for ${label.sku}`} list="sku-finish-presets" maxLength={80} value={draft.finish} onChange={(event) => update(label.sku, "finish", event.target.value)} /><small>Keep the exact finish or edition for this card.</small></label>
             {field("quantity", product ? "Stock on hand" : "Starting quantity", { type: "number", min: 0, max: 100000, step: "1" })}
             {field("cost", "Cost per card ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
             {field("price", "Sell price ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
@@ -169,6 +165,7 @@ export default function SkuInventoryPanel({ labels, disabled, canPrint, onSaving
           {product && <p className="sku-print-help">Already saved. Reprinting keeps its SKU and stock unchanged. Edit this card or adjust stock in Inventory.</p>}
         </details>;
       })}</div>
+      <datalist id="sku-finish-presets">{LABEL_FINISHES.map((value) => <option key={value} value={value} />)}</datalist>
       <div className="sku-save-bar"><div><strong>Save first. Keep the same SKU.</strong><p>Starting quantity adds stock once. Copies per SKU only controls printed labels.</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving inventory…" : "Save to Inventory & Print"}</button></div>
       {error && <p className="sku-inline-error" role="alert">{error}</p>}
       {warning && <p className="sku-storage-warning" role="status">{warning}</p>}
