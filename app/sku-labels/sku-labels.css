@@ -176,6 +176,20 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-import-variant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; border: 0; padding: 0; margin: 22px 0 16px; max-width: 560px; }
 .sku-import-variant:disabled { opacity: .65; }
 .sku-import-add { display: flex; gap: 28px; justify-content: space-between; min-height: 44px; }
+.sku-import-saved-variants { margin-top: 20px; font-size: 12px; }
+.sku-import-saved-variants > p { color: var(--muted); line-height: 1.6; }
+.sku-import-saved-variants > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.sku-import-saved-variants button { display: grid; gap: 6px; min-width: 0; text-align: left; }
+.sku-import-saved-variants button[aria-pressed="true"] { border-color: var(--green2); background: var(--soft); }
+.sku-import-saved-variants code { font-size: 11px; overflow-wrap: anywhere; }
+.sku-import-existing { display: flex; align-items: center; gap: 16px; padding: 16px; margin-bottom: 16px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+.sku-import-existing-qr { flex: 0 0 86px; width: 86px; background: #fff; line-height: 0; }
+.sku-import-existing-qr svg { display: block; width: 100%; height: auto; }
+.sku-import-existing > div:last-child { min-width: 0; }
+.sku-import-existing strong, .sku-import-existing code { display: block; margin-bottom: 6px; overflow-wrap: anywhere; }
+.sku-import-existing strong { font-size: 13px; }
+.sku-import-existing code { font-size: 13px; }
+.sku-import-existing p, .sku-import-existing a { margin: 0; font-size: 12px; line-height: 1.65; }
 .sku-import-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 600px) {
   .sku-card-import h2 { font-size: 18px; }
@@ -185,4 +199,5 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-import-details h3 { font-size: 21px; }
   .sku-import-variant { grid-template-columns: minmax(0, 1fr); }
   .sku-import-add { width: 100%; }
+  .sku-import-existing { flex-direction: column; align-items: flex-start; }
 }

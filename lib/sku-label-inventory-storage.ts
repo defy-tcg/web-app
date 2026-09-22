@@ -35,7 +35,9 @@ WITH incoming AS MATERIALIZED (
 ), conflicts AS MATERIALIZED (
   SELECT 1 AS priority, i.ordinal, 'sku' AS kind, i.sku, p.sku AS existing_sku
   FROM incoming i JOIN current_products p ON p.sku_key = i.sku
-  WHERE p.product_type <> 'Single' OR p.variant_key <> i."variantKey" OR
+  WHERE p.product_type <> 'Single' OR (p.variant_key <> i."variantKey" AND NOT
+    (i."tcgplayerId" IS NOT NULL AND p.tcgplayer_id IS NOT NULL AND p.tcgplayer_id = i."tcgplayerId" AND
+     p.condition_key = i."variantKey"->>4 AND p.finish_key = i."variantKey"->>5)) OR
     (p.tcgplayer_id IS NOT NULL AND i."tcgplayerId" IS NOT NULL AND p.tcgplayer_id <> i."tcgplayerId")
   UNION ALL
   SELECT 2, i.ordinal, 'barcode', i.sku, p.sku
@@ -45,7 +47,7 @@ WITH incoming AS MATERIALIZED (
   FROM incoming i JOIN current_products p ON p.product_type = 'Single' AND p.sku_key <> i.sku AND
     (p.variant_key = i."variantKey" OR
       (i."tcgplayerId" IS NOT NULL AND p.tcgplayer_id = i."tcgplayerId" AND
-       p.game_key = i."variantKey"->>0 AND p.condition_key = i."variantKey"->>4 AND p.finish_key = i."variantKey"->>5))
+       p.condition_key = i."variantKey"->>4 AND p.finish_key = i."variantKey"->>5))
 ), inserted AS (
   INSERT INTO products (sku, name, product_type, game, set_name, card_number, condition, finish,
     quantity, cost_cents, list_price_cents, location, tcgplayer_id, tcgplayer_url, price_source)
@@ -90,11 +92,11 @@ WITH incoming AS MATERIALIZED (
   SELECT p.* FROM current_products p CROSS JOIN incoming i
   WHERE p.product_type = 'Single' AND
     ((p.variant_key = i."variantKey" AND (p.tcgplayer_id IS NULL OR p.tcgplayer_id = i."tcgplayerId")) OR
-      (p.tcgplayer_id = i."tcgplayerId" AND p.game_key = i."variantKey"->>0 AND
+      (p.tcgplayer_id = i."tcgplayerId" AND
        p.condition_key = i."variantKey"->>4 AND p.finish_key = i."variantKey"->>5))
 ), selected_product AS MATERIALIZED (
-  SELECT p.* FROM matching_products p CROSS JOIN incoming i
-  ORDER BY (p.sku_key = i.sku) DESC, p.created_at, p.id LIMIT 1
+  SELECT p.* FROM matching_products p
+  ORDER BY p.created_at, p.id LIMIT 1
 ), conflicts AS MATERIALIZED (
   SELECT 1 AS priority, 'sku' AS kind, i.sku, p.sku AS existing_sku
   FROM incoming i JOIN current_products p ON p.sku_key = i.sku
@@ -114,6 +116,12 @@ WITH incoming AS MATERIALIZED (
   SELECT 3, 'variant', i.sku, p.sku
   FROM incoming i JOIN current_products p ON p.product_type = 'Single' AND p.variant_key = i."variantKey"
   WHERE p.tcgplayer_id IS NOT NULL AND p.tcgplayer_id <> i."tcgplayerId"
+), linked AS (
+  UPDATE products p SET tcgplayer_id = i."tcgplayerId",
+    tcgplayer_url = 'https://www.tcgplayer.com/product/' || i."tcgplayerId"
+  FROM selected_product selected CROSS JOIN incoming i
+  WHERE p.id = selected.id AND p.tcgplayer_id IS NULL AND NOT EXISTS (SELECT 1 FROM conflicts)
+  RETURNING p.*
 ), inserted AS (
   INSERT INTO products (sku, name, product_type, game, set_name, card_number, condition, finish,
     quantity, cost_cents, list_price_cents, location, tcgplayer_id, tcgplayer_url, price_source)
@@ -125,8 +133,10 @@ WITH incoming AS MATERIALIZED (
 ), result_product AS (
   SELECT to_jsonb(p) AS product, true AS created FROM inserted p
   UNION ALL
+  SELECT to_jsonb(p), false FROM linked p
+  UNION ALL
   SELECT to_jsonb(p) - 'sku_key' - 'barcode_key' - 'variant_key' - 'game_key' - 'condition_key' - 'finish_key', false
-  FROM selected_product p WHERE NOT EXISTS (SELECT 1 FROM conflicts)
+  FROM selected_product p WHERE NOT EXISTS (SELECT 1 FROM conflicts) AND NOT EXISTS (SELECT 1 FROM linked)
 )
 SELECT
   (SELECT jsonb_build_object('kind', kind, 'sku', sku, 'existingSku', existing_sku)

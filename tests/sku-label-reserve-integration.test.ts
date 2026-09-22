@@ -17,7 +17,7 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
   process.env.DATABASE_URL = databaseUrl;
   const sql = neon(databaseUrl);
   const marker = `QR reserve test ${randomUUID()}`;
-  const skus = generateSkuBatch(12, [], "TEST");
+  const skus = generateSkuBatch(14, [], "TEST");
   const legacySku = `LEGACY-${randomUUID()}`;
   const ownedSkus = [...skus, legacySku];
   const catalogId = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
@@ -46,6 +46,13 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
     assert.equal(reused.created, false);
     assert.equal(reused.product.sku, skus[0]);
     assert.deepEqual((await sql`SELECT to_jsonb(p) AS product FROM products p WHERE id = ${initial.product.id}`)[0].product, before);
+    const correctedGame = await reserveSkuLabel({ ...label, sku: skus[1], game: "Other", name: `${marker} corrected game` });
+    assert.equal(correctedGame.product.id, initial.product.id);
+    const batchRetry = await saveSkuLabelsToInventory([{ ...label, game: "Other", name: `${marker} corrected game` }]);
+    assert.equal(batchRetry.existingCount, 1);
+    assert.equal(batchRetry.products[0].id, initial.product.id);
+    await assert.rejects(() => saveSkuLabelsToInventory([{ ...label, sku: skus[1], game: "Other", name: `${marker} corrected game` }]),
+      (error: unknown) => error instanceof SkuLabelInventoryError && error.status === 409 && error.existingSku === skus[0]);
     for (const sku of [skus[0], skus[1]]) {
       await assert.rejects(() => reserveSkuLabel({ ...label, sku, tcgplayerId: catalogId + 1 }),
         (error: unknown) => error instanceof SkuLabelInventoryError && error.status === 409 && error.existingSku === skus[0]);
@@ -53,14 +60,23 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
     assert.equal((await sql`SELECT count(*)::integer AS count FROM products WHERE tcgplayer_id = ${catalogId + 1}`)[0].count, 0);
     await sql`INSERT INTO products (sku, name, product_type, game, set_name, card_number, condition, finish)
       VALUES (${skus[10]}, ${`${marker} without catalog ID`}, 'Single', 'Riftbound', 'Reserve test', 'TEST-001', 'Near Mint', 'Normal')`;
+    const unlinkedBefore = (await sql`SELECT to_jsonb(p) AS product FROM products p WHERE sku = ${skus[10]}`)[0].product;
     const canonical = await reserveSkuLabel({ ...label, sku: skus[11], name: `${marker} without catalog ID`, tcgplayerId: catalogId + 1 });
     assert.equal(canonical.created, false);
     assert.equal(canonical.product.sku, skus[10]);
-    assert.equal(canonical.product.tcgplayerId, null);
+    assert.equal(canonical.product.tcgplayerId, catalogId + 1);
+    assert.equal(canonical.product.tcgplayerUrl, `https://www.tcgplayer.com/product/${catalogId + 1}`);
+    assert.deepEqual((await sql`SELECT to_jsonb(p) AS product FROM products p WHERE sku = ${skus[10]}`)[0].product, {
+      ...unlinkedBefore, tcgplayer_id: catalogId + 1, tcgplayer_url: `https://www.tcgplayer.com/product/${catalogId + 1}`,
+    });
+    const renamedAfterLink = await reserveSkuLabel({ ...label, sku: skus[11], name: `${marker} renamed after linking`, game: "Other", tcgplayerId: catalogId + 1 });
+    assert.equal(renamedAfterLink.product.id, canonical.product.id);
+    assert.equal(renamedAfterLink.created, false);
+    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${canonical.product.id}`)[0].count, 0);
 
     const concurrentLabel = { ...label, name: `${marker} concurrent`, tcgplayerId: catalogId + 2 };
     const concurrent = await Promise.all([
-      reserveSkuLabel({ ...concurrentLabel, sku: skus[2] }),
+      reserveSkuLabel({ ...concurrentLabel, sku: skus[2], game: "Other" }),
       reserveSkuLabel({ ...concurrentLabel, sku: skus[3] }),
     ]);
     assert.equal(concurrent.filter((result) => result.created).length, 1);
@@ -93,6 +109,21 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
     const final = (await sql`SELECT quantity FROM products WHERE id = ${reserved.product.id}`)[0];
     assert.equal(final.quantity, saved.createdCount ? 2 : 0);
     assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${reserved.product.id}`)[0].count, saved.createdCount);
+
+    // A caller's proposed later duplicate never displaces the canonical saved SKU.
+    await sql`INSERT INTO products (sku, name, product_type, game, condition, finish, tcgplayer_id, created_at)
+      VALUES (${skus[13]}, ${`${marker} later duplicate`}, 'Single', 'Other', 'Near Mint', 'Normal', ${catalogId + 6}, '2021-01-01T00:00:00Z')`;
+    await sql`INSERT INTO products (sku, name, product_type, game, condition, finish, tcgplayer_id, created_at)
+      VALUES (${skus[12]}, ${`${marker} earlier duplicate`}, 'Single', 'Riftbound', 'Near Mint', 'Normal', ${catalogId + 6}, '2020-01-01T00:00:00Z')`;
+    const duplicatesBefore = await sql`SELECT to_jsonb(p) AS product FROM products p WHERE sku = ANY(${[skus[12], skus[13]]}) ORDER BY id`;
+    const canonicalDuplicate = await reserveSkuLabel({ ...label, sku: skus[13], name: `${marker} duplicate lookup`, tcgplayerId: catalogId + 6 });
+    assert.equal(canonicalDuplicate.created, false);
+    assert.equal(canonicalDuplicate.product.sku, skus[12]);
+    assert.deepEqual(await sql`SELECT to_jsonb(p) AS product FROM products p WHERE sku = ANY(${[skus[12], skus[13]]}) ORDER BY id`, duplicatesBefore);
+    // Equal creation times have a stable primary-key tie break as well.
+    await sql`UPDATE products SET created_at = '2020-01-01T00:00:00Z' WHERE sku = ${skus[13]}`;
+    const tiedDuplicate = await reserveSkuLabel({ ...label, sku: skus[12], name: `${marker} duplicate lookup`, tcgplayerId: catalogId + 6 });
+    assert.equal(tiedDuplicate.product.sku, skus[13]);
   } finally {
     await sql`DELETE FROM products WHERE sku = ANY(${ownedSkus}) AND name LIKE ${`${marker}%`}`;
     if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;

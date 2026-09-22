@@ -5,10 +5,9 @@ import Link from "next/link";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
-import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, inventoryLabelVariantKey } from "@/lib/sku-label-inventory";
+import { compareSavedSkuLabels, sameSkuLabelVariant } from "@/lib/sku-label-matching";
 import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-draft";
 import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
-import { canonicalizeGame } from "@/lib/tcg-games";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
 import TcgplayerCardImport from "./tcgplayer-card-import";
@@ -47,12 +46,7 @@ function readSavedBatch(key = STORAGE_KEY): Label[] {
 type LinkedVariant = Pick<SavedSkuProduct, "name" | "game" | "setName" | "cardNumber" | "condition" | "finish" | "tcgplayerId">;
 
 function sameLinkedVariant(left: LinkedVariant, right: LinkedVariant) {
-  if (left.tcgplayerId && right.tcgplayerId && left.tcgplayerId !== right.tcgplayerId) return false;
-  return inventoryLabelVariantKey(left) === inventoryLabelVariantKey(right) ||
-    Boolean(left.tcgplayerId && left.tcgplayerId === right.tcgplayerId &&
-      canonicalizeGame(left.game) === canonicalizeGame(right.game) &&
-      inventoryLabelIdentityText(left.condition) === inventoryLabelIdentityText(right.condition) &&
-      inventoryLabelIdentityText(canonicalInventoryLabelFinish(left.finish)) === inventoryLabelIdentityText(canonicalInventoryLabelFinish(right.finish)));
+  return sameSkuLabelVariant(left, right);
 }
 
 function draftMatchesVariant(label: Label, variant: LinkedVariant) {
@@ -206,7 +200,7 @@ export default function SkuLabelsClient() {
       const data = await response.json() as { products?: (SavedSkuProduct & { barcode?: string | null })[] };
       if (!Array.isArray(data.products)) throw new Error("Inventory could not be checked. Try again.");
       const identity = { ...card, condition, finish, tcgplayerId: card.productId };
-      const existing = data.products.find((product) => product.productType === "Single" &&
+      const existing = [...data.products].sort(compareSavedSkuLabels).find((product) => product.productType === "Single" &&
         sameLinkedVariant(product, identity));
       if (existing && !isGeneratedSku(existing.sku)) throw new Error(`This variant already uses SKU ${existing.sku}. Open Inventory to manage its stock or print its existing barcode.`);
       const inBatch = labels.find((label) => label.sku === existing?.sku || draftMatchesVariant(label, identity));

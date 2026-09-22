@@ -87,6 +87,9 @@ test("duplicate SKUs and variants within one batch are rejected before planning 
   assert.throws(() => labels(input, { ...input, sku: "DEFY-1234567891", name: "AHRI", setName: " origins " }), status(409));
   assert.throws(() => labels({ ...input, tcgplayerId: 5 }, { ...input, sku: "DEFY-1234567891", tcgplayerId: 5, name: "Alternate spelling" }), status(409));
   assert.equal(labels(input, { ...input, sku: "DEFY-1234567891", finish: "Foil" }).length, 2);
+  assert.throws(() => labels({ ...input, tcgplayerId: 5, game: "Other" }, {
+    ...input, sku: "DEFY-1234567891", tcgplayerId: 5, game: "Riftbound", name: "Corrected catalog title", finish: "Nonfoil",
+  }), status(409));
 });
 
 test("identity normalization handles case and whitespace without collapsing different Unicode cards", () => {
@@ -101,6 +104,16 @@ test("saving the same SKU and identity is a reprint and preserves existing stock
   assert.deepEqual(plan.create, []);
   assert.equal(plan.existing[0], product);
   assert.deepEqual(product, before);
+});
+
+test("catalog IDs identify the same variant across corrected game classification and titles", () => {
+  const prior = existing({ tcgplayerId: 12, game: "Other" });
+  const imported = { ...input, tcgplayerId: 12, game: "Riftbound" as const, name: "Updated catalog title", finish: "Nonfoil" };
+  assert.equal(planInventoryLabels(labels(imported), [prior]).existing[0], prior);
+  assert.throws(() => planInventoryLabels(labels({ ...imported, sku: "DEFY-1234567891" }), [prior]), /already exists as/);
+  assert.throws(() => planInventoryLabels(labels({ ...imported, tcgplayerId: 13 }), [prior]), status(409));
+  assert.throws(() => planInventoryLabels(labels({ ...imported, condition: "Damaged" }), [prior]), status(409));
+  assert.throws(() => planInventoryLabels(labels({ ...imported, finish: "Foil" }), [prior]), status(409));
 });
 
 test("SKU identity mismatches and barcodes owned by another product return actionable conflicts", () => {

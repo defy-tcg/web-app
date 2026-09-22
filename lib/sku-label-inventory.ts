@@ -58,8 +58,7 @@ export function inventoryLabelVariantKey(label: Omit<InventoryLabelIdentity, "sk
 }
 
 function sameCatalogVariant(left: InventoryLabelIdentity, right: InventoryLabelIdentity): boolean {
-  return Boolean(left.tcgplayerId && left.tcgplayerId === right.tcgplayerId &&
-    canonicalizeGame(left.game) === canonicalizeGame(right.game) &&
+  return Boolean(left.tcgplayerId && left.tcgplayerId > 0 && left.tcgplayerId === right.tcgplayerId &&
     inventoryLabelIdentityText(left.condition) === inventoryLabelIdentityText(right.condition) &&
     inventoryLabelIdentityText(canonicalInventoryLabelFinish(left.finish)) === inventoryLabelIdentityText(canonicalInventoryLabelFinish(right.finish)));
 }
@@ -87,7 +86,8 @@ export function planInventoryLabels<T extends InventoryLabelIdentity>(labels: re
   for (const label of labels) {
     const key = inventoryLabelVariantKey(label);
     const match = existing.find((product) => product.sku.trim().toUpperCase() === label.sku);
-    if (match && (match.productType !== "Single" || inventoryLabelVariantKey(match) !== key ||
+    if (match && (match.productType !== "Single" ||
+      (inventoryLabelVariantKey(match) !== key && !sameCatalogVariant(match, { ...label, productType: "Single" })) ||
       Boolean(match.tcgplayerId && label.tcgplayerId && match.tcgplayerId !== label.tcgplayerId))) {
       throw inventoryLabelConflictError({ kind: "sku", sku: label.sku, existingSku: match.sku });
     }
@@ -144,7 +144,7 @@ export function validateInventoryLabels(payload: unknown): NormalizedInventoryLa
     };
     if (skus.has(label.sku)) throw new SkuLabelInventoryError(400, `SKU ${label.sku} appears more than once in this batch.`);
     const variantKey = inventoryLabelVariantKey(label);
-    const catalogKey = label.tcgplayerId ? JSON.stringify([label.game, label.tcgplayerId, label.condition, inventoryLabelIdentityText(label.finish)]) : "";
+    const catalogKey = label.tcgplayerId ? JSON.stringify([label.tcgplayerId, label.condition, inventoryLabelIdentityText(label.finish)]) : "";
     if (variants.has(variantKey) || (catalogKey && catalogs.has(catalogKey))) {
       throw new SkuLabelInventoryError(409, `The same card variant appears more than once in this batch (${label.sku}). Use one SKU and set its quantity instead.`);
     }

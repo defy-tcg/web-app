@@ -159,7 +159,10 @@ the print-copy count does not change stock. Custom labels use manually entered
 cost and sell prices and save to Defy inventory, without publishing to Shopify.
 
 **Add a single from TCGplayer** accepts a full HTTPS TCGplayer product link,
-loads its exact card identity and image. After the operator chooses condition and
+loads its exact card identity and image, and checks fresh shared inventory.
+Existing variants show their original SKU immediately; a matching QR appears with
+**Use saved QR**. Saved conditions and finishes can be selected directly. A failed
+inventory check stops the lookup rather than presenting the card as new. After the operator chooses condition and
 finish, **Save QR & add to batch** reserves its permanent SKU in shared inventory
 before displaying the saved label. The authenticated, read-only
 `POST /api/sku-labels/lookup` reads TCGplayer's public product-details endpoint
@@ -186,6 +189,12 @@ atomically reuses its saved variant or creates a zero-stock product in the exist
 schema. It uses the same products write lock and timeouts as batch saves, so
 concurrent requests receive one original SKU. A browser draft's SKU is preferred
 when first saving that card, preserving labels already printed from the draft.
+The numeric TCGplayer product ID, condition, and normalized finish identify a
+linked variant regardless of game-category changes, URL slug, or tracking query
+parameters. A matching older unlinked card receives the catalog ID while retaining
+its SKU, stock, and prices, so later catalog spelling changes still reuse it.
+If older data already contains multiple matching products, the earliest saved
+record supplies the original SKU; reservations do not merge or delete those rows.
 Unconfirmed requests retain their proposed SKU for retries; a server-confirmed
 saved variant always takes precedence. No stock movement is created. The shared
 saved-label library includes zero-stock cards and works on another signed-in
