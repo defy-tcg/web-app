@@ -82,7 +82,7 @@ const RESERVE_LABEL_SQL = `
 WITH incoming AS MATERIALIZED (
   SELECT * FROM jsonb_to_record($1::jsonb) AS i(
     sku text, name text, game text, "setName" text, "cardNumber" text,
-    condition text, finish text, location text, "tcgplayerId" integer, "variantKey" jsonb)
+    condition text, finish text, quantity integer, location text, "tcgplayerId" integer, "variantKey" jsonb)
 ), current_products AS MATERIALIZED (
   SELECT p.*, upper(trim(p.sku)) AS sku_key, upper(trim(p.barcode)) AS barcode_key,
     ${variantSql} AS variant_key, ${gameSql} AS game_key,
@@ -126,10 +126,14 @@ WITH incoming AS MATERIALIZED (
   INSERT INTO products (sku, name, product_type, game, set_name, card_number, condition, finish,
     quantity, cost_cents, list_price_cents, location, tcgplayer_id, tcgplayer_url, price_source)
   SELECT i.sku, i.name, 'Single', i.game, i."setName", i."cardNumber", i.condition, i.finish,
-    0, 0, 0, i.location, i."tcgplayerId", 'https://www.tcgplayer.com/product/' || i."tcgplayerId", 'manual'
+    i.quantity, 0, 0, i.location, i."tcgplayerId", 'https://www.tcgplayer.com/product/' || i."tcgplayerId", 'manual'
   FROM incoming i
   WHERE NOT EXISTS (SELECT 1 FROM conflicts) AND NOT EXISTS (SELECT 1 FROM selected_product)
   RETURNING *
+), initial_movements AS (
+  INSERT INTO inventory_movements (product_id, delta, reason, note)
+  SELECT id, quantity, 'received', 'Initial quantity from QR SKU labels' FROM inserted WHERE quantity > 0
+  RETURNING id
 ), result_product AS (
   SELECT to_jsonb(p) AS product, true AS created FROM inserted p
   UNION ALL
@@ -142,7 +146,8 @@ SELECT
   (SELECT jsonb_build_object('kind', kind, 'sku', sku, 'existingSku', existing_sku)
    FROM conflicts ORDER BY priority, existing_sku LIMIT 1) AS conflict,
   (SELECT product FROM result_product) AS product,
-  (SELECT created FROM result_product) AS created
+  (SELECT created FROM result_product) AS created,
+  (SELECT count(*)::integer FROM initial_movements) AS "movementCount"
 `;
 
 const COLUMN_NAMES = {
@@ -201,4 +206,32 @@ export async function reserveSkuLabel(input: InventoryLabelInput): Promise<Reser
   if (result.conflict) throw inventoryLabelConflictError(result.conflict);
   if (!result.product || result.created === null) throw new Error("QR code save returned no product.");
   return { product: productRecord(result.product), created: result.created };
+}
+
+export type ShopifyLinkableSkuProduct = SavedSkuLabelProduct & { initialQuantity: number };
+
+/** The immutable first receipt, never the current balance, determines Shopify's one-time stock addition. */
+export async function loadSkuLabelProducts(options: { skus?: readonly string[]; afterId?: number; limit?: number } = {}): Promise<ShopifyLinkableSkuProduct[]> {
+  if (!process.env.DATABASE_URL) throw new Error("Inventory database is unavailable.");
+  const skus = options.skus ? [...new Set(options.skus)] : null;
+  if (skus?.length === 0) return [];
+  if (skus && (skus.length > 100 || skus.some(sku => !/^(?:[A-Z0-9]{1,4}-)?[1-9][0-9]{9}$/.test(sku)))) throw new Error("Provide at most 100 saved QR SKUs.");
+  const afterId = options.afterId ?? 0;
+  const limit = options.limit ?? 100;
+  if (!Number.isSafeInteger(afterId) || afterId < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid saved QR page.");
+  const sql = neon(process.env.DATABASE_URL);
+  const rows = await sql.query(`SELECT p.*, coalesce((
+    SELECT m.delta FROM inventory_movements m WHERE m.product_id = p.id
+      AND m.reason = 'received' AND m.note = 'Initial quantity from QR SKU labels'
+    ORDER BY m.id LIMIT 1
+  ), 0) AS initial_quantity FROM products p
+  WHERE p.product_type = 'Single' AND p.sku ~ '^(?:[A-Z0-9]{1,4}-)?[1-9][0-9]{9}$'
+    AND ($1::text[] IS NULL OR p.sku = ANY($1::text[])) AND p.id > $2
+  ORDER BY p.id LIMIT $3`, [skus, afterId, limit]);
+  return rows.map(row => {
+    const { initial_quantity, ...product } = row;
+    const initialQuantity = Number(initial_quantity);
+    if (!Number.isSafeInteger(initialQuantity) || initialQuantity < 0 || initialQuantity > 100_000) throw new Error("The initial card receipt needs review.");
+    return { ...productRecord(product), initialQuantity };
+  });
 }

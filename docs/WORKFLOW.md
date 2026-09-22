@@ -153,10 +153,13 @@ with its Neon branch. Merging that branch into `main` remains a separate action.
 ### Custom QR SKU inventory
 
 The authenticated `/sku-labels` page saves linked-card QR codes automatically and
-keeps **Save to Inventory & Print** for manually generated drafts. Game, name, set, card number, condition, and finish
-identify a card variant. Identical copies share one SKU and a starting quantity;
-the print-copy count does not change stock. Custom labels use manually entered
-cost and sell prices and save to Defy inventory, without publishing to Shopify.
+keeps **Save to Inventory & Print** for manually generated drafts. Both save paths
+queue the permanent QR for automatic Shopify POS linking. Game, name, set, card
+number, condition, and finish identify a manual card variant; linked cards use
+their exact TCGplayer product ID, condition, and finish. Identical copies share
+one QR. The print-copy count does not change stock. See
+[QR codes and Shopify POS](QR_SHOPIFY.md) for the linking, initial-stock transfer,
+pricing, recovery, and one-time Shopify permission release prerequisites.
 
 **Add a single from TCGplayer** accepts a full HTTPS TCGplayer product link,
 loads its exact card identity and image, and checks fresh shared inventory.
@@ -180,13 +183,16 @@ without a printed number can use their TCGplayer product ID. Named finishes
 and editions remain distinct; known Foil/Holofoil, Normal/Nonfoil, and
 Reverse Holo/Reverse Holofoil aliases share duplicate detection. Importing a
 saved custom variant loads its original SKU for reprints; existing legacy SKUs
-are identified for stock management in Inventory. New linked cards start at zero
-stock, cost, and sell price; adjust these in Inventory. Adding a link, clearing the
-current batch, and reprinting never receive stock or overwrite existing prices.
+are identified for stock management in Inventory. A new linked card defaults to
+zero starting quantity; staff can enter its actual starting quantity on first
+save. Shopify receives that original quantity once. Linked-card selling prices
+come from an exact Scrydex quote under the existing pricing policy; manual cards
+need a positive entered selling price. Clearing the current batch, retrying a
+save, and reprinting do not receive more stock.
 
 `POST /api/sku-labels/reserve` authenticates and validates one linked card, then
-atomically reuses its saved variant or creates a zero-stock product in the existing
-schema. It uses the same products write lock and timeouts as batch saves, so
+atomically reuses its saved variant or creates a product and its original
+starting-quantity movement in the existing schema. It uses the same products write lock and timeouts as batch saves, so
 concurrent requests receive one original SKU. A browser draft's SKU is preferred
 when first saving that card, preserving labels already printed from the draft.
 The numeric TCGplayer product ID, condition, and normalized finish identify a
@@ -196,7 +202,8 @@ its SKU, stock, and prices, so later catalog spelling changes still reuse it.
 If older data already contains multiple matching products, the earliest saved
 record supplies the original SKU; reservations do not merge or delete those rows.
 Unconfirmed requests retain their proposed SKU for retries; a server-confirmed
-saved variant always takes precedence. No stock movement is created. The shared
+saved variant always takes precedence. An existing variant never receives a new
+starting-quantity movement from a repeated link. The shared
 saved-label library includes zero-stock cards and works on another signed-in
 device with empty browser storage.
 
@@ -206,12 +213,19 @@ saved SKU with the same identity reuses it without changing stock or prices;
 SKU, barcode, and existing-variant conflicts reject the batch. The transaction
 uses a short products write lock with a five-second lock timeout and a
 15-second statement timeout. Saved-label reprints only read inventory and keep
-the original SKU. Custom-label singles are excluded from master-sheet matching
+the original SKU. Shopify links use an app-owned durable journal and the original
+Defy starting-quantity movement, not the card's later inventory balance. Retries
+resume that same receipt instead of adding stock again. Custom-label singles are excluded from master-sheet matching
 and retirement, even if their pricing source later changes.
 
 Manual drafts are kept in browser storage. Saved labels are loaded from the shared
-inventory database and can be reprinted from another signed-in device. Physical
-printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;
+inventory database and can be reprinted from another signed-in device. Each card
+shows whether Shopify POS is ready, pending, or blocked, with a retry action that
+keeps the original QR. Saving starts a background attempt; nightly reconciliation
+recovers unfinished links within the current Vercel Hobby cron limits. Production
+activation additionally requires the approved Shopify app release granting
+`write_publications`; a Git deployment alone does not grant that permission.
+Physical printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;
 saving does not depend on a printer connection or a completed print job.
 
 For thermal labels, set the paper width to **38 mm across the roll** and height

@@ -14,6 +14,7 @@ const catalog: Catalog = { fetchedAt: "2026-09-18", sourceUpdatedAt: "2026-09-18
 function variant() {
   return {
     id: "gid://shopify/ProductVariant/123", sku: "DEFY-RFB-652819-NORMAL-EN-NM", barcode: "0123456789" as string | null, price: "1.00",
+    barcodes: { nodes: [{ value: "0123456789", type: null as string | null }], pageInfo: { hasNextPage: false } },
     selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Nonfoil" }, { name: "Language", value: "English" }],
     product: {
       id: "gid://shopify/Product/456", title: "Charm — Origins", status: "ACTIVE", productType: "Riftbound single",
@@ -54,6 +55,35 @@ test("POS scan updates only the exact Riftbound single price with 10%, never cos
   assert.deepEqual(f.state.mutations, [{ productId: "gid://shopify/Product/456", variants: [{ id: "gid://shopify/ProductVariant/123", price: "11.00" }] }]);
   assert.equal(f.state.quoted[0].finish, "Nonfoil");
   assert.equal(f.state.queries.filter(call => call.query.includes("query DefyPosVerify")).length, 1);
+});
+
+test("a secondary QR finds the same variant and updates only its price", async () => {
+  const item = variant();
+  item.barcodes.nodes.push({ value: "DEFY-9775456393", type: null });
+  const f = fixture([item]);
+  const result = await refreshPosPrice("DEFY-9775456393", f.dependencies);
+  assert.equal(result.variantId, 123);
+  assert.equal(result.sku, item.sku);
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "11.00" }] }]);
+  assert.deepEqual(item.barcodes.nodes.map(barcode => barcode.value), ["0123456789", "DEFY-9775456393"]);
+  assert.match(f.state.queries[0].query, /barcodes\(first: 20\)/);
+});
+
+test("secondary barcode duplicates, incomplete lists, and edits during pricing prevent writes", async () => {
+  const item = variant();
+  item.barcodes.nodes.push({ value: "DEFY-9775456393", type: null });
+  const duplicate = structuredClone(item);
+  duplicate.id = "gid://shopify/ProductVariant/124"; duplicate.sku = "OTHER-SKU"; duplicate.barcode = "OTHER-PRIMARY";
+  duplicate.barcodes.nodes = [{ value: "OTHER-PRIMARY", type: null }, { value: "DEFY-9775456393", type: null }];
+  const ambiguous = fixture([item, duplicate]);
+  await assert.rejects(refreshPosPrice("DEFY-9775456393", ambiguous.dependencies), { code: "AMBIGUOUS_CODE" });
+  assert.equal(ambiguous.state.quoted.length, 0); assert.equal(ambiguous.state.mutations.length, 0);
+  const incomplete = fixture([structuredClone(item)]); incomplete.state.variants[0].barcodes.pageInfo.hasNextPage = true;
+  await assert.rejects(refreshPosPrice("DEFY-9775456393", incomplete.dependencies), { code: "AMBIGUOUS_CODE" });
+  assert.equal(incomplete.state.mutations.length, 0);
+  const edited = fixture([item]); edited.state.current = variant();
+  await assert.rejects(refreshPosPrice("DEFY-9775456393", edited.dependencies), { code: "IDENTITY_CONFLICT" });
+  assert.equal(edited.state.quoted.length, 1); assert.equal(edited.state.mutations.length, 0);
 });
 
 test("a complete other-game Shopify identity receives market price without markup or a Riftbound catalog lookup", async () => {

@@ -54,6 +54,17 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-success { color: var(--ink); background: var(--soft); }
 .sku-inline-error { color: var(--red); font-size: 12px; line-height: 1.6; }
 .sku-storage-warning { background: var(--surface-inset); color: var(--orange); }
+.sku-pos-warning { border: 1px solid var(--line); border-left: 3px solid var(--orange); border-radius: 8px; padding: 12px 14px; margin: 16px 0 0; color: var(--ink); background: var(--surface-muted); font-size: 12px; line-height: 1.65; }
+.sku-shopify-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--orange); border-radius: 8px; background: var(--surface-muted); }
+.sku-shopify-status.is-ready { border-left-color: var(--green2); background: var(--soft); }
+.sku-shopify-status.is-draft { border-left-color: var(--line); }
+.sku-shopify-status.is-blocked { border-left-color: var(--red); }
+.sku-shopify-status > div { flex: 1 1 230px; min-width: 0; }
+.sku-shopify-status strong { font-size: 12px; }
+.sku-shopify-status p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.sku-shopify-status a { color: var(--ink); font-size: 11px; text-underline-offset: 3px; }
+.sku-shopify-status button { font-size: 11px; }
+.sku-label-row > .sku-shopify-status { grid-column: 2 / -1; margin-top: -10px; }
 .sku-batch { margin-top: 24px; }
 .sku-batch-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 .sku-batch-heading .eyebrow { margin: 0 0 8px; }

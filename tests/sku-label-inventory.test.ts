@@ -142,13 +142,13 @@ test("mixed new/reprint planning does not mutate source records and rejects a la
   assert.equal(product.quantity, 7);
 });
 
-test("evergreen reservations validate a linked card and never accept stock or prices as a receipt", () => {
+test("evergreen reservations validate initial quantity while pricing remains server-owned", () => {
   const candidate = { ...input, tcgplayerId: 652905, quantity: 12, costCents: 175, listPriceCents: 299, location: " shelf 3 " };
   const original = structuredClone(candidate);
   const label = validateSkuLabelReservation({ label: candidate });
   assert.equal(label.sku, input.sku);
   assert.equal(label.tcgplayerId, 652905);
-  assert.equal(label.quantity, 0);
+  assert.equal(label.quantity, 12);
   assert.equal(label.costCents, 0);
   assert.equal(label.listPriceCents, 0);
   assert.equal(label.location, "SHELF 3");

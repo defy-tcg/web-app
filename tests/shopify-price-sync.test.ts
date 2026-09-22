@@ -11,10 +11,13 @@ const catalog: Catalog = { fetchedAt: "2026-09-18", sourceUpdatedAt: "2026-09-18
   { key: "101:Foil", productId: 101, groupId: 7, name: "Test Card", setName: "Origins", setCode: "OGN", number: "001", rarity: "Rare", finish: "Foil", language: "English", imageUrl: "", productUrl: "https://www.tcgplayer.com/product/101", marketCents: 99999 },
 ] };
 const single = (): PricingVariant => ({ id: "gid://shopify/ProductVariant/1", sku: "DEFY-RFB-101-FOIL-EN-LP", barcode: "DEFY-RFB-101-FOIL-EN-LP", price: "25.00",
+  barcodes: { nodes: [{ value: "DEFY-RFB-101-FOIL-EN-LP", type: null }], pageInfo: { hasNextPage: false } },
   selectedOptions: [{ name: "Condition", value: "Lightly Played" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }],
   product: { id: "gid://shopify/Product/1", title: "Test Card — Origins", status: "ACTIVE", productType: "Riftbound single", catalogId: { value: "single:riftbound:printing:101" }, storefrontCatalogId: { value: "101" }, game: { value: "Riftbound" }, cardName: { value: "Test Card" }, setName: { value: "Origins" }, cardNumber: { value: "001" } } });
 const sealedProduct: LegacyPricingProduct = { id: 5, sku: "DEFY-PKM-000005", barcode: "123456789012", name: "Test Booster Box", game: "Pokemon", setName: "Test Set", cardNumber: "", productType: "Sealed", condition: "", finish: "", tcgplayerId: 205 };
-const sealed = (): PricingVariant => ({ ...single(), sku: sealedProduct.sku, barcode: sealedProduct.barcode, selectedOptions: [{ name: "Title", value: "Default Title" }], product: { ...single().product, productType: "Sealed", catalogId: null, storefrontCatalogId: null, game: null, cardName: null, setName: null, cardNumber: null } });
+const sealed = (): PricingVariant => ({ ...single(), sku: sealedProduct.sku, barcode: sealedProduct.barcode,
+  barcodes: { nodes: [{ value: sealedProduct.barcode!, type: null }], pageInfo: { hasNextPage: false } },
+  selectedOptions: [{ name: "Title", value: "Default Title" }], product: { ...single().product, productType: "Sealed", catalogId: null, storefrontCatalogId: null, game: null, cardName: null, setName: null, cardNumber: null } });
 const quote: ScrydexPrice = { cents: 105, matchedName: "Test Card", groupName: "Origins", variation: "foil LP", scrydexId: "OGN-001", url: "https://api.scrydex.com/riftbound/v1/cards/OGN-001" };
 
 function shopify(variant: PricingVariant, options: { duplicates?: boolean; changed?: boolean; rejected?: boolean; uncertain?: boolean } = {}) {
@@ -48,6 +51,37 @@ test("sealed products match registered codes and keep raw market pricing", async
     assert.equal(identity.productType, "Sealed"); assert.equal(identity.game, "Pokemon"); return { ...quote, cents: 12999 };
   } });
   assert.equal(result.priceCents, 12999);
+});
+
+test("a secondary custom QR matches Defy for scheduled pricing without changing any barcode", async () => {
+  const variant = single(); variant.sku = "EXISTING-STORE-SKU"; variant.barcode = "012345678901";
+  variant.barcodes = { nodes: [{ value: variant.barcode, type: "UPC" }, { value: "DEFY-9775456393", type: null }], pageInfo: { hasNextPage: false } };
+  const legacy: LegacyPricingProduct = { id: 7, sku: "DEFY-9775456393", barcode: null, name: "Test Card", game: "Riftbound",
+    setName: "Origins", cardNumber: "001", productType: "Single", condition: "Lightly Played", finish: "Foil", tcgplayerId: 101 };
+  const client = shopify(variant);
+  const result = await updateVariantPrice({ variant, legacy: [legacy], catalog, ...client, now: "2026-09-22T12:00:00Z", resolve: async identity => {
+    assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); return quote;
+  } });
+  assert.equal(result.priceCents, 116);
+  assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  assert.deepEqual(variant.barcodes.nodes, [{ value: "012345678901", type: "UPC" }, { value: "DEFY-9775456393", type: null }]);
+});
+
+test("scheduled pricing rejects secondary-only duplicates and incomplete barcode lists", async () => {
+  const variant = single(); variant.barcodes.nodes.push({ value: "DEFY-9775456393", type: null });
+  const duplicate = { ...structuredClone(variant), id: "gid://shopify/ProductVariant/99", sku: "OTHER-SKU", barcode: "OTHER-PRIMARY",
+    barcodes: { nodes: [{ value: "OTHER-PRIMARY", type: null }, { value: "DEFY-9775456393", type: null }], pageInfo: { hasNextPage: false } } };
+  for (const truncated of [false, true]) {
+    const client = shopify(variant);
+    const graphql: SinglesGraphQL = async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+      if (query.includes("PriceScanCodes")) return { productVariants: { nodes: truncated
+        ? [{ ...variant, barcodes: { ...variant.barcodes, pageInfo: { hasNextPage: true } } }] : [variant, duplicate], pageInfo: { hasNextPage: false } } } as T;
+      return client.graphql<T>(query, variables);
+    };
+    await assert.rejects(updateVariantPrice({ variant, legacy: [], catalog, graphql, now: "2026-09-22T12:00:00Z", resolve: async () => quote }),
+      { code: truncated ? "BARCODES_INCOMPLETE" : "DUPLICATE_CODE" });
+    assert.equal(client.writes.length, 0);
+  }
 });
 
 test("unmapped/ambiguous codes, conflicting catalog data, foreign language and sibling conditions never get prices", () => {

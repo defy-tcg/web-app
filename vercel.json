@@ -11,6 +11,10 @@
     {
       "path": "/api/shopify/pricing/cron",
       "schedule": "27 8 * * *"
+    },
+    {
+      "path": "/api/sku-labels/shopify/cron",
+      "schedule": "47 8 * * *"
     }
   ]
 }

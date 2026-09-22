@@ -1,4 +1,5 @@
 // Server module: imported only by API routes and the Node-only intake service.
+import { isGeneratedSku } from "../sku-labels.ts";
 import { digest, SinglesError, type PlannedSingle, type ReceiptRow, type SingleProduct, type SinglesAdapter, type SinglesConnectionStatus, type SinglesContext, type Snapshot } from "./intake.ts";
 
 const API_VERSION = "2026-07";
@@ -27,7 +28,7 @@ function config() {
 }
 
 let tokenCache: { shop: string; clientId: string; clientSecret: string; value: string; expiresAt: number } | null = null;
-async function transport(settings: ReturnType<typeof config>): Promise<{ graphql: SinglesGraphQL; clock: () => number }> {
+async function transport(settings: ReturnType<typeof config>, apiVersion = API_VERSION): Promise<{ graphql: SinglesGraphQL; clock: () => number }> {
   if (!tokenCache || tokenCache.shop !== settings.shop || tokenCache.clientId !== settings.clientId || tokenCache.clientSecret !== settings.clientSecret || tokenCache.expiresAt <= Date.now()) {
     let response: Response;
     try {
@@ -44,7 +45,7 @@ async function transport(settings: ReturnType<typeof config>): Promise<{ graphql
   const graphql: SinglesGraphQL = async <T>(query: string, variables: Variables = {}): Promise<T> => {
     let response: Response;
     try {
-      response = await fetch(`https://${settings.shop}/admin/api/${API_VERSION}/graphql.json`, { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000),
+      response = await fetch(`https://${settings.shop}/admin/api/${apiVersion}/graphql.json`, { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000),
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: JSON.stringify({ query, variables }) });
     } catch { throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify timed out. Retry the same saved request.", true, query.includes("mutation")); }
     const date = Date.parse(response.headers.get("date") ?? "");
@@ -73,6 +74,7 @@ interface VariantNode {
   id: string; sku: string; price: string; inventoryQuantity: number; inventoryPolicy: string;
   selectedOptions: { name: string; value: string }[];
   inventoryItem: { id: string; tracked: boolean };
+  qrIdentity?: { value: string } | null;
 }
 interface ProductNode {
   id: string; status: string; catalogId: { value: string } | null;
@@ -82,7 +84,7 @@ interface ProductNode {
 }
 const PRODUCT_IDENTITY_FIELDS = `id status catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value }
   storefrontCatalogId: metafield(namespace: "defy_intake", key: "catalog_id") { value } options { name }`;
-const VARIANT_FIELDS = `id sku price inventoryQuantity inventoryPolicy selectedOptions { name value } inventoryItem { id tracked }`;
+const VARIANT_FIELDS = `id sku price inventoryQuantity inventoryPolicy qrIdentity: metafield(namespace: "${NAMESPACE}", key: "qr_identity") { value } selectedOptions { name value } inventoryItem { id tracked }`;
 const PRODUCT_FIELDS = `${PRODUCT_IDENTITY_FIELDS}
   variants(first: 100) { nodes { ${VARIANT_FIELDS} } pageInfo { hasNextPage endCursor } }`;
 // Verified against the original storefront's BATCH_PREVIEW and intake mapping.
@@ -273,7 +275,9 @@ export class ShopifySinglesAdapter implements SinglesAdapter {
     const source = product.storefrontCatalogId?.value;
     const catalog = product.catalogId?.value;
     const rowSkus = new Set([canonicalSku(row), oldSku(row)]);
-    const matches = product.variants.nodes.filter(variant => rowSkus.has(variant.sku) || (legacy && variant.id === LEGACY_DEFY_MAPPING.variantId));
+    const qrIdentity = JSON.stringify([printingId(row), row.condition, row.card.finish.toLowerCase(), "English"]);
+    const matches = product.variants.nodes.filter(variant => rowSkus.has(variant.sku) || (legacy && variant.id === LEGACY_DEFY_MAPPING.variantId) ||
+      (isGeneratedSku(variant.sku || "") && variant.qrIdentity?.value === qrIdentity && product.catalogId?.value === printingId(row) && product.storefrontCatalogId?.value === String(row.card.productId) && exactOptions(variant, row)));
     if (matches.length && ((source && source !== String(row.card.productId)) || (catalog && ![row.catalogId, printingId(row)].includes(catalog)))) throw identityConflict("SKU and product metadata point to different printings.");
     for (const variant of matches) {
       if (legacy && variant.id === LEGACY_DEFY_MAPPING.variantId) {
@@ -432,9 +436,9 @@ export class ShopifySinglesAdapter implements SinglesAdapter {
   }
 }
 
-export async function createShopifyGraphQL() {
+export async function createShopifyGraphQL(options: { apiVersion?: "2026-07" | "2026-10" } = {}) {
   const settings = config();
-  return { ...await transport(settings), settings };
+  return { ...await transport(settings, options.apiVersion), settings };
 }
 
 export async function createSinglesAdapter(): Promise<ShopifySinglesAdapter> {

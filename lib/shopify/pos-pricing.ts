@@ -27,6 +27,7 @@ type Product = {
 };
 type Variant = {
   id: string; sku: string | null; barcode: string | null; price: string;
+  barcodes: { nodes: { value: string; type: string | null }[]; pageInfo: { hasNextPage: boolean } };
   selectedOptions: { name: string; value: string }[]; product: Product;
 };
 export type PosPrice = {
@@ -39,7 +40,7 @@ export type PosPricingDependencies = {
   readCatalog?: () => Promise<Catalog>;
 };
 
-const FIELDS = `id sku barcode price selectedOptions { name value }
+const FIELDS = `id sku barcode barcodes(first: 20) { nodes { value type } pageInfo { hasNextPage } } price selectedOptions { name value }
   product { id title status productType
     cardName: metafield(namespace: "card", key: "name") { value }
     game: metafield(namespace: "card", key: "game") { value }
@@ -63,6 +64,12 @@ const finishKey = (value: string) => {
 const conditionKey = (value: string) => canonicalSinglesCondition(value) || (["dm", "damaged"].includes(normalize(value)) ? "Damaged" : normalize(value));
 const languageKey = (value: string) => ["en", "english"].includes(normalize(value)) ? "english" : normalize(value);
 const numberKey = (value: string) => normalize(value).replace(/\s+/g, "").replace(/(^|[-/])0+(?=\d)/g, "$1");
+function scanCodes(variant: Variant) {
+  if (!Array.isArray(variant.barcodes?.nodes) || variant.barcodes.pageInfo?.hasNextPage !== false) {
+    throw new PosPricingError("AMBIGUOUS_CODE", "Shopify did not return this variant's complete barcode list. Retry after reviewing its barcodes.", 409);
+  }
+  return [variant.sku, variant.barcode, ...variant.barcodes.nodes.map(barcode => barcode.value)].filter(Boolean);
+}
 
 function identityValue(values: string[], key: (value: string) => string = normalize) {
   const present = values.filter(Boolean);
@@ -182,7 +189,7 @@ export async function refreshPosPrice(code: string, dependencies: PosPricingDepe
   }`, { query: `sku:"${escaped}" OR barcode:"${escaped}"` });
   currency(data.shop.currencyCode);
   if (data.productVariants.pageInfo.hasNextPage) throw new PosPricingError("AMBIGUOUS_CODE", "Shopify returned too many possible matches for this code. Review duplicate SKUs and barcodes.", 409);
-  const matches = data.productVariants.nodes.filter(variant => variant.sku === scanned || variant.barcode === scanned);
+  const matches = data.productVariants.nodes.filter(variant => scanCodes(variant).includes(scanned));
   if (!matches.length) throw new PosPricingError("NOT_FOUND", "No Shopify variant exactly matches this SKU or barcode.", 404);
   if (matches.length !== 1) throw new PosPricingError("AMBIGUOUS_CODE", "More than one Shopify variant uses this SKU or barcode. Fix the duplicate before scanning it.", 409);
   const original = matches[0];
@@ -200,7 +207,8 @@ export async function refreshPosPrice(code: string, dependencies: PosPricingDepe
   }`, { id: original.id });
   currency(current.shop.currencyCode);
   const latest = current.productVariant;
-  if (!latest || latest.id !== original.id || latest.product.id !== original.product.id || latest.sku !== original.sku || latest.barcode !== original.barcode) throw conflict();
+  if (!latest || latest.id !== original.id || latest.product.id !== original.product.id || latest.sku !== original.sku || latest.barcode !== original.barcode
+    || !scanCodes(latest).includes(scanned) || JSON.stringify(latest.barcodes) !== JSON.stringify(original.barcodes)) throw conflict();
   const latestIdentity = await pricingIdentity(latest, readCatalog);
   if (JSON.stringify(latestIdentity) !== JSON.stringify(identity)) throw conflict();
   if (cents(latest.price) !== priceCents) {

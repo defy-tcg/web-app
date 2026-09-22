@@ -17,7 +17,7 @@ export function priceSyncError(error: unknown) {
 async function connection() {
   if (!priceSyncEnabled()) throw new PriceSyncError("DISABLED", "Shopify price sync is disabled in this environment.");
   if (!scrydexConfigured()) throw new PriceSyncError("CONNECTION_REQUIRED", "Configure both Scrydex credentials before refreshing Shopify prices.");
-  const client = await createShopifyGraphQL();
+  const client = await createShopifyGraphQL({ apiVersion: "2026-10" });
   const adapter = new ShopifySinglesAdapter(client.graphql, client.settings, client.clock);
   const journal: PriceJournal = {
     read: () => adapter.read<PriceSyncState>(JOURNAL_KEY),

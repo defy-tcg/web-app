@@ -69,14 +69,14 @@ export function inventoryLabelConflictError(conflict: InventoryLabelConflict): S
   return new SkuLabelInventoryError(409, `${conflict.sku} already belongs to a different card. Generate a different SKU or restore the original card details.`, conflict.existingSku);
 }
 
-/** Reserve the identity of a linked card without receiving stock or setting prices. */
+/** Initial quantity applies only when this linked card is first created. */
 export function validateSkuLabelReservation(payload: unknown): NormalizedInventoryLabel {
   if (!payload || typeof payload !== "object" || !("label" in payload)) {
     throw new SkuLabelInventoryError(400, "Send one card label to save its QR code.");
   }
   const [label] = validateInventoryLabels({ labels: [payload.label] });
   if (!label.tcgplayerId) throw new SkuLabelInventoryError(400, "A TCGplayer-linked card is required to save this QR code.");
-  return { ...label, quantity: 0, costCents: 0, listPriceCents: 0 };
+  return { ...label, costCents: 0, listPriceCents: 0 };
 }
 
 /** Plans retries without changing any existing product's stock, prices, or metadata. */

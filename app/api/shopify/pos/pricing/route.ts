@@ -10,7 +10,7 @@ function handle(request: Request) {
   return handlePosPricingRequest(request, {
     refresh: async (code) => {
       // Authentication and bounded input validation happen before app-token use.
-      const { graphql } = await createShopifyGraphQL();
+      const { graphql } = await createShopifyGraphQL({ apiVersion: "2026-10" });
       return refreshPosPrice(code, { graphql });
     },
   });

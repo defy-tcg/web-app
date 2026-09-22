@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { neon } from "@neondatabase/serverless";
-import { reserveSkuLabel, saveSkuLabelsToInventory } from "../lib/sku-label-inventory-storage.ts";
+import { loadSkuLabelProducts, reserveSkuLabel, saveSkuLabelsToInventory } from "../lib/sku-label-inventory-storage.ts";
 import { SkuLabelInventoryError, type InventoryLabelInput } from "../lib/sku-label-inventory.ts";
 import { generateSkuBatch } from "../lib/sku-labels.ts";
 
@@ -23,25 +23,29 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
   const catalogId = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
   const label: InventoryLabelInput = {
     sku: skus[0], name: marker, game: "Riftbound", setName: "Reserve test", cardNumber: "TEST-001",
-    condition: "Near Mint", finish: "Normal", quantity: 99, costCents: 999, listPriceCents: 1999,
+    condition: "Near Mint", finish: "Normal", quantity: 3, costCents: 999, listPriceCents: 1999,
     tcgplayerId: catalogId,
   };
   try {
     const initial = await reserveSkuLabel(label);
     assert.equal(initial.created, true);
     assert.equal(initial.product.sku, skus[0]);
-    assert.equal(initial.product.quantity, 0);
+    assert.equal(initial.product.quantity, 3);
     assert.equal(initial.product.costCents, 0);
     assert.equal(initial.product.listPriceCents, 0);
-    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${initial.product.id}`)[0].count, 0);
-    const retry = await reserveSkuLabel(label);
+    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${initial.product.id}`)[0].count, 1);
+    const retry = await reserveSkuLabel({ ...label, quantity: 99 });
     assert.equal(retry.created, false);
     assert.equal(retry.product.id, initial.product.id);
+    assert.equal(retry.product.quantity, 3);
 
     await sql`UPDATE products SET quantity = 7, cost_cents = 321, list_price_cents = 654,
       price_source = 'scrydex', location = 'TEST SHELF', rarity = 'Existing rarity'
       WHERE id = ${initial.product.id}`;
     const before = (await sql`SELECT to_jsonb(p) AS product FROM products p WHERE id = ${initial.product.id}`)[0].product;
+    const [linkable] = await loadSkuLabelProducts({ skus: [skus[0]] });
+    assert.equal(linkable.quantity, 7);
+    assert.equal(linkable.initialQuantity, 3, "Shopify receives the first receipt rather than a later inventory balance.");
     const reused = await reserveSkuLabel({ ...label, sku: skus[1], name: `${marker} changed catalog spelling`, finish: "Nonfoil", location: "NEW" });
     assert.equal(reused.created, false);
     assert.equal(reused.product.sku, skus[0]);
@@ -83,12 +87,15 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
     assert.equal(concurrent[0].product.id, concurrent[1].product.id);
     assert.equal(concurrent[0].product.sku, concurrent[1].product.sku);
     assert.equal((await sql`SELECT count(*)::integer AS count FROM products WHERE tcgplayer_id = ${catalogId + 2}`)[0].count, 1);
+    assert.equal((await loadSkuLabelProducts({ skus: [concurrent[0].product.sku] }))[0].initialQuantity, 3);
+    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${concurrent[0].product.id}`)[0].count, 1);
 
-    const damaged = await reserveSkuLabel({ ...label, sku: skus[4], condition: "Damaged" });
+    const damaged = await reserveSkuLabel({ ...label, sku: skus[4], condition: "Damaged", quantity: 0 });
     const foil = await reserveSkuLabel({ ...label, sku: skus[5], finish: "Foil" });
     assert.equal(damaged.created, true);
     assert.equal(foil.created, true);
     assert.notEqual(damaged.product.id, foil.product.id);
+    assert.equal((await loadSkuLabelProducts({ skus: [damaged.product.sku] }))[0].initialQuantity, 0);
 
     await assert.rejects(() => reserveSkuLabel({ ...concurrentLabel, sku: skus[0] }),
       (error: unknown) => error instanceof SkuLabelInventoryError && error.status === 409 && error.existingSku === skus[0]);
@@ -107,8 +114,8 @@ test("evergreen QR reservations persist once, reuse variants, serialize writers,
     assert.equal(reserved.product.id, saved.products[0].id);
     assert.equal((reserved.created ? 1 : 0) + saved.createdCount, 1);
     const final = (await sql`SELECT quantity FROM products WHERE id = ${reserved.product.id}`)[0];
-    assert.equal(final.quantity, saved.createdCount ? 2 : 0);
-    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${reserved.product.id}`)[0].count, saved.createdCount);
+    assert.equal(final.quantity, 2);
+    assert.equal((await sql`SELECT count(*)::integer AS count FROM inventory_movements WHERE product_id = ${reserved.product.id}`)[0].count, 1);
 
     // A caller's proposed later duplicate never displaces the canonical saved SKU.
     await sql`INSERT INTO products (sku, name, product_type, game, condition, finish, tcgplayer_id, created_at)

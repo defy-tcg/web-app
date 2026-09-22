@@ -10,7 +10,7 @@ import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 
 type TcgplayerCardImportProps = {
   disabled: boolean;
-  onAdd: (card: TcgplayerCardLookup, condition: string, finish: string) => Promise<void>;
+  onAdd: (card: TcgplayerCardLookup, condition: string, finish: string, quantity: number) => Promise<void>;
 };
 
 export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardImportProps) {
@@ -19,6 +19,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
   const [inventory, setInventory] = useState<SavedSkuLabelMatch[] | null>(null);
   const [condition, setCondition] = useState<string>("Near Mint");
   const [finish, setFinish] = useState("");
+  const [quantity, setQuantity] = useState("0");
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
@@ -48,6 +49,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
     setCard(null);
     setInventory(null);
     setFinish("");
+    setQuantity("0");
     setImageFailed(false);
     try {
       const [response, inventoryResponse] = await Promise.all([
@@ -94,15 +96,21 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
       setError("Choose a finish, using up to 80 characters.");
       return;
     }
+    const startingQuantity = existing ? 0 : Number(quantity);
+    if ((!existing && !quantity.trim()) || !Number.isSafeInteger(startingQuantity) || startingQuantity < 0 || startingQuantity > 100000) {
+      setError("Starting quantity must be a whole number from 0 to 100,000.");
+      return;
+    }
     working.current = true;
     setAdding(true);
     setError("");
     try {
-      await onAdd(card, condition, selectedFinish);
+      await onAdd(card, condition, selectedFinish, startingQuantity);
       setCard(null);
       setInventory(null);
       setUrl("");
       setFinish("");
+      setQuantity("0");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not add this card. Please try again.");
     } finally {
@@ -114,7 +122,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
   return <section className="sku-panel sku-card-import" aria-labelledby="sku-card-import-title" aria-busy={loading || adding}>
     <div className="sku-panel-heading">
       <span className="sku-step" aria-hidden="true">↗</span>
-      <div><h2 id="sku-card-import-title">Add a single from TCGplayer</h2><p>Paste a product link, confirm the card variant, and save its QR for every future print.</p></div>
+      <div><h2 id="sku-card-import-title">Add a single from TCGplayer</h2><p>Paste a product link, confirm the variant, and link its permanent QR to Shopify POS.</p></div>
     </div>
     <form className="sku-import-link-form" onSubmit={(event) => void lookup(event)}>
       <label>TCGplayer product link
@@ -124,7 +132,7 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
       </label>
       <button className="primary-button" disabled={locked || !url.trim()}>{loading ? "Loading card…" : "Load card"}</button>
     </form>
-    <p className="sku-import-help">One permanent SKU per card, condition, and finish. Adding it saves the QR in your shared library automatically. New cards start at zero stock; manage quantity, cost, and sell price in Inventory.</p>
+    <p className="sku-import-help">One permanent SKU per card, condition, and finish. Saving adds it to your shared library and links Shopify POS automatically. Enter starting quantity once; reusing a saved QR never adds stock again.</p>
     {card ? <div className="sku-import-result">
       <div className="sku-import-image">
         {card.imageUrl && !imageFailed ? <Image src={card.imageUrl} alt={card.name} width={160} height={224} unoptimized onError={() => setImageFailed(true)} /> : <span>Card image unavailable</span>}
@@ -151,13 +159,14 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
                 {finishOptions.map((value) => <option key={value}>{value}</option>)}
               </select> : <><input required maxLength={80} value={finish} list="sku-import-finishes" placeholder="Choose or enter a finish" onChange={(event) => setFinish(event.target.value)} /><datalist id="sku-import-finishes">{[...new Set([...LABEL_FINISHES, ...finishOptions])].map((value) => <option key={value} value={value} />)}</datalist><small>Confirm the finish printed on your card.</small></>}
             </label>
+            {!existing ? <label>Starting quantity<input aria-label="Starting quantity" type="number" inputMode="numeric" required min={0} max={100000} step={1} value={quantity} onChange={(event) => setQuantity(event.target.value)} /><small>Copies on hand to add once to Defy and Shopify. Leave 0 to save the card without adding stock.</small></label> : null}
           </fieldset>
           {existing ? <div className="sku-import-existing" role="status">
             {savedQr ? <div className="sku-import-existing-qr" role="img" aria-label={`Saved QR code for ${existing.sku}`} dangerouslySetInnerHTML={{ __html: savedQr }} /> : null}
-            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "This is the original QR for this variant. Use it again without changing stock or prices."}</p>
+            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "Use this original QR and check its Shopify POS link. Reusing it adds no stock. After linking, manage additional copies in Shopify."}</p>
               {legacySku ? <Link href="/">Open Inventory →</Link> : null}</div>
           </div> : null}
-          <button className="primary-button sku-import-add" disabled={locked || !inventory || !finish.trim() || legacySku}>{adding ? existing ? "Loading saved QR…" : "Saving QR…" : existing ? legacySku ? "Existing inventory SKU" : "Use saved QR" : "Save QR & add to batch"}<span aria-hidden="true">↗</span></button>
+          <button className="primary-button sku-import-add" disabled={locked || !inventory || !finish.trim() || legacySku}>{adding ? "Saving & linking Shopify…" : existing ? legacySku ? "Existing inventory SKU" : "Use saved QR" : "Save QR & link Shopify"}<span aria-hidden="true">↗</span></button>
         </form>
       </div>
     </div> : null}

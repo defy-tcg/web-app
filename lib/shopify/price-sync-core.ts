@@ -8,6 +8,7 @@ import type { SinglesGraphQL } from "../singles/shopify.ts";
 type Field = { value: string } | null;
 export interface PricingVariant {
   id: string; sku: string | null; barcode: string | null; price: string;
+  barcodes: { nodes: { value: string; type: string | null }[]; pageInfo: { hasNextPage: boolean } };
   selectedOptions: { name: string; value: string }[];
   product: {
     id: string; title: string; status: string; productType: string;
@@ -27,8 +28,15 @@ const finishKey = (value: string) => textKey(value).replace(/[\s-]/g, "").replac
 const conditions: Record<string, string> = { NM: "Near Mint", LP: "Lightly Played", MP: "Moderately Played", HP: "Heavily Played", DMG: "Damaged" };
 const conditionKey = (value: string) => textKey(conditions[value.toUpperCase()] ?? value);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+function variantCodes(variant: Pick<PricingVariant, "sku" | "barcode" | "barcodes">) {
+  if (!Array.isArray(variant.barcodes?.nodes) || variant.barcodes.pageInfo?.hasNextPage !== false) {
+    throw new PriceSyncError("BARCODES_INCOMPLETE", "Shopify did not return the complete barcode list. Review its barcodes before refreshing the price.");
+  }
+  return [...new Set([variant.sku, variant.barcode, ...variant.barcodes.nodes.map(barcode => barcode.value)]
+    .map(code => code?.trim()).filter((code): code is string => Boolean(code)))];
+}
 
-export const PRICING_VARIANT_FIELDS = `id sku barcode price selectedOptions { name value }
+export const PRICING_VARIANT_FIELDS = `id sku barcode barcodes(first: 20) { nodes { value type } pageInfo { hasNextPage } } price selectedOptions { name value }
   product { id title status productType
     catalogId: metafield(namespace: "$app:receiving", key: "catalog_id") { value }
     storefrontCatalogId: metafield(namespace: "defy_intake", key: "catalog_id") { value }
@@ -41,7 +49,7 @@ export const PRICING_VARIANT_FIELDS = `id sku barcode price selectedOptions { na
 /** Identity comes from saved codes/catalog metadata, never a fuzzy Shopify title. */
 export function pricingIdentity(variant: PricingVariant, legacy: LegacyPricingProduct[], catalog: Catalog): ScrydexProduct {
   if (variant.product.status !== "ACTIVE") return fail("Only active Shopify products are repriced.");
-  const codes = [codeKey(variant.sku), codeKey(variant.barcode)].filter(Boolean);
+  const codes = variantCodes(variant).map(codeKey);
   if (!codes.length) return fail("Save a unique SKU or barcode on this Shopify variant first.");
   const canonical = /^DEFY-RFB-(\d+)-(NORMAL|FOIL)-EN-(NM|LP|MP|HP|DMG)$/;
   const old = /^DEFY-RFB-S(\d+)-([A-F0-9]{12})-EN-(NM|LP|MP|HP|DMG)$/;
@@ -111,11 +119,11 @@ export async function updateVariantPrice(input: {
   const identity = pricingIdentity(variant, legacy, catalog);
   const quote = await input.resolve(identity);
   const priceCents = scrydexSellPriceCents(quote.cents, identity);
-  const codes = [...new Set([variant.sku?.trim(), variant.barcode?.trim()].filter((code): code is string => Boolean(code)))];
-  const duplicates = await graphql<{ productVariants: { nodes: { id: string; sku: string | null; barcode: string | null }[]; pageInfo: { hasNextPage: boolean } } }>(
-    `query PriceScanCodes($query: String!) { productVariants(first: 10, query: $query) { nodes { id sku barcode } pageInfo { hasNextPage } } }`,
+  const codes = variantCodes(variant);
+  const duplicates = await graphql<{ productVariants: { nodes: Pick<PricingVariant, "id" | "sku" | "barcode" | "barcodes">[]; pageInfo: { hasNextPage: boolean } } }>(
+    `query PriceScanCodes($query: String!) { productVariants(first: 10, query: $query) { nodes { id sku barcode barcodes(first: 20) { nodes { value type } pageInfo { hasNextPage } } } pageInfo { hasNextPage } } }`,
     { query: codes.flatMap(code => [`sku:${queryLiteral(code)}`, `barcode:${queryLiteral(code)}`]).join(" OR ") });
-  const exact = duplicates.productVariants.nodes.filter(candidate => [candidate.sku, candidate.barcode].some(code => code && codes.some(expected => codeKey(expected) === codeKey(code))));
+  const exact = duplicates.productVariants.nodes.filter(candidate => variantCodes(candidate).some(code => codes.some(expected => codeKey(expected) === codeKey(code))));
   if (duplicates.productVariants.pageInfo.hasNextPage || exact.length !== 1 || exact[0].id !== variant.id) throw new PriceSyncError("DUPLICATE_CODE", "The SKU/barcode does not uniquely identify this Shopify variant.");
   const reread = await graphql<{ productVariant: PricingVariant | null }>(`query PriceVariantCheck($id: ID!) { productVariant(id: $id) { ${PRICING_VARIANT_FIELDS} } }`, { id: variant.id });
   if (!reread.productVariant || identityFingerprint(reread.productVariant) !== identityFingerprint(variant) || reread.productVariant.price !== variant.price) {
