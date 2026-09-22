@@ -254,7 +254,7 @@ export default function SkuLabelsClient() {
 
   function print() {
     setError("");
-    setMessage("If no printer dialog appears, choose Download PDF, open the file in Preview or your browser, and print it at actual size.");
+    setMessage("Use paper width 38 mm across the roll and height 13 mm in the feed direction, at 100% / actual size. Sideways or split labels in Mac Chrome? Choose More settings → Print using system dialog (Option + Command + P), then select your 38 × 13 mm paper and Portrait with no additional rotation.");
     try {
       // Keep the print request in the click event and avoid unsupported popup windows.
       window.print();
@@ -280,7 +280,7 @@ export default function SkuLabelsClient() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      setMessage("PDF ready. Open the downloaded file in Preview or your browser, select your thermal printer, and print at 100% / actual size on 38 × 13 mm paper.");
+      setMessage("PDF ready. Open it in Preview, select your thermal printer and paper width 38 mm across the roll × height 13 mm in the feed direction. Use Portrait, no additional rotation, and 100% / actual size.");
     } catch (caught) {
       setError(caught instanceof Error ? `PDF could not be created: ${caught.message}` : "PDF could not be created. Try again.");
     } finally {
@@ -335,7 +335,8 @@ export default function SkuLabelsClient() {
             {(!validCopies || total > 1000) && <p className="sku-inline-error" role="alert">Use 1–100 copies per SKU, up to 1,000 labels per print job.</p>}
             <p className="sku-print-help"><strong>No print dialog?</strong> Download the PDF and open it in Preview or a browser to print. Your existing SKUs stay the same.</p>
             {labels.some((label) => !savedSkus.has(label.sku)) && <p className="sku-print-help">This batch contains drafts. Use <strong>Save to Inventory &amp; Print</strong> below to add their stock before printing.</p>}
-            <p className="sku-print-help">Printer settings: <strong>38 × 13 mm</strong> paper, <strong>100% / actual size</strong>, no margins, headers, or footers. Scan a test label first. Use a QR-capable scanner; a 1D barcode scanner cannot read QR codes.</p>
+            <p className="sku-print-help">Paper: <strong>38 mm wide across the roll × 13 mm high in the feed direction</strong>. Print at <strong>100% / actual size</strong> with no margins, headers, or footers. Scan one test label with a QR-capable scanner first.</p>
+            <p className="sku-print-help"><strong>Sideways or split across labels?</strong> In Mac Chrome, choose <strong>More settings → Print using system dialog</strong> (Option + Command + P). Select your <strong>38 × 13 mm</strong> paper, <strong>Portrait</strong>, no additional rotation, and <strong>100%</strong> scale. The browser cannot force the printer’s orientation.</p>
           </section>
         </div>
 
@@ -354,7 +355,7 @@ export default function SkuLabelsClient() {
         <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>The QR contains the exact SKU saved in Defy inventory. Use the saved-label library to reprint it; adjust stock and prices in Inventory.</p><p>Drafts stay in this browser until you save. Saving reserves each SKU and records starting stock once. Downloading or printing alone does not save inventory.</p></footer>
       </div>
       <dialog ref={printDialog} className="sku-print-dialog" aria-labelledby="sku-print-dialog-title" onClose={() => setPrintReady("")}>
-        <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are ready.</h2><p>{printReady}</p><p>Print {total} label{total === 1 ? "" : "s"} on <strong>38 × 13 mm</strong> paper at <strong>100% / actual size</strong>.</p>
+        <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are ready.</h2><p>{printReady}</p><p>Print {total} label{total === 1 ? "" : "s"} on paper <strong>38 mm across the roll × 13 mm in the feed direction</strong>, at <strong>100% / actual size</strong>.</p>
         <div className="sku-dialog-actions"><button className="primary-button" onClick={() => { printDialog.current?.close(); print(); }}>Print labels</button><button className="secondary-button" onClick={() => { printDialog.current?.close(); void downloadPdf(); }}>Download PDF</button><button className="secondary-button" onClick={() => printDialog.current?.close()}>Print later</button></div>
         <p className="sku-print-help">If no print dialog appears, use Download PDF and open it in Preview. Your cards are already saved, even if you print later.</p>
       </dialog>

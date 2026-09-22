@@ -193,6 +193,15 @@ inventory database and can be reprinted from another signed-in device. Physical
 printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;
 saving does not depend on a printer connection or a completed print job.
 
+For thermal labels, set the paper width to **38 mm across the roll** and height
+to **13 mm in the feed direction**, at **100% / actual size**, with no margins,
+headers, or footers. If Mac Chrome prints sideways or spans several labels,
+choose **More settings → Print using system dialog** (**Option + Command + P**),
+select the **38 × 13 mm** paper preset, and use **Portrait** with no additional
+rotation. The browser cannot force the printer's orientation. Print and scan
+one test label before a batch; the downloaded PDF can also be printed in Preview
+with these settings.
+
 ### Schema baseline
 
 Inventory, sales, expenses, events, and authentication data persist in Neon
