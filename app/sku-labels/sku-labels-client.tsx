@@ -10,7 +10,7 @@ import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-d
 import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
-import TcgplayerCardImport from "./tcgplayer-card-import";
+import TcgplayerCardImport, { type LinkedLabelSelection } from "./tcgplayer-card-import";
 import ShopifyLinkStatus, { isShopifyLabelLink, pendingShopifyLink, type ShopifyLabelLink } from "./shopify-link-status";
 
 type Label = SkuDraftLabel;
@@ -123,9 +123,11 @@ export default function SkuLabelsClient() {
   const [name, setName] = useState("");
   const [count, setCount] = useState("1");
   const [copies, setCopies] = useState("1");
-  const [labels, setLabels] = useState<Label[]>([]);
+  const [batch, setLabels] = useState<Label[]>([]);
+  const [linkedSelection, setLinkedSelection] = useState<LinkedLabelSelection | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [generatingBusy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [inventoryBusy, setInventoryBusy] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(true);
@@ -148,6 +150,12 @@ export default function SkuLabelsClient() {
   const automaticShopifyRequest = useRef(false);
   const nextAutomaticAttempt = useRef(0);
   const automaticRetryDeadline = useRef(0);
+  const busy = generatingBusy || lookupBusy;
+  // Looking up a link temporarily selects one saved QR without replacing manual drafts.
+  // Unknown variants have no printable label until the server confirms their permanent SKU.
+  const labels = useMemo<Label[]>(() => linkedSelection === null ? batch
+    : linkedSelection.product && isGeneratedSku(linkedSelection.product.sku)
+      ? [{ sku: linkedSelection.product.sku, name: linkedSelection.product.name }] : [], [batch, linkedSelection]);
   const savedSkus = useMemo(() => new Set(savedProducts.map((product) => product.sku)), [savedProducts]);
   const total = labels.length * Number(copies);
   const validCopies = Number.isInteger(Number(copies)) && Number(copies) >= 1 && Number(copies) <= 100;
@@ -289,6 +297,7 @@ export default function SkuLabelsClient() {
   }, []);
 
   function saveBatch(next: Label[]) {
+    setLinkedSelection(null);
     setLabels(next);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, labels: next } satisfies SavedBatch));
@@ -298,9 +307,21 @@ export default function SkuLabelsClient() {
     }
   }
 
+  function selectLinkedLabel(selection: LinkedLabelSelection | null) {
+    setLinkedSelection(selection);
+    setCopies("1");
+    setError("");
+    setMessage("");
+    if (selection?.product && isSavedProduct(selection.product)) {
+      const product = selection.product;
+      generated.current.add(product.sku);
+      setSavedProducts((current) => [...current.filter((saved) => saved.sku !== product.sku), product]);
+    }
+  }
+
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (generating.current || inventoryBusy || retryingShopify.current || automaticShopifyRequest.current || !ready) return;
+    if (generating.current || lookupBusy || inventoryBusy || retryingShopify.current || automaticShopifyRequest.current || !ready) return;
     setError("");
     setMessage("");
     try {
@@ -354,13 +375,11 @@ export default function SkuLabelsClient() {
       const existing = [...data.products].sort(compareSavedSkuLabels).find((product) => product.productType === "Single" &&
         sameLinkedVariant(product, identity));
       if (existing && !isGeneratedSku(existing.sku)) throw new Error(`This variant already uses SKU ${existing.sku}. Open Inventory to manage its stock or print its existing barcode.`);
-      const inBatch = labels.find((label) => label.sku === existing?.sku || draftMatchesVariant(label, identity));
-      if (!inBatch && labels.length >= 100) throw new Error("Clear the current batch before adding more than 100 SKUs. Saved QR codes stay in your library.");
       let storedLabels: Label[] = [];
       try { storedLabels = readSavedBatch(); } catch { /* Saving below reports unavailable storage. */ }
       let storedPending: Label[] = [];
       try { storedPending = readSavedBatch(PENDING_RESERVATIONS_KEY); } catch { /* The in-memory candidate remains available for retries. */ }
-      const draft = [...labels, ...storedLabels, ...pendingReservations.current, ...storedPending].find((label) => draftMatchesVariant(label, identity));
+      const draft = [...batch, ...storedLabels, ...pendingReservations.current, ...storedPending].find((label) => draftMatchesVariant(label, identity));
       const excluded = new Set([...generated.current, ...labels.map((label) => label.sku)]);
       for (const product of data.products) {
         excluded.add(product.sku.trim().toUpperCase());
@@ -400,7 +419,8 @@ export default function SkuLabelsClient() {
       queueAutomaticLinks([shopify]);
       generated.current.add(product.sku);
       setSavedProducts((current) => [...current.filter((saved) => saved.sku !== product.sku), product]);
-      saveBatch([...labels.filter((label) => label.sku !== product.sku && !draftMatchesVariant(label, identity)), { sku: product.sku, name: product.name }]);
+      saveBatch([{ sku: product.sku, name: product.name }]);
+      setCopies("1");
       pendingReservations.current = pendingReservations.current.filter((label) => !draftMatchesVariant(label, identity));
       try {
         localStorage.setItem(PENDING_RESERVATIONS_KEY, JSON.stringify({ version: 1, labels: pendingReservations.current } satisfies SavedBatch));
@@ -463,6 +483,7 @@ export default function SkuLabelsClient() {
   }
 
   function print() {
+    if (!canPrint || busy || pdfBusy || inventoryBusy || shopifyBusy) return;
     setError("");
     setMessage("Use paper width 38 mm across the roll and height 13 mm in the feed direction, at 100% / actual size. Sideways or split labels in Mac Chrome? Choose More settings → Print using system dialog (Option + Command + P), then select your 38 × 13 mm paper and Portrait with no additional rotation.");
     try {
@@ -517,7 +538,8 @@ export default function SkuLabelsClient() {
           <div className="sku-size-badge"><b>38 × 13</b><span>mm thermal label</span></div>
         </header>
 
-        <TcgplayerCardImport disabled={!ready || busy || inventoryBusy || inventoryLoading || pdfBusy || shopifyBusy} onAdd={addLinkedCard} />
+        <TcgplayerCardImport disabled={!ready || busy || inventoryBusy || inventoryLoading || pdfBusy || shopifyBusy} onAdd={addLinkedCard}
+          onSelectionChange={selectLinkedLabel} onLoadingChange={setLookupBusy} />
 
         <div className="sku-workbench">
           <section className="sku-panel sku-controls" aria-labelledby="sku-settings-title">
@@ -533,7 +555,13 @@ export default function SkuLabelsClient() {
 
           <section className="sku-panel sku-preview-panel" aria-labelledby="sku-preview-title">
             <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Your permanent QR label.</h2><p>Defy TCG - Redmond + QR + card name + SKU</p></div></div>
-            <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div><QrLabel label={labels[0] ?? example} /><p>{labels.length ? "First label preview · enlarged for clarity" : "Example label · generate a batch to preview yours"}</p></div>
+            <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div>
+              {linkedSelection && !labels.length ? <div role="status">
+                {linkedSelection.name && <h3>{linkedSelection.name}</h3>}
+                <p>{linkedSelection.message ?? (linkedSelection.product ? "This card uses an existing inventory SKU. Manage its barcode in Inventory."
+                  : "Confirm the variant and save its QR above to preview and print this card.")}</p>
+              </div> : <><QrLabel label={labels[0] ?? example} /><p>{labels.length === 1 ? "Selected label · enlarged for clarity" : labels.length ? "First label preview · enlarged for clarity" : "Example label · generate a batch to preview yours"}</p></>}
+            </div>
             <div className="sku-print-settings">
               <label>Copies per SKU<input disabled={inventoryBusy || pdfBusy} type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
               <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>labels to print</span></div>
@@ -554,7 +582,16 @@ export default function SkuLabelsClient() {
         <div className="sku-feedback" aria-live="polite">{message && <p className={unreadyForPos > 0 ? "sku-storage-warning" : "sku-success"} role="status">{message}</p>}{error && <p className="sku-inline-error" role="alert">{error}</p>}{storageWarning && <p className="sku-storage-warning" role="status">{storageWarning}</p>}</div>
 
         {labels.length > 0 && <section className="sku-panel sku-batch" aria-labelledby="sku-batch-title">
-          <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button><button className="secondary-button" disabled={inventoryBusy || busy || pdfBusy} onClick={() => { saveBatch([]); setError(""); setMessage("Batch cleared. Your saved QR codes remain in Saved labels for future use."); }}>Clear batch</button></div></header>
+          <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button><button className="secondary-button" disabled={inventoryBusy || busy || pdfBusy} onClick={() => {
+            if (linkedSelection) {
+              setLinkedSelection(null);
+              setMessage("Previous batch restored, including any manual drafts.");
+            } else {
+              saveBatch([]);
+              setMessage("Batch cleared. Your saved QR codes remain in Saved labels for future use.");
+            }
+            setError("");
+          }}>{linkedSelection ? "Return to previous batch" : "Clear batch"}</button></div></header>
           <div className="sku-label-list">{labels.map((label, index) => <article className="sku-label-row" key={label.sku}>
             <span className="sku-row-number">{String(index + 1).padStart(2, "0")}</span><QrLabel label={label} />
             <label>Card name {index + 1}<input disabled={inventoryBusy || busy || pdfBusy || savedSkus.has(label.sku)} maxLength={240} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />{savedSkus.has(label.sku) && <small>Saved card · edit its name in Inventory.</small>}</label>

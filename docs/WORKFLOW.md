@@ -163,11 +163,15 @@ pricing, recovery, and one-time Shopify permission release prerequisites.
 
 **Add a single from TCGplayer** accepts a full HTTPS TCGplayer product link,
 loads its exact card identity and image, and checks fresh shared inventory.
-Existing variants show their original SKU immediately; a matching QR appears with
-**Use saved QR**. Saved conditions and finishes can be selected directly. A failed
-inventory check stops the lookup rather than presenting the card as new. After the operator chooses condition and
-finish, **Save QR & add to batch** reserves its permanent SKU in shared inventory
-before displaying the saved label. The authenticated, read-only
+Existing variants automatically select their original QR for the preview, PDF,
+and print output, with one copy by default. Saved conditions and finishes can be
+selected directly. Lookup alone never receives stock or writes to Shopify;
+**Use saved QR** can confirm or repair the existing link. While loading, after a
+failed lookup, or for an unsaved variant, the previous QR is not printable.
+Clearing the link restores the previous batch, including unsaved manual drafts.
+After the operator chooses condition and finish, **Save QR & link Shopify**
+reserves its permanent SKU in shared inventory and replaces the print batch with
+that one confirmed label. The authenticated, read-only
 `POST /api/sku-labels/lookup` reads TCGplayer's public product-details endpoint
 and TCGCSV's source-listed finishes with bounded timeouts and 24-hour caching.
 It uses fixed upstream hosts and validated product IDs; it never fetches a

@@ -20,6 +20,12 @@ described below; the source changes and Git deployment alone do not activate it.
    pending or blocked card keeps its original QR and offers a retry action.
 
 Pasting the same TCGplayer product link again loads the original saved QR/SKU.
+Once the card loads, its selected condition and finish automatically control the
+label preview, PDF, and print output. Each new selection starts with one copy;
+previously selected cards are not included in that print job. Lookup is read-only.
+An unsaved variant must be saved before its permanent QR can be printed. Loading
+or failed lookups cannot print the previous card's QR. Clearing the link restores
+the previous batch; confirming a save replaces it with the server-confirmed card.
 The numeric product ID is authoritative regardless of URL slug, tracking query,
 or later catalog name changes. Condition and finish distinguish variants. Manual
 cards use normalized game, name, set, collector number, condition, and finish.

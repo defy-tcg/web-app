@@ -11,9 +11,13 @@ import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 type TcgplayerCardImportProps = {
   disabled: boolean;
   onAdd: (card: TcgplayerCardLookup, condition: string, finish: string, quantity: number) => Promise<void>;
+  onSelectionChange: (selection: LinkedLabelSelection | null) => void;
+  onLoadingChange: (loading: boolean) => void;
 };
 
-export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardImportProps) {
+export type LinkedLabelSelection = { name: string; product?: SavedSkuLabelMatch; message?: string };
+
+export default function TcgplayerCardImport({ disabled, onAdd, onSelectionChange, onLoadingChange }: TcgplayerCardImportProps) {
   const [url, setUrl] = useState("");
   const [card, setCard] = useState<TcgplayerCardLookup | null>(null);
   const [inventory, setInventory] = useState<SavedSkuLabelMatch[] | null>(null);
@@ -38,6 +42,15 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
     setCondition(LABEL_CONDITIONS.find((value) => inventoryLabelIdentityText(value) === inventoryLabelIdentityText(product.condition)) ?? product.condition);
     setFinish(canonicalInventoryLabelFinish(product.finish));
     setError("");
+    onSelectionChange({ name: product.name, product });
+  }
+
+  function selectVariant(nextCondition: string, nextFinish: string) {
+    setCondition(nextCondition);
+    setFinish(nextFinish);
+    setError("");
+    if (card) onSelectionChange({ name: card.name, product: savedVariants.find((product) => sameSkuLabelVariant(product,
+      { ...card, tcgplayerId: card.productId, condition: nextCondition, finish: nextFinish })) });
   }
 
   async function lookup(event: FormEvent<HTMLFormElement>) {
@@ -45,6 +58,8 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
     if (disabled || working.current || !url.trim()) return;
     working.current = true;
     setLoading(true);
+    onLoadingChange(true);
+    onSelectionChange({ name: "", message: "Loading the card and its saved QR…" });
     setError("");
     setCard(null);
     setInventory(null);
@@ -79,12 +94,15 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
       else {
         setCondition("Near Mint");
         setFinish(result.card.finishes.length === 1 ? result.card.finishes[0] : "");
+        onSelectionChange({ name: result.card.name });
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load this card. Please try again.");
+      onSelectionChange({ name: "", message: "Load a card successfully to select its label." });
     } finally {
       working.current = false;
       setLoading(false);
+      onLoadingChange(false);
     }
   }
 
@@ -128,7 +146,10 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
       <label>TCGplayer product link
         <input type="url" required maxLength={2048} value={url} disabled={locked} autoComplete="off" spellCheck={false}
           placeholder="https://www.tcgplayer.com/product/…"
-          onChange={(event) => { setUrl(event.target.value); setCard(null); setInventory(null); setFinish(""); setError(""); }} />
+          onChange={(event) => {
+            setUrl(event.target.value); setCard(null); setInventory(null); setFinish(""); setError("");
+            onSelectionChange(event.target.value.trim() ? { name: "", message: "Load this link to select its label." } : null);
+          }} />
       </label>
       <button className="primary-button" disabled={locked || !url.trim()}>{loading ? "Loading card…" : "Load card"}</button>
     </form>
@@ -152,18 +173,18 @@ export default function TcgplayerCardImport({ disabled, onAdd }: TcgplayerCardIm
         </div> : null}
         <form onSubmit={(event) => void add(event)}>
           <fieldset disabled={locked} className="sku-import-variant" aria-label="Card variant">
-            <label>Condition<select value={condition} onChange={(event) => setCondition(event.target.value)}>{!LABEL_CONDITIONS.some((value) => value === condition) ? <option>{condition}</option> : null}{LABEL_CONDITIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label>Condition<select value={condition} onChange={(event) => selectVariant(event.target.value, finish)}>{!LABEL_CONDITIONS.some((value) => value === condition) ? <option>{condition}</option> : null}{LABEL_CONDITIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
             <label>Finish
-              {card.finishes.length ? <select required value={finish} onChange={(event) => setFinish(event.target.value)}>
+              {card.finishes.length ? <select required value={finish} onChange={(event) => selectVariant(condition, event.target.value)}>
                 <option value="" disabled>Choose finish</option>
                 {finishOptions.map((value) => <option key={value}>{value}</option>)}
-              </select> : <><input required maxLength={80} value={finish} list="sku-import-finishes" placeholder="Choose or enter a finish" onChange={(event) => setFinish(event.target.value)} /><datalist id="sku-import-finishes">{[...new Set([...LABEL_FINISHES, ...finishOptions])].map((value) => <option key={value} value={value} />)}</datalist><small>Confirm the finish printed on your card.</small></>}
+              </select> : <><input required maxLength={80} value={finish} list="sku-import-finishes" placeholder="Choose or enter a finish" onChange={(event) => selectVariant(condition, event.target.value)} /><datalist id="sku-import-finishes">{[...new Set([...LABEL_FINISHES, ...finishOptions])].map((value) => <option key={value} value={value} />)}</datalist><small>Confirm the finish printed on your card.</small></>}
             </label>
             {!existing ? <label>Starting quantity<input aria-label="Starting quantity" type="number" inputMode="numeric" required min={0} max={100000} step={1} value={quantity} onChange={(event) => setQuantity(event.target.value)} /><small>Copies on hand to add once to Defy and Shopify. Leave 0 to save the card without adding stock.</small></label> : null}
           </fieldset>
           {existing ? <div className="sku-import-existing" role="status">
             {savedQr ? <div className="sku-import-existing-qr" role="img" aria-label={`Saved QR code for ${existing.sku}`} dangerouslySetInnerHTML={{ __html: savedQr }} /> : null}
-            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "Use this original QR and check its Shopify POS link. Reusing it adds no stock. After linking, manage additional copies in Shopify."}</p>
+            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "This original QR is selected in the label preview and ready to print. Reusing it adds no stock. Check its Shopify POS status below before scanning."}</p>
               {legacySku ? <Link href="/">Open Inventory →</Link> : null}</div>
           </div> : null}
           <button className="primary-button sku-import-add" disabled={locked || !inventory || !finish.trim() || legacySku}>{adding ? "Saving & linking Shopify…" : existing ? legacySku ? "Existing inventory SKU" : "Use saved QR" : "Save QR & link Shopify"}<span aria-hidden="true">↗</span></button>
