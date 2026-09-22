@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { products } from "../db/schema";
-import { SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
+import { RIFTBOUND_SINGLE_MARKUP_PERCENT, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
 import { TCG_GAME_REGISTRY } from "./tcg-games";
 
 // PostgreSQL btrim defaults to spaces; this is the whitespace set used by JS trim.
@@ -75,7 +75,7 @@ export function protectedPricingColumns(incoming: StoredPricing) {
   );
   return {
     marketPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.marketPriceCents} ELSE ${incoming.marketPriceCents} END`,
-    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${eligible} THEN round(${products.marketPriceCents}::numeric * 1.10)::integer ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
+    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${eligible} THEN round(${products.marketPriceCents}::numeric * ${100 + RIFTBOUND_SINGLE_MARKUP_PERCENT} / 100)::integer ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
     priceSource: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceSource} ELSE ${incoming.priceSource} END`,
     priceUpdatedAt: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceUpdatedAt} ELSE ${incoming.priceUpdatedAt} END`,
   };

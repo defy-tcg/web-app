@@ -1,6 +1,7 @@
 import { gameFromAlias } from "./tcg-games.ts";
 
 export const SCRYDEX_PRICE_SOURCE = "scrydex";
+export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
 
@@ -10,13 +11,13 @@ export function isRiftboundSinglePricingProduct(product: PricingProduct): boolea
     && product.productType.trim().toLowerCase() === "single";
 }
 
-/** Eligible singles add 10%, rounded half-up; every other product stays at market. */
+/** Eligible singles add 6%, rounded half-up; every other product stays at market. */
 export function scrydexSellPriceCents(marketCents: number, product: PricingProduct): number {
   if (!Number.isSafeInteger(marketCents) || marketCents <= 0 || marketCents > 100_000_000) {
     throw new Error("Scrydex must provide a positive USD market price within the supported range.");
   }
   return isRiftboundSinglePricingProduct(product)
-    ? Math.floor((marketCents * 110 + 50) / 100)
+    ? Math.floor((marketCents * (100 + RIFTBOUND_SINGLE_MARKUP_PERCENT) + 50) / 100)
     : marketCents;
 }
 

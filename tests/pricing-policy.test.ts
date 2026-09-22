@@ -5,12 +5,13 @@ import { TCG_GAME_REGISTRY } from "../lib/tcg-games.ts";
 
 const riftboundSingle = { game: "Riftbound", productType: "Single" };
 
-test("Riftbound single sell prices use a 10% markup with nearest-cent rounding", () => {
-  assert.equal(scrydexSellPriceCents(1000, riftboundSingle), 1100);
-  assert.equal(scrydexSellPriceCents(999, riftboundSingle), 1099);
-  assert.equal(scrydexSellPriceCents(5, riftboundSingle), 6);
+test("Riftbound single sell prices use a 6% markup with nearest-cent rounding", () => {
+  assert.equal(scrydexSellPriceCents(1000, riftboundSingle), 1060);
+  assert.equal(scrydexSellPriceCents(999, riftboundSingle), 1059);
+  assert.equal(scrydexSellPriceCents(5, riftboundSingle), 5);
   assert.equal(scrydexSellPriceCents(1, riftboundSingle), 1);
-  assert.equal(scrydexSellPriceCents(100_000_000, riftboundSingle), 110_000_000);
+  assert.equal(scrydexSellPriceCents(25, riftboundSingle), 27);
+  assert.equal(scrydexSellPriceCents(100_000_000, riftboundSingle), 106_000_000);
 });
 
 test("game aliases and single casing are recognized without marking up other games or product types", () => {
@@ -19,7 +20,7 @@ test("game aliases and single casing are recognized without marking up other gam
       for (const productType of ["Single", " single ", "\tSINGLE\n", "\u00a0Single\ufeff"]) {
         const product = { game: ` ${alias.toUpperCase()} `, productType };
         assert.equal(isRiftboundSinglePricingProduct(product), game.key === "riftbound", `${alias}/${productType}`);
-        assert.equal(scrydexSellPriceCents(1000, product), game.key === "riftbound" ? 1100 : 1000, `${alias}/${productType}`);
+        assert.equal(scrydexSellPriceCents(1000, product), game.key === "riftbound" ? 1060 : 1000, `${alias}/${productType}`);
       }
       for (const productType of ["Sealed", " sealed ", "Accessory", "", "Singles"]) {
         const product = { game: alias, productType };
@@ -28,7 +29,7 @@ test("game aliases and single casing are recognized without marking up other gam
       }
     }
   }
-  assert.equal(scrydexSellPriceCents(1000, { game: "Ríftbound: League of Legends Trading Card Game", productType: "Single" }), 1100);
+  assert.equal(scrydexSellPriceCents(1000, { game: "Ríftbound: League of Legends Trading Card Game", productType: "Single" }), 1060);
   for (const game of ["Unknown", "Riftbound-like", "Riftbound singles", ""]) {
     assert.equal(scrydexSellPriceCents(1000, { game, productType: "Single" }), 1000);
   }
@@ -43,8 +44,8 @@ test("missing, nonfinite, negative and fractional-cent market prices cannot beco
 });
 
 test("spreadsheet or CSV prices cannot undo a verified Scrydex price or compound the markup", () => {
-  const pricing = { marketPriceCents: 1000, listPriceCents: 1100, priceSource: "scrydex", priceUpdatedAt: "2026-09-18T00:00:00Z" };
-  const current = { ...riftboundSingle, ...pricing };
+  const pricing = { marketPriceCents: 1000, listPriceCents: 1060, priceSource: "scrydex", priceUpdatedAt: "2026-09-18T00:00:00Z" };
+  const current = { ...riftboundSingle, ...pricing, listPriceCents: 1100 };
   const incoming = { marketPriceCents: 700, listPriceCents: 700, priceSource: "master-sheet", priceUpdatedAt: "2026-09-19T00:00:00Z", quantity: 4 };
   assert.deepEqual(preserveScrydexPricing(current, incoming), { ...incoming, ...pricing });
   assert.deepEqual(preserveScrydexPricing(current, preserveScrydexPricing(current, incoming)), { ...incoming, ...pricing });

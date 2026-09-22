@@ -7,7 +7,7 @@ shares the price with online channels. This is catalog price synchronization,
 not a POS extension that intercepts each physical scan or reprices an open cart.
 Sync the POS device and remove/re-add an already-carted item to use a new price.
 
-Riftbound singles use Scrydex raw market plus 10%, rounded half-up to cents.
+Riftbound singles use Scrydex raw market plus 6%, rounded half-up to cents.
 Other supported products, including Riftbound sealed, use raw market without
 markup. Exact English printings and positive USD quotes are required. Scrydex
 responses retain the existing 24-hour cache; repeated scans do not consume a

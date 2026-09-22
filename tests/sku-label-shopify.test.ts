@@ -179,7 +179,7 @@ test("stocked sibling with no price blocks product publication", async () => {
   const f = fixture({ starting: value }); const result = await linkSkuLabelToShopify(card, f.deps); assert.equal(result.status, "blocked"); assert.match(result.message, /Another stocked variant/); assert.equal(f.calls.filter(call => call.name === "QrLinkActivate").length, 0);
 });
 test("Riftbound registration retains canonical SKU and applies established markup", async () => {
-  const f = fixture(); const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps); assert.equal(result.status, "ready"); assert.equal(result.priceCents, 5282); assert.equal(f.product().variants.nodes[0].sku, "DEFY-RFB-652905-FOIL-EN-NM"); assert.equal(f.product().variants.nodes[0].barcode, card.sku);
+  const f = fixture(); const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps); assert.equal(result.status, "ready"); assert.equal(result.priceCents, 5090); assert.equal(f.product().variants.nodes[0].sku, "DEFY-RFB-652905-FOIL-EN-NM"); assert.equal(f.product().variants.nodes[0].barcode, card.sku);
 });
 
 test("exact TCGplayer and variant identity preserves an existing non-Defy Shopify SKU", async () => {

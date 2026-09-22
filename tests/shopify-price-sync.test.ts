@@ -33,15 +33,15 @@ function shopify(variant: PricingVariant, options: { duplicates?: boolean; chang
   return { graphql, writes };
 }
 
-test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 10%", async () => {
+test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 6%", async () => {
   const variant = single(); const client = shopify(variant);
   const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async identity => {
     assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); assert.equal(identity.finish, "Foil"); return quote;
   } });
-  assert.equal(result.priceCents, 116); assert.equal(result.marketCents, 105);
+  assert.equal(result.priceCents, 111); assert.equal(result.marketCents, 105);
   const variants = client.writes[0].variants as Record<string, unknown>[];
   assert.deepEqual(Object.keys(variants[0]).sort(), ["id", "metafields", "price"]);
-  assert.equal(variants.length, 1); assert.equal(variants[0].price, "1.16");
+  assert.equal(variants.length, 1); assert.equal(variants[0].price, "1.11");
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
 });
 
@@ -62,7 +62,7 @@ test("a secondary custom QR matches Defy for scheduled pricing without changing 
   const result = await updateVariantPrice({ variant, legacy: [legacy], catalog, ...client, now: "2026-09-22T12:00:00Z", resolve: async identity => {
     assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); return quote;
   } });
-  assert.equal(result.priceCents, 116);
+  assert.equal(result.priceCents, 111);
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
   assert.deepEqual(variant.barcodes.nodes, [{ value: "012345678901", type: "UPC" }, { value: "DEFY-9775456393", type: null }]);
 });

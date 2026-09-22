@@ -5,7 +5,7 @@ finds the exact English card/printing/condition in Scrydex, and updates that
 existing Shopify variant's customer selling price. Open this tile before scanning;
 Shopify's standard search/scanner does not call this integration.
 
-Only Riftbound singles receive the 10% increase, rounded to the nearest cent.
+Only Riftbound singles receive the 6% increase, rounded to the nearest cent.
 Other supported games and sealed products use the raw USD market price. The
 singles intake Review screen continues to show the raw market price. POS shows
 only the final customer price. The Shopify variant price is shared with its

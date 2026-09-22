@@ -44,7 +44,8 @@ async function pricePreview(preview: SinglesPreview, resolve: SinglesPriceResolv
         failure = new SinglesError("SCRYDEX_PRICE_UNAVAILABLE", `Scrydex could not confirm a price for ${card.name} (${card.finish}, ${row.condition}).${detail}`);
         return;
       }
-      if (!quote || !Number.isSafeInteger(quote.cents) || quote.cents <= 0 || quote.cents > 90_909_090) {
+      if (!quote || !Number.isSafeInteger(quote.cents) || quote.cents <= 0 || quote.cents > 100_000_000 ||
+        scrydexSellPriceCents(quote.cents, { game: "Riftbound", productType: "Single" }) > 100_000_000) {
         failure = new SinglesError("SCRYDEX_PRICE_UNAVAILABLE", `No supported Scrydex price is available for ${card.name} (${card.finish}, ${row.condition}). This row cannot be received until its price can be confirmed.`);
         return;
       }
