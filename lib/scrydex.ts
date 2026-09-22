@@ -127,12 +127,16 @@ function productNameWithoutGame(product: ScrydexProduct) {
   return name;
 }
 
+function nameWithoutArtAnnotation(name: string) {
+  return name.replace(/\s*\((?:Alternate Art|Alt Art)\)\s*$/i, "");
+}
+
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
   const name = productNameWithoutGame(product);
   if (identity(candidateName(candidate, game)) === identity(name)) return true;
   // TCGplayer can append an art label that Scrydex represents in its variant instead.
   // Only the exact marketplace ID permits removing that explicit annotation.
-  const baseName = name.replace(/\s*\((?:Alternate Art|Alt Art)\)\s*$/i, "");
+  const baseName = nameWithoutArtAnnotation(name);
   return baseName !== name && identity(baseName) === identity(candidateName(candidate, game))
     && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
     && array(candidate.variants).map(object).some((variant) => marketplaceId(variant, product.tcgplayerId!));
@@ -222,8 +226,15 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   const { apiKey, teamId } = getScrydexConfig();
   const names = [...new Set([product.name.trim(), productNameWithoutGame(product)])];
   if (spec.game === "lorcana" && names[0].includes(" - ")) names.push(names[0].split(" - ")[0]);
+  const hasMarketplaceId = Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0;
+  if (hasMarketplaceId) {
+    // Some searches do not index marketplace IDs, and Scrydex omits TCGplayer's art suffix.
+    // Candidate selection still requires the exact marketplace ID and printing metadata.
+    const baseName = nameWithoutArtAnnotation(productNameWithoutGame(product));
+    if (baseName && !names.includes(baseName)) names.push(baseName);
+  }
   const clauses = names.map((name) => `!name:${queryLiteral(name)}`);
-  if (Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0) {
+  if (hasMarketplaceId) {
     clauses.push(`variants.marketplaces.product_id:${queryLiteral(String(product.tcgplayerId))}`);
   }
   const q = `(${clauses.join(" OR ")})`;

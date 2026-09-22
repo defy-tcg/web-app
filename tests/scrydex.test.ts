@@ -187,6 +187,65 @@ test("request authenticates only in headers, includes prices, uses daily cache, 
   assert.equal(calls, 1);
 });
 
+test("alternate-art search includes the provider base name and still selects Rengar's exact printing", async (t) => {
+  config(t);
+  const rengar: ScrydexProduct = {
+    name: "Rengar, Trophy Hunter (Alternate Art)", game: "Riftbound", setName: "Unleashed",
+    cardNumber: "120a/219", productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 684216,
+  };
+  // Identity and price fields from the English Scrydex UNL-120a response.
+  const alternate = candidate({
+    id: "UNL-120a", name: "Rengar, Trophy Hunter", number: "120a", printed_number: "120a/219",
+    expansion: { id: "UNL", name: "Unleashed", code: "UNL", printed_total: 219, language: "English", language_code: "EN" },
+    variants: [{ name: "foil", marketplaces: [{ name: "tcgplayer", product_id: "684216" }], prices: [price({ market: 42.94 })] }],
+  });
+  const regular = {
+    ...alternate, id: "UNL-120", number: "120", printed_number: "120/219",
+    variants: [{ name: "foil", marketplaces: [{ name: "tcgplayer", product_id: "684215" }], prices: [price({ market: 41.28 })] }],
+  };
+  for (const name of [rengar.name, "Rengar, Trophy Hunter (Alt Art)", `Riftbound: ${rengar.name}`]) {
+    let calls = 0;
+    const fetcher: typeof fetch = async (input) => {
+      calls++;
+      const url = new URL(String(input));
+      const query = url.searchParams.get("q") ?? "";
+      assert.ok(query.includes('variants.marketplaces.product_id:"684216"'));
+      assert.equal(url.searchParams.get("page"), "1");
+      assert.equal(url.searchParams.get("page_size"), "100");
+      // The original full-name/marketplace query returns no results for this card.
+      const data = query.includes('!name:"Rengar, Trophy Hunter"') ? [regular, alternate] : [];
+      return Response.json({ data, total_count: data.length });
+    };
+    const result = await resolveScrydexPrice({ ...rengar, name }, { fetch: fetcher });
+    assert.equal(result.scrydexId, "UNL-120a");
+    assert.equal(result.cents, 4294);
+    assert.equal(calls, 1);
+  }
+  const fetcher: typeof fetch = async () => Response.json({ data: [regular, alternate], total_count: 2 });
+  for (const override of [{ tcgplayerId: 684215 }, { cardNumber: "120/219" }, { setName: "Origins" }, { name: "Rengar, Trophy Hunter (Champion)" }]) {
+    await assert.rejects(resolveScrydexPrice({ ...rengar, ...override }, { fetch: fetcher }), errorCode("not_found"));
+  }
+  for (const override of [{ finish: "Normal" }, { condition: "Lightly Played" }]) {
+    await assert.rejects(resolveScrydexPrice({ ...rengar, ...override }, { fetch: fetcher }), errorCode("price_unavailable"));
+  }
+});
+
+test("alternate-art search never removes an annotation without a valid marketplace ID", async (t) => {
+  config(t);
+  for (const tcgplayerId of [undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    let calls = 0;
+    const fetcher: typeof fetch = async (input) => {
+      calls++;
+      const query = new URL(String(input)).searchParams.get("q") ?? "";
+      assert.equal(query.includes('!name:"Void Gate"'), false);
+      assert.equal(query.includes("variants.marketplaces.product_id:"), false);
+      return Response.json({ data: [candidate()], total_count: 1 });
+    };
+    await assert.rejects(resolveScrydexPrice({ ...product, name: "Void Gate (Alternate Art)", tcgplayerId }, { fetch: fetcher }), errorCode("not_found"));
+    assert.equal(calls, 1);
+  }
+});
+
 test("malformed, truncated and duplicate search results fail without a second request", async (t) => {
   config(t);
   for (const payload of [
