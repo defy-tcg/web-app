@@ -412,13 +412,17 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   // numerator and language; the matcher still verifies its denominator, translated name,
   // native set metadata, and the selected finish's exact marketplace ID.
   const numbers = [...new Set([product.cardNumber.split("/")[0].trim(), numberKey(product.cardNumber).split("/")[0]])];
-  const namesQuery = names.map((name) => `!name:${queryLiteral(name)}`).join(" OR ");
+  // Riftbound's exact-name search is case-sensitive (Seal of Discord versus
+  // Seal Of Discord). Phrase retrieval tolerates provider capitalization, then
+  // the unchanged selector verifies the complete printing before pricing it.
+  const englishRiftbound = spec.game === "riftbound" && spec.resource === "cards" && spec.language === "English" && hasMarketplaceId;
+  const namesQuery = names.map((name) => `${englishRiftbound ? "name" : "!name"}:${queryLiteral(name)}`).join(" OR ");
   // Popular Pokémon names exceed a full page. Bound their name fallback to this
   // collector number; marketplace ID, set, language and finish are still verified.
   const englishPokemon = spec.game === "pokemon" && spec.resource === "cards" && spec.language === "English" && hasMarketplaceId;
   const clauses = spec.language === "Japanese"
     ? [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
-    : englishPokemon ? [`((${namesQuery}) AND (${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:EN)`]
+    : englishPokemon || englishRiftbound ? [`((${namesQuery}) AND (${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:EN)`]
       : names.map((name) => `!name:${queryLiteral(name)}`);
   if (hasMarketplaceId) {
     clauses.push(`variants.marketplaces.product_id:${queryLiteral(String(product.tcgplayerId))}`);

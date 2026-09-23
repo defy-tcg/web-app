@@ -537,7 +537,9 @@ test("alternate-art search includes the provider base name and still selects Ren
       assert.equal(url.searchParams.get("page"), "1");
       assert.equal(url.searchParams.get("page_size"), "100");
       // The original full-name/marketplace query returns no results for this card.
-      const data = query.includes('!name:"Rengar, Trophy Hunter"') ? [regular, alternate] : [];
+      assert.ok(query.includes('AND (number:"120a") AND language_code:EN'));
+      assert.equal(query.includes("!name:"), false);
+      const data = query.includes('name:"Rengar, Trophy Hunter"') ? [regular, alternate] : [];
       return Response.json({ data, total_count: data.length });
     };
     const result = await resolveScrydexPrice({ ...rengar, name }, { fetch: fetcher });

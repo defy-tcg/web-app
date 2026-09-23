@@ -108,6 +108,14 @@ publishing a free item. Entered acquisition cost remains separate from market
 price. Existing price-refresh and Defy Pricing behavior remain separate from
 initial QR registration.
 
+Riftbound links use a quoted name search bounded by the saved collector number
+and English language, alongside the exact marketplace-ID alternative. This
+handles provider capitalization such as **Seal of Discord** versus **Seal Of
+Discord**, which Scrydex's case-sensitive exact-name search can miss. The lookup
+still makes one request and verifies the complete name, set, collector number,
+language, finish, and condition before pricing. Other printings, including
+Overnumbered cards, remain separate; the 6% Riftbound markup is unchanged.
+
 Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
 the saved number. It also recognizes Pokémon's **Full Art**, **Alternate Full
