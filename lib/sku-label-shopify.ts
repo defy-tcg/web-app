@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { canonicalInventoryLabelFinish, inventoryLabelIdentityText } from "./sku-label-inventory.ts";
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
-import { resolveScrydexPrice, ScrydexError, type ScrydexPrice, type ScrydexProduct } from "./scrydex.ts";
+import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode, type ScrydexPrice, type ScrydexProduct } from "./scrydex.ts";
 import { digest, SinglesError, type PlannedSingle } from "./singles/intake.ts";
 import { createShopifyGraphQL, LEGACY_DEFY_MAPPING, ShopifySinglesAdapter, type SinglesGraphQL } from "./singles/shopify.ts";
 import { canonicalSinglesCondition } from "./singles/types.ts";
@@ -137,8 +137,21 @@ function rowFor(product: SkuLabelShopifyProduct, identity: ReturnType<typeof ide
       setCode: "", number: product.cardNumber, rarity: "", finish: identity.finish, language: "English",
       imageUrl: `https://tcgplayer-cdn.tcgplayer.com/product/${identity.source}_in_1000x1000.jpg`, productUrl: product.tcgplayerUrl || "", marketCents: null } };
 }
+const pricingFailureMessages: Record<ScrydexErrorCode, string> = {
+  not_configured: "Scrydex pricing is not configured. Ask an administrator to check the pricing connection, then retry this QR.",
+  unsupported: "Scrydex automatic pricing does not support this card's game, language, product type, or condition. Review its saved details.",
+  incomplete_identity: "The saved card needs its exact name, set, collector number, and finish before Scrydex can verify its price. Review its saved details.",
+  not_found: "Defy could not match this card's name, set, and collector number to Scrydex. Its catalog mapping needs review before Shopify can link it.",
+  ambiguous: "Scrydex returned multiple possible matches. The exact printing, finish, and condition need review before Shopify can link it.",
+  price_unavailable: "Scrydex has no verified positive USD market price for this exact finish and condition. Retry after its pricing is available.",
+  upstream_error: "Scrydex could not complete the price request. Retry this saved QR shortly; Shopify linking is still pending.",
+};
 function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
-  if (error instanceof ScrydexError) return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: "The QR is saved. Shopify POS needs a verified positive Scrydex price for this exact card; price matching is currently unavailable. Retry after its pricing is available." };
+  if (error instanceof ScrydexError) {
+    // Log only the known error code and saved SKU, never provider errors or credentials.
+    console.warn("[sku-label-shopify] Scrydex pricing blocked linking", { sku, code: error.code });
+    return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: `The QR is saved. ${pricingFailureMessages[error.code]}` };
+  }
   if (error instanceof SinglesError && ["QR_LINK_BLOCKED", "QR_LINK_PENDING", "PRODUCT_IDENTITY_CONFLICT"].includes(error.code)) return { sku, status: error.retryable ? "pending" : "blocked", message: error.message };
   if (error instanceof SinglesError && !error.retryable) return { sku, status: "blocked", message: "The QR is saved, but Shopify could not verify its connection or card mapping. Review the Shopify connection and retry the saved QR." };
   return { sku, status: "pending", message: "The QR is saved. Shopify has not confirmed POS readiness yet; retry this same QR code." };

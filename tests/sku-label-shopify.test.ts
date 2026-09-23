@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, readSkuLabelStockTarget, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
-import { ScrydexError, selectScrydexPrice } from "../lib/scrydex.ts";
+import { ScrydexError, selectScrydexPrice, type ScrydexErrorCode } from "../lib/scrydex.ts";
 import { digest } from "../lib/singles/intake.ts";
 
 const card: SkuLabelShopifyProduct = { id: 77, sku: "DEFY-9775456393", name: "Time Warp", game: "Magic: The Gathering", setName: "Test set", cardNumber: "122", condition: "Near Mint", finish: "Foil", tcgplayerId: 652905, costCents: 0, listPriceCents: 0, quantity: 0, initialQuantity: 0 };
@@ -195,6 +195,27 @@ test("unknown Scrydex price never publishes a zero-price linked card", async () 
   const f = fixture({ priceError: true }); const result = await linkSkuLabelToShopify(card, f.deps);
   assert.equal(result.status, "blocked"); assert.doesNotMatch(result.message, /Private/); assert.equal(f.product(), null);
 });
+test("pricing failures distinguish catalog, price, configuration, and service issues without exposing upstream details", async t => {
+  const warning = t.mock.method(console, "warn", () => {});
+  const cases: [ScrydexErrorCode, RegExp][] = [
+    ["not_found", /catalog mapping needs review/], ["price_unavailable", /no verified positive USD market price/],
+    ["not_configured", /pricing is not configured/], ["unsupported", /does not support/],
+    ["incomplete_identity", /needs its exact name/], ["ambiguous", /multiple possible matches/],
+    ["upstream_error", /Retry this saved QR shortly/],
+  ];
+  for (const [code, message] of cases) {
+    const f = fixture();
+    f.deps.resolvePrice = async () => { throw new ScrydexError(code, "Private upstream detail with credentials"); };
+    const result = await linkSkuLabelToShopify(card, f.deps);
+    assert.equal(result.status, code === "upstream_error" ? "pending" : "blocked");
+    assert.match(result.message, message);
+    assert.doesNotMatch(result.message, /Private|credentials/);
+    assert.equal(f.product(), null);
+    assert.equal(f.quantityAdded(), 0);
+    assert.deepEqual(warning.mock.calls.at(-1)?.arguments, ["[sku-label-shopify] Scrydex pricing blocked linking", { sku: card.sku, code }]);
+    assert.equal((await getSkuLabelShopifyStatuses([card], f.deps))[0].message, result.message);
+  }
+});
 test("manual complete cards use their saved positive sale price without market lookup", async () => {
   const f = fixture({ priceError: true }); const result = await linkSkuLabelToShopify({ ...card, tcgplayerId: null, listPriceCents: 750 }, f.deps);
   assert.equal(result.status, "ready"); assert.equal(result.priceCents, 750);
@@ -276,6 +297,40 @@ test("Nidoking's actual Pokémon printing keeps its QR, exact market price, and 
   const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
   assert.equal(stockCalls.length, 2);
   assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
+});
+test("Mega Evolution resumes a price-blocked QR with its exact quote and one original stock transfer", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 79, sku: "DEFY-8490864590", name: "Mega Latias ex - 181/132", game: "Pokémon",
+    setName: "ME01: Mega Evolution", cardNumber: "181/132", finish: "Foil", tcgplayerId: 654520,
+    quantity: 1, initialQuantity: 1,
+  };
+  const f = fixture({ priceError: true });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  assert.equal(f.quantityAdded(), 0);
+  // Identity and raw prices captured from Scrydex's me1-181 response.
+  const providerCards = [{
+    id: "me1-181", name: "Mega Latias ex", number: "181", printed_number: "181/132", language_code: "EN",
+    expansion: { id: "me1", name: "Mega Evolution", series: "Mega Evolution", code: "MEG", printed_total: 132, language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "654520" }], prices: [
+      { type: "raw", condition: "NM", currency: "USD", market: 76.5 },
+      { type: "raw", condition: "LP", currency: "USD", market: 85.85 },
+    ] }],
+  }];
+  f.deps.resolvePrice = async product => selectScrydexPrice(product, providerCards);
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.sku, input.sku);
+  assert.equal(result.priceCents, 7650);
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  const variants = f.product().variants.nodes;
+  assert.equal(variants.length, 1);
+  assert.equal(variants[0].barcode, input.sku);
+  assert.equal(variants[0].price, "76.50");
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
 });
 test("a price-blocked Japanese card corrects only its unused language identity and retains the original QR stock receipt", async () => {
   const f = await blockedJapaneseFixture({ failAfterStock: true });

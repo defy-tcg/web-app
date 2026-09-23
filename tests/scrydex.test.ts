@@ -43,6 +43,21 @@ function pokemonPromoCandidate(promo: typeof pokemonPromos[number]) {
     variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: String(promo.tcgplayerId) }], prices: [price({ market: promo.market })] }],
   });
 }
+const megaLatiasProduct: ScrydexProduct = {
+  name: "Mega Latias ex - 181/132", game: "Pokémon", setName: "ME01: Mega Evolution", cardNumber: "181/132",
+  productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 654520,
+};
+function megaLatiasCandidate() {
+  // Sanitized printing metadata and raw USD quotes from Scrydex's live me1-181 response.
+  return {
+    id: "me1-181", name: "Mega Latias ex", number: "181", printed_number: "181/132", language: "English", language_code: "EN",
+    expansion: { id: "me1", name: "Mega Evolution", series: "Mega Evolution", code: "MEG", printed_total: 132, language: "English", language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "654520" }], prices: [
+      price({ market: 76.5 }), price({ condition: "LP", market: 85.85 }), price({ condition: "MP", market: 77.37 }),
+      price({ condition: "HP", market: 60 }), price({ condition: "DM", market: 52.5 }),
+    ] }],
+  };
+}
 const japaneseProduct: ScrydexProduct = {
   name: "Charmander - 168/165", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165",
   productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 566513,
@@ -232,6 +247,45 @@ test("verified Scarlet & Violet promo labels preserve exact Mewtwo and Mew ex id
       { ...entry.expansion, series: "Sword & Shield" }, { ...entry.expansion, code: "SWSHP" },
     ]) assert.throws(() => selectScrydexPrice(saved, [{ ...entry, expansion }]), errorCode("not_found"));
     assert.throws(() => selectScrydexPrice({ ...saved, finish: "Reverse Holo" }, candidates), errorCode("price_unavailable"));
+  }
+});
+
+test("Mega Latias's ME01 set label resolves its exact Scrydex printing and condition price", async (t) => {
+  config(t);
+  let calls = 0;
+  const fetcher: typeof fetch = async input => {
+    calls += 1;
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/pokemon/v1/cards");
+    assert.ok(url.searchParams.get("q")!.includes('!name:"Mega Latias ex"'));
+    assert.ok(url.searchParams.get("q")!.includes('number:"181"'));
+    assert.ok(url.searchParams.get("q")!.includes('variants.marketplaces.product_id:"654520"'));
+    return Response.json({ data: [megaLatiasCandidate()], total_count: 1 });
+  };
+  const result = await resolveScrydexPrice(megaLatiasProduct, { fetch: fetcher });
+  assert.equal(calls, 1); assert.equal(result.scrydexId, "me1-181"); assert.equal(result.cents, 7650);
+  assert.equal(result.groupName, "Mega Evolution"); assert.equal(result.variation, "holofoil / NM");
+  assert.equal(selectScrydexPrice({ ...megaLatiasProduct, condition: "Lightly Played" }, [megaLatiasCandidate()]).cents, 8585);
+});
+
+test("Mega Evolution alias still requires verified set, collector number, language and marketplace identity", () => {
+  const entry = megaLatiasCandidate();
+  for (const patch of [
+    { setName: "ME02: Mega Evolution" }, { name: "Mega Latios ex - 181/132" }, { cardNumber: "181/133" },
+    { tcgplayerId: 654521 }, { tcgplayerId: undefined },
+  ]) assert.throws(() => selectScrydexPrice({ ...megaLatiasProduct, ...patch }, [entry]), errorCode("not_found"));
+  for (const patch of [{ id: "me2" }, { name: "Mega Evolution Promos" }, { series: "XY" }, { code: "XY" }, { language_code: "JA" }]) {
+    assert.throws(() => selectScrydexPrice(megaLatiasProduct, [{ ...entry, expansion: { ...entry.expansion, ...patch } }]), errorCode("not_found"));
+  }
+  const wrongSelectedVariant = { ...entry, variants: [
+    { ...entry.variants[0], marketplaces: [{ name: "tcgplayer", product_id: "654521" }] },
+    { ...entry.variants[0], name: "reverseHolofoil" },
+  ] };
+  assert.throws(() => selectScrydexPrice(megaLatiasProduct, [wrongSelectedVariant]), errorCode("price_unavailable"));
+  assert.throws(() => selectScrydexPrice({ ...megaLatiasProduct, finish: "Reverse Holo" }, [entry]), errorCode("price_unavailable"));
+  for (const changes of [{ currency: "JPY" }, { condition: "LP" }, { market: 0 }]) {
+    const variant = { ...entry.variants[0], prices: [price({ market: 76.5, ...changes })] };
+    assert.throws(() => selectScrydexPrice(megaLatiasProduct, [{ ...entry, variants: [variant] }]), errorCode("price_unavailable"));
   }
 });
 

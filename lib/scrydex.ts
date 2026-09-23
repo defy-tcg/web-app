@@ -178,6 +178,7 @@ function exactSetName(product: ScrydexProduct, candidate: ObjectValue) {
 const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: string; code: string }> = {
   "sv: scarlet & violet 151": { id: "sv3pt5", name: "151", series: "scarlet & violet", code: "mew" },
   "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
+  "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
 };
 
 function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
