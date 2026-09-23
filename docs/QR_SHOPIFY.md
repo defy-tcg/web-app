@@ -117,6 +117,16 @@ including when the annotation and collector number appear in either order.
 For example, **Umbreon V (Alternate Full Art)** can match Scrydex's **Umbreon V**
 only when the exact TCGplayer ID, collector number, set, language, finish, and
 condition confirm that printing. A regular-art card cannot supply its price.
+**Secret / Secret Rare** and **Rainbow / Rainbow Rare** labels can also differ
+from Scrydex's name. These labels require explicit matching Scrydex rarity
+metadata as well as the exact selected-variant TCGplayer ID. Missing or
+conflicting rarity fields keep the card blocked; art and collector-number
+aliases cannot bypass that check.
+TCGplayer's Secret label covers both Scrydex **Rare Secret** and **Rare Rainbow**;
+an explicit Rainbow label accepts only the latter. Parenthetical collector
+numbers such as **(176)** must agree with the saved number, whose full printing
+identity is still checked. This keeps rainbow and gold cards distinct even when
+their base names are identical.
 Other parenthetical labels, such as Promo, First Edition, or stamped editions,
 remain part of the required identity instead of being removed indiscriminately.
 English Pokémon set labels such as **SV: Black Bolt** match
@@ -126,6 +136,10 @@ full series names are supported; a numbered prefix must also identify the same
 Scrydex expansion. New sets following these conventions do not need a per-set
 code change or extra discovery requests. Exceptional existing 151, promo, and
 Mega Evolution aliases retain their stricter verified metadata checks.
+Colons separating a set and its gallery are treated as spaces when comparing
+their complete titles: **SWSH: Crown Zenith: Galarian Gallery** can match
+**Crown Zenith Galarian Gallery**. Every title component remains required, so a
+gallery cannot silently match its main set or a different gallery.
 English Pokémon searches include the saved collector number and language, plus
 an exact marketplace-ID alternative, so common names such as Pikachu do not
 overflow the result limit before identity verification.

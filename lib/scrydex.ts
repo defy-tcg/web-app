@@ -163,26 +163,62 @@ function gundamRarityAnnotation(product: ScrydexProduct, game: string) {
   return { name: match[1].trim(), rarity: identity(match[2]), alternate: Boolean(match[3]) };
 }
 
-function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
+function pokemonNameAliases(product: ScrydexProduct) {
   const name = productNameWithoutGame(product);
-  const gundamRarity = gundamRarityAnnotation(product, game);
-  if (gundamRarity) return [name, gundamRarity.name];
-  const pokemonSingle = game === "pokemon" && identity(product.productType) === "single";
-  if (!pokemonSingle) return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
   const names = new Set([name]);
+  const rarities = new Set<"secret" | "rainbow">();
+  const printedNumber = numberKey(product.cardNumber);
   // Visit newly added aliases too: TCGplayer can put the art description before
-  // or after the collector number. Each removal strictly shortens the name.
+  // or after rarity and collector number. Each removal strictly shortens the
+  // name. Every rarity encountered remains mandatory even for an earlier alias.
   for (const value of names) {
     const aliases = [nameWithoutArtAnnotation(value, true)];
     const suffix = /\s+-\s+([a-z0-9]+(?:\s*\/\s*[a-z0-9]+)?)$/i.exec(value);
     if (suffix && /\d/.test(suffix[1]) && numberKey(suffix[1]) === numberKey(product.cardNumber)) aliases.push(value.slice(0, suffix.index));
+    const parentheticalNumber = /\s*\(([a-z0-9]+(?:\s*\/\s*[a-z0-9]+)?)\)\s*$/i.exec(value);
+    if (parentheticalNumber && /\d/.test(parentheticalNumber[1])
+      && [printedNumber, printedNumber.split("/")[0]].includes(numberKey(parentheticalNumber[1]))) {
+      aliases.push(value.slice(0, parentheticalNumber.index));
+    }
+    const rarity = /\s*\(\s*(Secret|Rainbow)(?:\s+Rare)?\s*\)\s*$/i.exec(value);
+    if (rarity && rarity.index > 0) {
+      rarities.add(identity(rarity[1]) as "secret" | "rainbow");
+      aliases.push(value.slice(0, rarity.index));
+    }
     for (const alias of aliases) if (alias && alias.length < value.length) names.add(alias);
   }
-  return [...names].filter(Boolean);
+  return { names: [...names].filter(Boolean), rarities: [...rarities] };
+}
+
+function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow">, candidate: ObjectValue) {
+  const values = [candidate.rarity, candidate.rarity_code].filter(value => value !== undefined && value !== null && value !== "");
+  // Both fields are used by Scrydex. Any supplied field must agree; a valid
+  // marketplace ID must not conceal absent or contradictory rarity metadata.
+  const classes = values.map(value => {
+    if (["rare secret", "secret rare"].includes(identity(value))) return "secret";
+    if (["rare rainbow", "rainbow rare"].includes(identity(value))) return "rainbow";
+    return undefined;
+  });
+  if (!classes.length || !classes[0] || !classes.every(value => value === classes[0])) return false;
+  // TCGplayer's Secret label covers both secret and rainbow printings. An
+  // explicit Rainbow label is narrower; the full number still identifies it.
+  return rarities.every(rarity => rarity === "secret" || classes[0] === "rainbow");
+}
+
+function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
+  const name = productNameWithoutGame(product);
+  const gundamRarity = gundamRarityAnnotation(product, game);
+  if (gundamRarity) return [name, gundamRarity.name];
+  if (game === "pokemon" && identity(product.productType) === "single") return pokemonNameAliases(product).names;
+  return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
 }
 
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   const name = productNameWithoutGame(product);
+  const pokemonAliases = game === "pokemon" && identity(product.productType) === "single" ? pokemonNameAliases(product) : undefined;
+  if (pokemonAliases?.rarities.length && (!verifiedPokemonRarities(pokemonAliases.rarities, candidate)
+    || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
+    || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)))) return false;
   const gundamRarity = gundamRarityAnnotation(product, game);
   if (gundamRarity) {
     // Gundam's rarity label describes its printing, not part of the pilot/unit
@@ -195,7 +231,7 @@ function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: str
   if (language === "English" && identity(candidateName(candidate, game, language)) === identity(name)) return true;
   // TCGplayer can append an art label or Pokémon collector number absent from Scrydex's name.
   // Only the exact marketplace ID permits removing those verified annotations.
-  return tcgplayerNameAliases(product, game).some(alias => identity(alias) === identity(candidateName(candidate, game, language)))
+  return (pokemonAliases?.names ?? tcgplayerNameAliases(product, game)).some(alias => identity(alias) === identity(candidateName(candidate, game, language)))
     && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
     && array(candidate.variants).map(object).some((variant) => marketplaceId(variant, product.tcgplayerId!));
 }
@@ -224,7 +260,9 @@ function numberedSetIdentity(value: unknown) {
 
 function verifiedPokemonSetLabel(product: ScrydexProduct, expansion: ObjectValue) {
   const label = /^([^:]+):\s*(.+)$/.exec(identity(product.setName));
-  if (!label || !text(expansion.id) || label[2] !== identity(expansion.name)) return false;
+  // Providers punctuate sub-set names differently; retain every title word.
+  const title = (value: unknown) => identity(value).replace(/\s*:\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (!label || !text(expansion.id) || title(label[2]) !== title(expansion.name)) return false;
   const prefix = label[1].trim();
   const numberedPrefix = /^([a-z]+)(\d[a-z0-9]*)$/.exec(prefix);
   const series = POKEMON_SERIES_PREFIXES[prefix]
@@ -315,6 +353,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
   const candidate = matches[0];
   const gundamRarity = gundamRarityAnnotation(product, spec.game);
+  const pokemonRarity = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).rarities.length > 0;
   const variants = array(candidate.variants).map(object).filter((variant) => {
     if (gundamRarity) {
       if (!marketplaceId(variant, product.tcgplayerId!) || !verifiedGundamPrinting(candidate, variant)) return false;
@@ -324,7 +363,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
       return ["normal", "foil"].includes(spec.finish) && finishKey(variant.name) === spec.finish;
     }
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
+    if (pokemonRarity || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");
