@@ -62,6 +62,18 @@ const japaneseProduct: ScrydexProduct = {
   name: "Charmander - 168/165", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165",
   productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 566513,
 };
+const seismitoadProduct: ScrydexProduct = {
+  name: "Seismitoad - 105/086", game: "Pokémon", setName: "SV: Black Bolt", cardNumber: "105/086",
+  productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 642558,
+};
+function seismitoadCandidate() {
+  // Sanitized identity and NM quote from the live zsv10pt5-105 response.
+  return {
+    id: "zsv10pt5-105", name: "Seismitoad", number: "105", printed_number: "105/086", language: "English", language_code: "EN",
+    expansion: { id: "zsv10pt5", name: "Black Bolt", series: "Scarlet & Violet", code: "BLK", printed_total: 86, language: "English", language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "642558" }], prices: [price({ market: 221.32 })] }],
+  };
+}
 function japaneseCandidate(overrides: Record<string, unknown> = {}) {
   // Sanitized identity and native USD/JPY quotes from Scrydex's sv2a_ja-168 response.
   return {
@@ -286,6 +298,77 @@ test("Mega Evolution alias still requires verified set, collector number, langua
   for (const changes of [{ currency: "JPY" }, { condition: "LP" }, { market: 0 }]) {
     const variant = { ...entry.variants[0], prices: [price({ market: 76.5, ...changes })] };
     assert.throws(() => selectScrydexPrice(megaLatiasProduct, [{ ...entry, variants: [variant] }]), errorCode("price_unavailable"));
+  }
+});
+
+test("new Pokémon series-prefixed set labels resolve Seismitoad in one bounded request", async t => {
+  config(t);
+  let calls = 0;
+  const result = await resolveScrydexPrice(seismitoadProduct, { fetch: async input => {
+    calls++;
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/pokemon/v1/cards");
+    assert.ok(url.searchParams.get("q")!.includes('!name:"Seismitoad"'));
+    assert.ok(url.searchParams.get("q")!.includes('number:"105"'));
+    assert.ok(url.searchParams.get("q")!.includes("language_code:EN"));
+    assert.ok(url.searchParams.get("q")!.includes('variants.marketplaces.product_id:"642558"'));
+    return Response.json({ data: [seismitoadCandidate()], total_count: 1 });
+  } });
+  assert.equal(calls, 1); assert.equal(result.cents, 22132);
+  assert.equal(result.scrydexId, "zsv10pt5-105"); assert.equal(result.groupName, "Black Bolt");
+});
+
+test("unlisted Pokémon sets match their series and exact title without a per-set release", () => {
+  const entry = seismitoadCandidate();
+  // Deliberately synthetic titles prove the rule is driven by provider metadata, not a new whitelist.
+  for (const [prefix, series, id] of [
+    ["SV", "Scarlet & Violet", "sv99"], ["SWSH", "Sword & Shield", "swsh99"],
+    ["SM", "Sun & Moon", "sm99"], ["XY", "XY", "xy99"], ["BW", "Black & White", "bw99"],
+    ["ME", "Mega Evolution", "me99"], ["ME099", "Mega Evolution", "me99"],
+    ["Scarlet & Violet", "Scarlet & Violet", "sv99"],
+  ]) {
+    const expansion = { ...entry.expansion, id, name: "Future Set Fixture", series };
+    const saved = { ...seismitoadProduct, setName: `${prefix}: Future Set Fixture` };
+    assert.equal(selectScrydexPrice(saved, [{ ...entry, expansion }]).cents, 22132);
+    assert.throws(() => selectScrydexPrice({ ...saved, setName: `${prefix}: Different Set` }, [{ ...entry, expansion }]), errorCode("not_found"));
+  }
+});
+
+test("general set matching rejects conflicting series, numbering, language and card identity", () => {
+  const entry = seismitoadCandidate();
+  for (const patch of [
+    { setName: "SWSH: Black Bolt" }, { setName: "Unknown: Black Bolt" }, { setName: "SV11: Black Bolt" },
+    { setName: "SV: Black Bolt Promos" }, { setName: "SV: White Flare" }, { name: "Seismitoad (Promo) - 105/086" },
+    { cardNumber: "105/087" }, { cardNumber: "105a/086" }, { tcgplayerId: undefined }, { tcgplayerId: 642559 },
+  ]) assert.throws(() => selectScrydexPrice({ ...seismitoadProduct, ...patch }, [entry]), errorCode("not_found"));
+  for (const expansion of [
+    { ...entry.expansion, name: "White Flare" }, { ...entry.expansion, series: "Sword & Shield" },
+    { ...entry.expansion, series: "" }, { ...entry.expansion, language_code: "JA" },
+  ]) assert.throws(() => selectScrydexPrice(seismitoadProduct, [{ ...entry, expansion }]), errorCode("not_found"));
+  assert.throws(() => selectScrydexPrice(seismitoadProduct, [{ ...entry, language_code: "JA" }]), errorCode("not_found"));
+  assert.throws(() => selectScrydexPrice(seismitoadProduct, [{ ...entry, printed_number: "105/087" }]), errorCode("not_found"));
+  assert.throws(() => selectScrydexPrice(seismitoadProduct, [entry, entry]), errorCode("ambiguous"));
+  const numbered = { ...entry, expansion: { ...entry.expansion, id: "me2", name: "Future Set Fixture", series: "Mega Evolution" } };
+  assert.throws(() => selectScrydexPrice({ ...seismitoadProduct, setName: "ME03: Future Set Fixture" }, [numbered]), errorCode("not_found"));
+});
+
+test("general set matching requires marketplace proof on the selected finish and its positive condition quote", () => {
+  const entry = seismitoadCandidate();
+  const foil = entry.variants[0];
+  const wrongFinish = { ...entry, variants: [
+    { ...foil, marketplaces: [{ name: "tcgplayer", product_id: "1" }] },
+    { ...foil, name: "reverseHolofoil" },
+  ] };
+  // A bare exact card name must not allow another finish's marketplace ID to verify the set.
+  for (const name of [seismitoadProduct.name, "Seismitoad"]) {
+    assert.throws(() => selectScrydexPrice({ ...seismitoadProduct, name }, [wrongFinish]), errorCode("price_unavailable"));
+    assert.throws(() => selectScrydexPrice({ ...seismitoadProduct, name, tcgplayerId: undefined }, [entry]), errorCode("not_found"));
+  }
+  for (const patch of [{ finish: "Reverse Holo" }, { finish: "First Edition Holofoil" }, { condition: "Lightly Played" }]) {
+    assert.throws(() => selectScrydexPrice({ ...seismitoadProduct, ...patch }, [entry]), errorCode("price_unavailable"));
+  }
+  for (const quote of [price({ market: 0 }), price({ currency: "JPY", market: 221.32 })]) {
+    assert.throws(() => selectScrydexPrice(seismitoadProduct, [{ ...entry, variants: [{ ...foil, prices: [quote] }] }]), errorCode("price_unavailable"));
   }
 });
 

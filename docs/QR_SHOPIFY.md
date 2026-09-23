@@ -110,8 +110,13 @@ initial QR registration.
 
 Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
-the saved number, and recognizes the verified Scarlet & Violet 151 and Scarlet &
-Violet Promo Cards set labels.
+the saved number. English Pokémon set labels such as **SV: Black Bolt** match
+Scrydex's **Black Bolt** automatically when their exact set title, series prefix,
+and marketplace ID agree. Known series prefixes (SV, SWSH, SM, XY, BW, ME) and
+full series names are supported; a numbered prefix must also identify the same
+Scrydex expansion. New sets following these conventions do not need a per-set
+code change or extra discovery requests. Exceptional existing 151, promo, and
+Mega Evolution aliases retain their stricter verified metadata checks.
 English Pokémon searches include the saved collector number and language, plus
 an exact marketplace-ID alternative, so common names such as Pikachu do not
 overflow the result limit before identity verification.
@@ -155,7 +160,11 @@ compare-and-set writes. No Neon schema change is required.
   Correct the reported issue and retry the saved QR; do not create another SKU.
 
 Saving triggers a background attempt. The label page can retry unfinished links,
-and a server cron provides nightly reconciliation. The current Vercel team uses
+and a server cron provides nightly reconciliation, including blocked pricing
+matches. Once matching or Scrydex data is corrected, these saved cards can link
+on a later pass without another SKU or receipt. Recovery processes at most 12
+cards per run, so larger backlogs can take multiple nights; Scrydex responses
+remain cached for up to 24 hours. The current Vercel team uses
 the Hobby plan, which allows a cron job at most once daily and may invoke it
 within the scheduled hour. This recovery schedule does not promise immediate
 completion during an outage. All retry paths preserve the original QR and receipt.

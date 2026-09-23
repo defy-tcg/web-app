@@ -181,6 +181,31 @@ const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: st
   "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
 };
 
+const POKEMON_SERIES_PREFIXES: Record<string, string> = {
+  sv: "scarlet & violet", swsh: "sword & shield", sm: "sun & moon",
+  xy: "xy", bw: "black & white", me: "mega evolution",
+};
+
+function numberedSetIdentity(value: unknown) {
+  // Provider codes can pad their numbers (ME02 versus me2), but no other
+  // expansion markers are discarded: split sets and special sets stay distinct.
+  return identity(value).replace(/\d+/g, (digits) => digits.replace(/^0+(?=\d)/, ""));
+}
+
+function verifiedPokemonSetLabel(product: ScrydexProduct, expansion: ObjectValue) {
+  const label = /^([^:]+):\s*(.+)$/.exec(identity(product.setName));
+  if (!label || !text(expansion.id) || label[2] !== identity(expansion.name)) return false;
+  const prefix = label[1].trim();
+  const numberedPrefix = /^([a-z]+)(\d[a-z0-9]*)$/.exec(prefix);
+  const series = POKEMON_SERIES_PREFIXES[prefix]
+    ?? (numberedPrefix ? POKEMON_SERIES_PREFIXES[numberedPrefix[1]] : undefined)
+    ?? Object.values(POKEMON_SERIES_PREFIXES).find((value) => value === prefix);
+  if (!series || identity(expansion.series) !== series) return false;
+  // An unnumbered series label covers new sets without a per-set whitelist.
+  // Numbered labels must additionally identify the same expansion in full.
+  return !numberedPrefix || numberedSetIdentity(prefix) === numberedSetIdentity(expansion.id);
+}
+
 function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   if (language === "Japanese") {
     const expansion = object(candidate.expansion);
@@ -192,14 +217,15 @@ function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: 
       && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
   }
   if (exactSetName(product, candidate)) return true;
+  if (game !== "pokemon" || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
+    || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!))) return false;
   const expansion = object(candidate.expansion);
   const alias = POKEMON_SET_ALIASES[identity(product.setName)];
-  // Only verified provider-specific labels; never remove arbitrary set or series prefixes.
-  return game === "pokemon" && Boolean(alias)
-    && identity(expansion.id) === alias.id && identity(expansion.name) === alias.name
-    && identity(expansion.series) === alias.series && identity(expansion.code) === alias.code
-    && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
-    && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+  // Exceptional provider labels retain their complete verified identity. A
+  // failed known alias must not fall through to the generic series-label path.
+  if (alias) return identity(expansion.id) === alias.id && identity(expansion.name) === alias.name
+    && identity(expansion.series) === alias.series && identity(expansion.code) === alias.code;
+  return verifiedPokemonSetLabel(product, expansion);
 }
 
 function matchesNumber(number: string, candidate: ObjectValue) {
