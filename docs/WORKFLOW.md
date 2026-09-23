@@ -194,10 +194,10 @@ come from an exact Scrydex quote under the existing pricing policy; manual cards
 need a positive entered selling price. Clearing the current batch, retrying a
 save, and reprinting do not receive more stock.
 
-The label preview's **Add cards to inventory** panel receives additional copies
-of a saved card. Enter **Number of cards to add**, then choose **Add stock**.
-This is an additive receipt against the live Shopify location, not an absolute
-stock count. **Copies per SKU** only controls printing. Starting quantity still
+The **Change inventory** panel in **Saved card details** offers **Add copies**
+for newly received stock and **Set total available** for correcting Shopify's
+available count, including zero. **Refresh count** reads the current Shopify
+quantity without changing it. **Copies per SKU** only controls printing. Starting quantity still
 transfers once on first save; looking up an existing link or reprinting never
 creates an additional receipt. Multi-card batches require choosing the card
 whose stock is being received.
@@ -205,18 +205,21 @@ whose stock is being received.
 `POST /api/sku-labels/stock` authenticates a same-origin request and loads the
 saved QR from Defy. It requires a verified live Shopify link and a confirmed
 original starting-stock transfer. A separate Shopify app-owned receipt pins
-the request ID, card identity, variant, inventory item, location, and quantity.
+the request ID, card identity, variant, inventory item, location, mode, and quantity.
 CAS and Shopify's idempotency key protect retries; an unconfirmed mutation
-outside the safe retry window requires review. This path only adds stock and
-does not rewrite selling prices, unit costs, barcodes, or sales channels. It
+outside the safe retry window requires review. Absolute totals also pin the
+displayed starting count and use Shopify's `changeFromQuantity` comparison, so
+a concurrent sale or stock update rejects the correction instead of being
+overwritten. Refresh the count and enter a new total after a rejected comparison.
+This path does not rewrite selling prices, unit costs, barcodes, or sales channels. It
 leaves the original Defy inventory record and initial receipt unchanged; the UI
 shows Shopify's available count.
 
 The browser saves a stock request before sending it and retains its original
-card and quantity across a lost response, reload, or label change. **Retry stock
-addition** uses the same request until Shopify confirms its result. New stock
+card, mode, quantity, and comparison count across a lost response, reload, or label change.
+**Retry inventory change** uses the same request until Shopify confirms its result. New stock
 requests require an explicit click. A damaged or unavailable browser receipt
-store blocks new submissions instead of risking an unrepeatable addition.
+store blocks new submissions instead of risking an unrepeatable change.
 
 `POST /api/sku-labels/reserve` authenticates and validates one linked card, then
 atomically reuses its saved variant or creates a product and its original

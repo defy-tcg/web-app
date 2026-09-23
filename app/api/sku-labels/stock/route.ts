@@ -9,7 +9,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request) {
   if (!(await getAuthorizedSession())) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!skuLinkOriginAllowed(request)) return Response.json({ error: "Open QR labels on this website to add stock." }, { status: 403 });
+  if (!skuLinkOriginAllowed(request)) return Response.json({ error: "Open QR labels on this website to change stock." }, { status: 403 });
   try {
     let payload: unknown;
     try { payload = await request.json(); }

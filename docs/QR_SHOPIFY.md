@@ -82,6 +82,23 @@ this feature. Do not add a starting quantity for stock already counted in Shopif
 Additional deliveries should use the appropriate receiving workflow, not another
 QR or another first-save receipt.
 
+In **SKU labels → Saved card details → Change inventory**, select **Add copies**
+to receive additional stock or **Set total available** to correct the current
+Shopify count. A total of zero is allowed. **Refresh count** retrieves the live
+count without changing stock. These controls keep the original QR and do not
+change the older Defy ledger, cost, price, or original starting-stock receipt.
+For multiple labels, select the card to update first. A pending Shopify link must
+be resolved before inventory can be changed.
+
+Each inventory change has its own durable receipt. Retrying a lost response or
+reloading the page resumes the same request. Absolute totals use Shopify's
+`changeFromQuantity` comparison against the count displayed when the total was
+entered. If another sale or stock update changes that count, the correction is
+rejected; refresh, check the new count, and enter the total again. An uncertain
+request keeps its original comparison and idempotency key, so a retry cannot
+overwrite a later sale. Unconfirmed requests past the safe retry window require
+review rather than a fresh mutation.
+
 TCGplayer links identify cards; their listed prices are not trusted selling
 prices. Linking requires an exact, positive Scrydex USD quote. The existing policy
 adds 6% for Riftbound singles and uses the raw market price for other supported
@@ -95,6 +112,9 @@ Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
 the saved number, and recognizes the verified Scarlet & Violet 151 and Scarlet &
 Violet Promo Cards set labels.
+English Pokémon searches include the saved collector number and language, plus
+an exact marketplace-ID alternative, so common names such as Pikachu do not
+overflow the result limit before identity verification.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
 named editions remain distinct. Verified language, collector number, condition,

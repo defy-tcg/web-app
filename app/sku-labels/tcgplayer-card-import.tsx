@@ -153,7 +153,7 @@ export default function TcgplayerCardImport({ disabled, onAdd, onSelectionChange
       </label>
       <button className="primary-button" disabled={locked || !url.trim()}>{loading ? "Loading card…" : "Load card"}</button>
     </form>
-    <p className="sku-import-help">One permanent SKU per card, condition, and finish. Enter starting quantity when saving a new card. For a saved card, use Add stock beside its label preview to receive more copies. Loading or printing a saved QR adds no stock.</p>
+    <p className="sku-import-help">One permanent SKU per card, condition, and finish. Enter starting quantity when saving a new card. For a saved card, use Change inventory in Saved card details below to add copies or set the total available. Loading or printing a saved QR adds no stock.</p>
     {card ? <div className="sku-import-result">
       <div className="sku-import-image">
         {card.imageUrl && !imageFailed ? <Image src={card.imageUrl} alt={card.name} width={160} height={224} unoptimized onError={() => setImageFailed(true)} /> : <span>Card image unavailable</span>}
@@ -184,7 +184,7 @@ export default function TcgplayerCardImport({ disabled, onAdd, onSelectionChange
           </fieldset>
           {existing ? <div className="sku-import-existing" role="status">
             {savedQr ? <div className="sku-import-existing-qr" role="img" aria-label={`Saved QR code for ${existing.sku}`} dangerouslySetInnerHTML={{ __html: savedQr }} /> : null}
-            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "This original QR is selected below. Use Add stock beside the preview to receive more cards, or print this same QR without changing stock."}</p>
+            <div><strong>Already saved</strong><code>{existing.sku}</code><p>{legacySku ? "This card uses an existing inventory SKU. Open Inventory to manage it or print its barcode; a new QR will not be created." : "This original QR is selected below. Use Change inventory in Saved card details to add copies or set the total available, or print this same QR without changing stock."}</p>
               {legacySku ? <Link href="/">Open Inventory →</Link> : null}</div>
           </div> : null}
           <button className="primary-button sku-import-add" disabled={locked || !inventory || !finish.trim() || legacySku}>{adding ? "Saving & linking Shopify…" : existing ? legacySku ? "Existing inventory SKU" : "Use saved QR" : "Save QR & link Shopify"}<span aria-hidden="true">↗</span></button>

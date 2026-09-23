@@ -471,6 +471,29 @@ test("numbered Pokémon promos search their exact base names without merging Mew
   }
 });
 
+test("common English Pokémon names use collector number and language to avoid truncated pricing searches", async (t) => {
+  config(t);
+  const pikachu = { ...pokemonProduct, name: "Pikachu - 173/165", cardNumber: "173/165", tcgplayerId: 513721 };
+  const exact = pokemonCandidate({ id: "sv3pt5-173", name: "Pikachu", number: "173", printed_number: "173/165",
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "513721" }], prices: [price({ market: 79.71 })] }] });
+  for (const cardNumber of ["173/165", "0173/0165"]) {
+    let calls = 0;
+    const fetcher: typeof fetch = async input => {
+      calls++;
+      const q = new URL(String(input)).searchParams.get("q") ?? "";
+      assert.ok(q.includes('variants.marketplaces.product_id:"513721"'));
+      const bounded = q.includes('AND (number:"173"') || q.includes('AND (number:"0173" OR number:"173")');
+      assert.ok(q.includes("AND language_code:EN"));
+      return Response.json({ data: [exact], total_count: bounded ? 1 : 340 });
+    };
+    const quote = await resolveScrydexPrice({ ...pikachu, cardNumber }, { fetch: fetcher });
+    assert.equal(quote.scrydexId, "sv3pt5-173"); assert.equal(quote.cents, 7971); assert.equal(calls, 1);
+  }
+  for (const patch of [{ tcgplayerId: 513722 }, { cardNumber: "173/166" }, { setName: "Different set" }]) {
+    await assert.rejects(resolveScrydexPrice({ ...pikachu, ...patch }, { fetch: async () => Response.json({ data: [exact], total_count: 1 }) }), ScrydexError);
+  }
+});
+
 test("Japanese lookup uses one collector-number and JA search with exact marketplace proof", async (t) => {
   config(t);
   for (const cardNumber of ["168/165", "0168/0165"]) {

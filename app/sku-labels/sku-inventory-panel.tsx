@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { LABEL_CONDITIONS, LABEL_FINISHES, validateInventoryLabels } from "@/lib/sku-label-inventory";
 import { isGeneratedSku } from "@/lib/sku-labels";
 import { TCG_GAME_OPTIONS } from "@/lib/tcg-games";
@@ -26,7 +26,7 @@ function cents(value: string, field: string): number {
   return Math.round(Number(value) * 100);
 }
 
-export default function SkuInventoryPanel({ labels, products, disabled, canPrint, shopifyLinks, linkingSkus, onRetryShopify, onSavingChange, onLoadingChange, onInventoryLoaded, onSaved, onLoad, onDraftChange }: {
+export default function SkuInventoryPanel({ labels, products, disabled, canPrint, shopifyLinks, linkingSkus, onRetryShopify, onSavingChange, onLoadingChange, onInventoryLoaded, onSaved, onLoad, onDraftChange, stockControls }: {
   labels: Label[]; products: SavedSkuProduct[]; disabled: boolean; canPrint: boolean;
   shopifyLinks: Record<string, ShopifyLabelLink>; linkingSkus: string[];
   onRetryShopify: (sku: string) => void;
@@ -36,6 +36,7 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
   onSaved: (products: SavedSkuProduct[], createdCount: number, existingCount: number, links: ShopifyLabelLink[]) => void;
   onLoad: (product: SavedSkuProduct) => void;
   onDraftChange: (sku: string, draft: Draft) => void;
+  stockControls: ReactNode;
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
@@ -148,8 +149,9 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
   const allLinked = allSaved && labels.every((label) => shopifyLinks[label.sku]?.status === "ready");
   const matches = products.filter((product) => [product.sku, product.name, product.game, product.setName, product.cardNumber].some((value) => value.toLowerCase().includes(query)));
   return <>
-    {labels.length > 0 && <section className="sku-panel sku-inventory" aria-labelledby="sku-inventory-title">
-      <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">{allSaved ? "Saved card details" : "Save your singles"}</h2><p>{allSaved ? "Keep the original QR and check its Shopify POS link below." : "One SKU per card variant. Saving also links its QR to Shopify POS."}</p></div></div>
+    <section className="sku-panel sku-inventory" aria-labelledby="sku-inventory-title">
+      <div className="sku-panel-heading"><span className="sku-step">03</span><div><h2 id="sku-inventory-title">{allSaved ? "Saved card details" : labels.length ? "Save your singles" : "Card inventory"}</h2><p>{allSaved ? "Add copies or set the total available while keeping the original QR." : "One SKU per card variant. Saving also links its QR to Shopify POS."}</p></div></div>
+      {stockControls}
       <div className="sku-inventory-cards">{labels.map((label, index) => {
         const product = products.find((item) => item.sku === label.sku);
         const draft = product ? productDraft(product) : label.inventory ?? drafts[label.sku] ?? emptyDraft;
@@ -163,21 +165,21 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
             {field("cardNumber", "Card number", { maxLength: 40 })}
             <label>Condition<select aria-label={`Condition for ${label.sku}`} value={draft.condition} onChange={(event) => update(label.sku, "condition", event.target.value)}>{LABEL_CONDITIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
             <label>Finish<input aria-label={`Finish for ${label.sku}`} list="sku-finish-presets" maxLength={80} value={draft.finish} onChange={(event) => update(label.sku, "finish", event.target.value)} /><small>Keep the exact finish or edition for this card.</small></label>
-            {field("quantity", product ? "Defy inventory record" : "Starting quantity", { type: "number", min: 0, max: 100000, step: "1" })}
+            {field("quantity", product ? "Saved Defy quantity" : "Starting quantity", { type: "number", min: 0, max: 100000, step: "1" })}
             {field("cost", "Cost per card ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
             {field("price", product ? "Defy recorded price ($)" : "Sell price ($)", { type: "number", min: 0, max: 1000000, step: "0.01" })}
             {field("location", "Location", { maxLength: 80 })}
             {field("tcgplayerId", "TCGplayer ID (optional)", { type: "number", min: 1, max: 2147483647, step: "1" })}
           </fieldset>
-          {product && <p className="sku-print-help">Already saved. Use Add stock beside the label preview to receive more cards. Reprinting keeps its original SKU and adds no stock. The fields above show the original Defy inventory record; the live available count comes from Shopify.</p>}
+          {product && <p className="sku-print-help">Use <a href="#sku-stock-entry">Change inventory</a> above to add copies or set the total available. These saved details show the original Defy record; Shopify supplies the current available count. Reprinting keeps the original SKU and adds no stock.</p>}
           <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} saved={Boolean(product)} busy={saving || linkingSkus.includes(label.sku)} disabled={disabled || saving} onRetry={onRetryShopify} />
         </details>;
       })}</div>
       <datalist id="sku-finish-presets">{LABEL_FINISHES.map((value) => <option key={value} value={value} />)}</datalist>
-      <div className="sku-save-bar"><div><strong>{allSaved ? "Your QR codes are saved." : "Save first. Keep the same SKU."}</strong><p>{allSaved ? "The same QR is used in Defy and Shopify POS. Linking again does not add stock." : "Starting quantity transfers to Shopify once. Copies per SKU only controls printed labels."}</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving & linking Shopify…" : allLinked ? "Print saved labels" : allSaved ? "Link Shopify & print" : "Save to Inventory & Print"}</button></div>
+      {labels.length > 0 && <div className="sku-save-bar"><div><strong>{allSaved ? "Your QR codes are saved." : "Save first. Keep the same SKU."}</strong><p>{allSaved ? "The same QR is used in Defy and Shopify POS. Linking again does not add stock." : "Starting quantity transfers to Shopify once. Copies per SKU only controls printed labels."}</p></div><button className="primary-button" disabled={!ready || loading || disabled || saving || !canPrint} onClick={() => void save()}>{saving ? "Saving & linking Shopify…" : allLinked ? "Print saved labels" : allSaved ? "Link Shopify & print" : "Save to Inventory & Print"}</button></div>}
       {error && <p className="sku-inline-error" role="alert">{error}</p>}
       {warning && <p className="sku-storage-warning" role="status">{warning}</p>}
-    </section>}
+    </section>
     <section className="sku-panel sku-library" aria-labelledby="sku-library-title">
       <header className="sku-batch-heading"><div><p className="eyebrow">SAVED IN DEFY INVENTORY</p><h2 id="sku-library-title">Saved custom labels <span className="sku-library-count">{products.length}</span></h2></div><button className="secondary-button" disabled={loading || saving || disabled} onClick={() => void refresh()}>{loading ? "Loading…" : "Refresh"}</button></header>
       <p className="sku-print-help">Find a saved single and load its original SKU to print again, from any signed-in device.</p>
