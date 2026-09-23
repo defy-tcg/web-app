@@ -32,6 +32,17 @@ function pokemonCandidate(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+const pokemonPromos = [
+  { name: "Mewtwo", number: "052", id: "svp-52", tcgplayerId: 518872, market: 43.93, cents: 4393 },
+  { name: "Mew ex", number: "053", id: "svp-53", tcgplayerId: 518871, market: 68.75, cents: 6875 },
+];
+function pokemonPromoCandidate(promo: typeof pokemonPromos[number]) {
+  return pokemonCandidate({
+    id: promo.id, name: promo.name, number: String(Number(promo.number)), printed_number: promo.number,
+    expansion: { id: "svp", name: "Scarlet & Violet Black Star Promos", series: "Scarlet & Violet", code: "SVP", printed_total: 224, language: "English", language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: String(promo.tcgplayerId) }], prices: [price({ market: promo.market })] }],
+  });
+}
 function errorCode(code: ScrydexErrorCode) {
   return (error: unknown) => error instanceof ScrydexError && error.code === code;
 }
@@ -185,6 +196,24 @@ test("plain holofoil aliases preserve reverse finishes and named Pokémon editio
   assert.throws(() => selectScrydexPrice(pokemonProduct, [duplicate]), errorCode("ambiguous"));
 });
 
+test("verified Scarlet & Violet promo labels preserve exact Mewtwo and Mew ex identities", () => {
+  const candidates = pokemonPromos.map(pokemonPromoCandidate);
+  for (const promo of pokemonPromos) {
+    const saved = { ...pokemonProduct, name: `${promo.name} - ${promo.number}`, cardNumber: promo.number, tcgplayerId: promo.tcgplayerId, setName: "SV: Scarlet & Violet Promo Cards" };
+    const result = selectScrydexPrice(saved, candidates);
+    assert.equal(result.scrydexId, promo.id); assert.equal(result.cents, promo.cents); assert.equal(result.variation, "holofoil / NM");
+    for (const patch of [{ tcgplayerId: undefined }, { tcgplayerId: 1 }, { name: "Mew" }, { cardNumber: `${promo.number}/165` }, { setName: "SWSH: Sword & Shield Promo Cards" }]) {
+      assert.throws(() => selectScrydexPrice({ ...saved, ...patch }, candidates), errorCode("not_found"));
+    }
+    const entry = pokemonPromoCandidate(promo);
+    for (const expansion of [
+      { ...entry.expansion, id: "swshp" }, { ...entry.expansion, name: "151" },
+      { ...entry.expansion, series: "Sword & Shield" }, { ...entry.expansion, code: "SWSHP" },
+    ]) assert.throws(() => selectScrydexPrice(saved, [{ ...entry, expansion }]), errorCode("not_found"));
+    assert.throws(() => selectScrydexPrice({ ...saved, finish: "Reverse Holo" }, candidates), errorCode("price_unavailable"));
+  }
+});
+
 test("sealed supports only documented games, exact names and sets, unopened condition and explicit editions", () => {
   const sealed = { ...product, name: "Origins Booster Pack", productType: "Sealed", cardNumber: "", condition: "", finish: "" };
   const entry = candidate({ name: sealed.name, variants: [{ name: "normal", prices: [price({ condition: "U", market: 13.32 })] }] });
@@ -325,6 +354,22 @@ test("Pokémon lookup includes its verified collector-free name in one bounded s
       return Response.json({ data: [], total_count: 0 });
     };
     await assert.rejects(resolveScrydexPrice({ ...pokemonProduct, ...patch }, { fetch: noAlias }), errorCode("not_found")); assert.equal(requests, 1);
+  }
+});
+
+test("numbered Pokémon promos search their exact base names without merging Mew and Mew ex", async (t) => {
+  config(t);
+  for (const promo of pokemonPromos) {
+    let calls = 0;
+    const fetcher: typeof fetch = async input => {
+      calls++; const url = new URL(String(input)); const query = url.searchParams.get("q") ?? "";
+      assert.ok(query.includes(`!name:"${promo.name}"`));
+      assert.equal(query.includes('!name:"Mew"'), false);
+      assert.equal(url.searchParams.get("page_size"), "100"); assert.equal(url.searchParams.get("page"), "1");
+      return Response.json({ data: pokemonPromos.map(pokemonPromoCandidate), total_count: 2 });
+    };
+    const result = await resolveScrydexPrice({ ...pokemonProduct, name: `${promo.name} - ${promo.number}`, cardNumber: promo.number, tcgplayerId: promo.tcgplayerId, setName: "SV: Scarlet & Violet Promo Cards" }, { fetch: fetcher });
+    assert.equal(result.scrydexId, promo.id); assert.equal(result.cents, promo.cents); assert.equal(calls, 1);
   }
 });
 

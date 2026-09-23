@@ -159,13 +159,19 @@ function exactSetName(product: ScrydexProduct, candidate: ObjectValue) {
   return [expansion.name, expansion.code, expansion.id].some(value => identity(value) === identity(product.setName));
 }
 
+const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: string; code: string }> = {
+  "sv: scarlet & violet 151": { id: "sv3pt5", name: "151", series: "scarlet & violet", code: "mew" },
+  "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
+};
+
 function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
   if (exactSetName(product, candidate)) return true;
   const expansion = object(candidate.expansion);
-  // Verified provider-specific label for 151; do not remove arbitrary set or series prefixes.
-  return game === "pokemon" && identity(product.setName) === "sv: scarlet & violet 151"
-    && identity(expansion.id) === "sv3pt5" && identity(expansion.name) === "151"
-    && identity(expansion.series) === "scarlet & violet" && identity(expansion.code) === "mew"
+  const alias = POKEMON_SET_ALIASES[identity(product.setName)];
+  // Only verified provider-specific labels; never remove arbitrary set or series prefixes.
+  return game === "pokemon" && Boolean(alias)
+    && identity(expansion.id) === alias.id && identity(expansion.name) === alias.name
+    && identity(expansion.series) === alias.series && identity(expansion.code) === alias.code
     && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
     && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
 }

@@ -87,7 +87,8 @@ initial QR registration.
 
 Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
-the saved number, and recognizes the verified Scarlet & Violet 151 set label.
+the saved number, and recognizes the verified Scarlet & Violet 151 and Scarlet &
+Violet Promo Cards set labels.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
 named editions remain distinct. English language, collector number, condition,
