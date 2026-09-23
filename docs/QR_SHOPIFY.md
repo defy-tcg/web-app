@@ -110,7 +110,16 @@ initial QR registration.
 
 Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
-the saved number. English Pokémon set labels such as **SV: Black Bolt** match
+the saved number. It also recognizes Pokémon's **Full Art**, **Alternate Full
+Art**, **Alt Full Art**, **Alternate Art**, and **Alt Art** name annotations
+(including their **Alternate Art Secret** forms),
+including when the annotation and collector number appear in either order.
+For example, **Umbreon V (Alternate Full Art)** can match Scrydex's **Umbreon V**
+only when the exact TCGplayer ID, collector number, set, language, finish, and
+condition confirm that printing. A regular-art card cannot supply its price.
+Other parenthetical labels, such as Promo, First Edition, or stamped editions,
+remain part of the required identity instead of being removed indiscriminately.
+English Pokémon set labels such as **SV: Black Bolt** match
 Scrydex's **Black Bolt** automatically when their exact set title, series prefix,
 and marketplace ID agree. Known series prefixes (SV, SWSH, SM, XY, BW, ME) and
 full series names are supported; a numbered prefix must also identify the same

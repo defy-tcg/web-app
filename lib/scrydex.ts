@@ -144,18 +144,27 @@ function productNameWithoutGame(product: ScrydexProduct) {
   return name;
 }
 
-function nameWithoutArtAnnotation(name: string) {
-  return name.replace(/\s*\((?:Alternate Art|Alt Art)\)\s*$/i, "");
+function nameWithoutArtAnnotation(name: string, pokemonSingle: boolean) {
+  // These are catalog art descriptions, not card-name or edition annotations.
+  // Never discard arbitrary parentheses such as Promo, First Edition or stamps.
+  const annotation = pokemonSingle
+    ? /\s*\((?:(?:Alternate|Alt)(?: Full)? Art(?: Secret)?|Full Art)\)\s*$/i
+    : /\s*\((?:Alternate Art|Alt Art)\)\s*$/i;
+  return name.replace(annotation, "");
 }
 
 function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
   const name = productNameWithoutGame(product);
-  const names = new Set([name, nameWithoutArtAnnotation(name)]);
-  if (game === "pokemon" && identity(product.productType) === "single") {
-    for (const value of [...names]) {
-      const suffix = /\s+-\s+([a-z0-9]+(?:\s*\/\s*[a-z0-9]+)?)$/i.exec(value);
-      if (suffix && /\d/.test(suffix[1]) && numberKey(suffix[1]) === numberKey(product.cardNumber)) names.add(value.slice(0, suffix.index));
-    }
+  const pokemonSingle = game === "pokemon" && identity(product.productType) === "single";
+  if (!pokemonSingle) return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
+  const names = new Set([name]);
+  // Visit newly added aliases too: TCGplayer can put the art description before
+  // or after the collector number. Each removal strictly shortens the name.
+  for (const value of names) {
+    const aliases = [nameWithoutArtAnnotation(value, true)];
+    const suffix = /\s+-\s+([a-z0-9]+(?:\s*\/\s*[a-z0-9]+)?)$/i.exec(value);
+    if (suffix && /\d/.test(suffix[1]) && numberKey(suffix[1]) === numberKey(product.cardNumber)) aliases.push(value.slice(0, suffix.index));
+    for (const alias of aliases) if (alias && alias.length < value.length) names.add(alias);
   }
   return [...names].filter(Boolean);
 }
