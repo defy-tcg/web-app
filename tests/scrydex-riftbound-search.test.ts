@@ -166,3 +166,18 @@ test("incomplete or failed Riftbound searches stop without retries or credential
     assert.equal(calls, 1);
   }
 });
+
+test("hyphenated Riftbound names also retrieve by exact set and number in the same request", async t => {
+  config(t);let calls=0;
+  const saved={...product,name:"Thousand-Tailed Watcher",cardNumber:"116/298",tcgplayerId:652898};
+  const entry={...candidate(),id:"OGN-116",name:"Thousand-tailed Watcher",number:"116",printed_number:"116/298",
+    variants:[{name:"foil",marketplaces:[{name:"tcgplayer",product_id:"652898"}],prices:[{type:"raw",condition:"NM",currency:"USD",market:20.13}]}]};
+  const result=await resolveScrydexPrice(saved,{fetch:async input=>{
+    calls++;const query=new URL(String(input)).searchParams.get("q")!;
+    assert.ok(query.includes('(number:"116") AND (expansion.name:"Origins" OR expansion.code:"Origins" OR expansion.id:"Origins") AND language_code:EN'));
+    return Response.json({data:[entry],total_count:1});
+  }});
+  assert.equal(calls,1);assert.equal(result.cents,2013);
+  assert.throws(()=>selectScrydexPrice({...saved,name:"Different Watcher"},[entry]),errorCode("not_found"));
+  assert.throws(()=>selectScrydexPrice({...saved,cardNumber:"116/221"},[entry]),errorCode("not_found"));
+});

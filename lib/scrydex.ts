@@ -424,6 +424,12 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
     ? [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
     : englishPokemon || englishRiftbound ? [`((${namesQuery}) AND (${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:EN)`]
       : names.map((name) => `!name:${queryLiteral(name)}`);
+  if (englishRiftbound) {
+    // Scrydex's name index can also miss hyphenated words. A bounded set and
+    // collector lookup supplies candidates without changing exact selection.
+    const setQuery = ["expansion.name", "expansion.code", "expansion.id"].map(field => `${field}:${queryLiteral(product.setName)}`).join(" OR ");
+    clauses.push(`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND (${setQuery}) AND language_code:EN)`);
+  }
   if (hasMarketplaceId) {
     clauses.push(`variants.marketplaces.product_id:${queryLiteral(String(product.tcgplayerId))}`);
   }
