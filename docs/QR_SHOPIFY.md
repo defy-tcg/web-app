@@ -85,6 +85,15 @@ publishing a free item. Entered acquisition cost remains separate from market
 price. Existing price-refresh and Defy Pricing behavior remain separate from
 initial QR registration.
 
+Pokémon imports can use different catalog labels from Scrydex. The matcher
+recognizes a trailing collector number in the card name only when it agrees with
+the saved number, and recognizes the verified Scarlet & Violet 151 set label.
+These name/set aliases require the exact TCGplayer ID on the selected Scrydex
+variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
+named editions remain distinct. English language, collector number, condition,
+and a positive USD market quote still have to match. A failed link keeps the
+original QR and starting receipt for a safe retry after matching is corrected.
+
 ## Recovery and status
 
 The authenticated save routes retain the Defy record before attempting Shopify.

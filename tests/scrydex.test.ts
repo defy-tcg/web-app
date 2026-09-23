@@ -19,6 +19,19 @@ function candidate(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+const pokemonProduct: ScrydexProduct = {
+  name: "Nidoking - 174/165", game: "Pokémon", setName: "SV: Scarlet & Violet 151", cardNumber: "174/165",
+  productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 517029,
+};
+function pokemonCandidate(overrides: Record<string, unknown> = {}) {
+  // Identity/finish/price fields verified against Scrydex's English sv3pt5-174 response.
+  return candidate({
+    id: "sv3pt5-174", name: "Nidoking", number: "174", printed_number: "174/165",
+    expansion: { id: "sv3pt5", name: "151", series: "Scarlet & Violet", code: "MEW", printed_total: 165, language: "English", language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [price({ market: 17.02 })] }],
+    ...overrides,
+  });
+}
 function errorCode(code: ScrydexErrorCode) {
   return (error: unknown) => error instanceof ScrydexError && error.code === code;
 }
@@ -123,6 +136,53 @@ test("TCGplayer marketplace ID can confirm an explicit art annotation but cannot
   assert.throws(() => selectScrydexPrice({ ...withId, setName: "Different" }, [entry]), errorCode("not_found"));
   assert.throws(() => selectScrydexPrice({ ...withId, name: "A different card" }, [entry]), errorCode("not_found"));
   assert.throws(() => selectScrydexPrice({ ...product, tcgplayerId: 456 }, [entry]), errorCode("price_unavailable"));
+});
+
+test("Pokémon's numbered name and verified 151 set label match the exact Nidoking printing", () => {
+  const result = selectScrydexPrice(pokemonProduct, [pokemonCandidate()]);
+  assert.equal(result.scrydexId, "sv3pt5-174"); assert.equal(result.cents, 1702); assert.equal(result.variation, "holofoil / NM");
+  assert.equal(selectScrydexPrice({ ...pokemonProduct, name: "Pokémon: Nidoking - 174/165" }, [pokemonCandidate()]).cents, 1702);
+  assert.equal(selectScrydexPrice({ ...pokemonProduct, name: "Nidoking - 0174/0165" }, [pokemonCandidate()]).cents, 1702);
+  for (const patch of [
+    { name: "Nidoking - 175/165" }, { name: "Nidoking - 174/166" }, { name: "Nidoking - 174a/165" }, { name: "Nidoqueen - 174/165" },
+    { name: "Nidoking (Promo) - 174/165" }, { cardNumber: "174/166" }, { cardNumber: "174a/165" },
+    { tcgplayerId: 516024 }, { tcgplayerId: undefined }, { tcgplayerId: null }, { tcgplayerId: 0 },
+    { setName: "SV: Scarlet & Violet 152" }, { setName: "SWSH: Scarlet & Violet 151" }, { game: "Riftbound" },
+  ]) assert.throws(() => selectScrydexPrice({ ...pokemonProduct, ...patch }, [pokemonCandidate()]), errorCode("not_found"));
+});
+
+test("Pokémon aliases require verified provider set, language, collector and selected-variant identity", () => {
+  const entry = pokemonCandidate();
+  for (const expansion of [
+    { ...entry.expansion, id: "other" }, { ...entry.expansion, name: "other" }, { ...entry.expansion, series: "Sword & Shield" },
+    { ...entry.expansion, code: "other" }, { ...entry.expansion, language_code: "JA" }, { ...entry.expansion, is_online_only: true },
+  ]) assert.throws(() => selectScrydexPrice(pokemonProduct, [pokemonCandidate({ expansion })]), errorCode("not_found"));
+  for (const patch of [{ printed_number: "174/166" }, { printed_number: "174a/165" }, { language_code: "JA", language: "Japanese" }, { variants: [{ name: "holofoil", prices: [price()] }] }]) {
+    assert.throws(() => selectScrydexPrice(pokemonProduct, [pokemonCandidate(patch)]), errorCode("not_found"));
+  }
+  const wrongFinishIdentity = pokemonCandidate({ variants: [
+    { name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "516024" }], prices: [price()] },
+    { name: "reverseHolofoil", marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [price()] },
+  ] });
+  for (const name of [pokemonProduct.name, "Nidoking"]) {
+    assert.throws(() => selectScrydexPrice({ ...pokemonProduct, name }, [wrongFinishIdentity]), errorCode("price_unavailable"));
+  }
+  assert.throws(() => selectScrydexPrice(pokemonProduct, [entry, entry]), errorCode("ambiguous"));
+  assert.throws(() => selectScrydexPrice({ ...pokemonProduct, condition: "Lightly Played" }, [entry]), errorCode("price_unavailable"));
+});
+
+test("plain holofoil aliases preserve reverse finishes and named Pokémon editions", () => {
+  for (const [saved, provider] of [["Foil", "holofoil"], ["Holofoil", "foil"], ["Reverse Holo", "reverseHolofoil"], ["Reverse Holofoil", "reverseHolo"]]) {
+    const entry = pokemonCandidate({ variants: [{ name: provider, marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [price({ market: 17.02 })] }] });
+    assert.equal(selectScrydexPrice({ ...pokemonProduct, finish: saved }, [entry]).cents, 1702);
+    assert.throws(() => selectScrydexPrice({ ...pokemonProduct, finish: saved.startsWith("Reverse") ? "Foil" : "Reverse Holo" }, [entry]), errorCode("price_unavailable"));
+  }
+  for (const name of ["unlimitedHolofoil", "firstEditionHolofoil", "firstEditionShadowlessHolofoil", "reverseHolofoil", "stampedHolofoil", "pokeballHolofoil"]) {
+    const entry = pokemonCandidate({ variants: [{ name, marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [price()] }] });
+    assert.throws(() => selectScrydexPrice(pokemonProduct, [entry]), errorCode("price_unavailable"));
+  }
+  const duplicate = pokemonCandidate({ variants: ["foil", "holofoil"].map(name => ({ name, marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [price()] })) });
+  assert.throws(() => selectScrydexPrice(pokemonProduct, [duplicate]), errorCode("ambiguous"));
 });
 
 test("sealed supports only documented games, exact names and sets, unopened condition and explicit editions", () => {
@@ -243,6 +303,28 @@ test("alternate-art search never removes an annotation without a valid marketpla
     };
     await assert.rejects(resolveScrydexPrice({ ...product, name: "Void Gate (Alternate Art)", tcgplayerId }, { fetch: fetcher }), errorCode("not_found"));
     assert.equal(calls, 1);
+  }
+});
+
+test("Pokémon lookup includes its verified collector-free name in one bounded search", async (t) => {
+  config(t);
+  let calls = 0;
+  const fetcher: typeof fetch = async (input) => {
+    calls++;
+    const url = new URL(String(input)); const q = url.searchParams.get("q") ?? "";
+    assert.equal(url.pathname, "/pokemon/v1/cards"); assert.equal(url.searchParams.get("page_size"), "100"); assert.equal(url.searchParams.get("page"), "1");
+    assert.ok(q.includes('variants.marketplaces.product_id:"517029"'));
+    const data = q.includes('!name:"Nidoking"') ? [pokemonCandidate(), pokemonCandidate({ id: "sv3pt5-34", number: "34", printed_number: "034/165" })] : [];
+    return Response.json({ data, total_count: data.length });
+  };
+  assert.equal((await resolveScrydexPrice(pokemonProduct, { fetch: fetcher })).cents, 1702); assert.equal(calls, 1);
+  for (const patch of [{ tcgplayerId: undefined }, { name: "Nidoking - 174/166" }, { game: "Riftbound" }]) {
+    let requests = 0;
+    const noAlias: typeof fetch = async input => {
+      requests++; assert.equal((new URL(String(input)).searchParams.get("q") ?? "").includes('!name:"Nidoking"'), false);
+      return Response.json({ data: [], total_count: 0 });
+    };
+    await assert.rejects(resolveScrydexPrice({ ...pokemonProduct, ...patch }, { fetch: noAlias }), errorCode("not_found")); assert.equal(requests, 1);
   }
 });
 

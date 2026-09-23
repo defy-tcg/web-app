@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
-import { ScrydexError } from "../lib/scrydex.ts";
+import { ScrydexError, selectScrydexPrice } from "../lib/scrydex.ts";
 
 const card: SkuLabelShopifyProduct = { id: 77, sku: "DEFY-9775456393", name: "Time Warp", game: "Magic: The Gathering", setName: "Test set", cardNumber: "122", condition: "Near Mint", finish: "Foil", tcgplayerId: 652905, costCents: 0, listPriceCents: 0, quantity: 0, initialQuantity: 0 };
 type Barcode = { value: string; type: string | null };
@@ -155,6 +155,59 @@ test("lost stock response replays its identical idempotent receipt without doubl
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending"); assert.equal(f.quantityAdded(), 4);
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready"); assert.equal(f.quantityAdded(), 4);
   const calls = f.calls.filter(call => call.name === "QrLinkInitialStock"); assert.equal(calls.length, 2); assert.deepEqual(calls[0].variables, calls[1].variables);
+});
+test("Nidoking's actual Pokémon printing keeps its QR, exact market price, and one-time stock receipt", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 78, sku: "DEFY-3099353165", name: "Nidoking - 174/165", game: "Pokémon",
+    setName: "SV: Scarlet & Violet 151", cardNumber: "174/165", condition: "Near Mint", finish: "Foil",
+    tcgplayerId: 517029, quantity: 1, initialQuantity: 1,
+  };
+  // Identity and raw prices from the captured English Scrydex 151 response.
+  const expansion = { id: "sv3pt5", name: "151", series: "Scarlet & Violet", code: "MEW", printed_total: 165, language_code: "EN", is_online_only: false };
+  const providerCards = [
+    {
+      id: "sv3pt5-34", name: "Nidoking", number: "34", printed_number: "034/165", language_code: "EN", expansion,
+      variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "516024" }], prices: [{ type: "raw", condition: "NM", currency: "USD", market: 0.28 }] }],
+    },
+    {
+      id: "sv3pt5-174", name: "Nidoking", number: "174", printed_number: "174/165", language_code: "EN", expansion,
+      variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "517029" }], prices: [
+        { type: "raw", condition: "NM", currency: "USD", market: 17.02 },
+        { type: "raw", condition: "LP", currency: "USD", market: 16.74 },
+      ] }],
+    },
+  ];
+  const f = fixture({ failAfterStock: true });
+  f.deps.resolvePrice = async product => {
+    const quote = selectScrydexPrice(product, providerCards);
+    assert.equal(quote.scrydexId, "sv3pt5-174");
+    assert.equal(quote.variation, "holofoil / NM");
+    assert.equal(quote.cents, 1702);
+    return quote;
+  };
+
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending");
+  const variant = structuredClone(f.product().variants.nodes[0]);
+  assert.equal(variant.price, "17.02", "Pokémon does not receive the Riftbound markup");
+  assert.equal(variant.barcode, input.sku);
+  assert.equal(f.quantityAdded(), 1);
+
+  const retried = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(retried.status, "ready");
+  assert.equal(retried.priceCents, 1702);
+  assert.equal(retried.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify({ ...input, quantity: 0 }, f.deps)).status, "ready");
+  assert.equal(f.product().variants.nodes.length, 1);
+  assert.equal(f.product().variants.nodes[0].id, variant.id);
+  assert.equal(f.product().variants.nodes[0].sku, variant.sku);
+  assert.deepEqual(f.product().variants.nodes[0].barcodes.nodes, [{ value: input.sku, type: null }]);
+  assert.equal(f.product().variants.nodes[0].price, "17.02");
+  assert.equal(f.product().variants.nodes[0].inventoryQuantity, 1);
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(stockCalls.length, 2);
+  assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
 });
 test("uncertain stock outside Shopify replay window fails closed", async () => {
   const f = fixture({ failAfterStock: true }); const input = { ...card, initialQuantity: 4 };

@@ -68,7 +68,8 @@ function identity(value: unknown) { return text(value).normalize("NFKC").replace
 function array(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
 function finishKey(value: unknown) {
   const key = identity(value).replace(/[\s-]/g, "");
-  return key === "nonfoil" ? "normal" : key;
+  // The QR importer uses these same plain-finish aliases; named editions stay distinct.
+  return key === "nonfoil" ? "normal" : key === "holofoil" ? "foil" : key === "reverseholofoil" ? "reverseholo" : key;
 }
 function numberKey(value: unknown) {
   return identity(value).replace(/\s+/g, "").replace(/(^|[-/])0+(?=\d)/g, "$1");
@@ -131,15 +132,42 @@ function nameWithoutArtAnnotation(name: string) {
   return name.replace(/\s*\((?:Alternate Art|Alt Art)\)\s*$/i, "");
 }
 
+function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
+  const name = productNameWithoutGame(product);
+  const names = new Set([name, nameWithoutArtAnnotation(name)]);
+  if (game === "pokemon" && identity(product.productType) === "single") {
+    for (const value of [...names]) {
+      const suffix = /\s+-\s+([a-z0-9]+(?:\s*\/\s*[a-z0-9]+)?)$/i.exec(value);
+      if (suffix && /\d/.test(suffix[1]) && numberKey(suffix[1]) === numberKey(product.cardNumber)) names.add(value.slice(0, suffix.index));
+    }
+  }
+  return [...names].filter(Boolean);
+}
+
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
   const name = productNameWithoutGame(product);
   if (identity(candidateName(candidate, game)) === identity(name)) return true;
-  // TCGplayer can append an art label that Scrydex represents in its variant instead.
-  // Only the exact marketplace ID permits removing that explicit annotation.
-  const baseName = nameWithoutArtAnnotation(name);
-  return baseName !== name && identity(baseName) === identity(candidateName(candidate, game))
+  // TCGplayer can append an art label or Pokémon collector number absent from Scrydex's name.
+  // Only the exact marketplace ID permits removing those verified annotations.
+  return tcgplayerNameAliases(product, game).some(alias => identity(alias) === identity(candidateName(candidate, game)))
     && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
     && array(candidate.variants).map(object).some((variant) => marketplaceId(variant, product.tcgplayerId!));
+}
+
+function exactSetName(product: ScrydexProduct, candidate: ObjectValue) {
+  const expansion = object(candidate.expansion);
+  return [expansion.name, expansion.code, expansion.id].some(value => identity(value) === identity(product.setName));
+}
+
+function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
+  if (exactSetName(product, candidate)) return true;
+  const expansion = object(candidate.expansion);
+  // Verified provider-specific label for 151; do not remove arbitrary set or series prefixes.
+  return game === "pokemon" && identity(product.setName) === "sv: scarlet & violet 151"
+    && identity(expansion.id) === "sv3pt5" && identity(expansion.name) === "151"
+    && identity(expansion.series) === "scarlet & violet" && identity(expansion.code) === "mew"
+    && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
+    && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
 }
 
 function matchesNumber(number: string, candidate: ObjectValue) {
@@ -174,14 +202,13 @@ function safeImage(images: unknown): string | undefined {
  */
 export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[]): ScrydexPrice {
   const spec = productSpec(product);
-  const wantedSet = identity(product.setName);
   const matches = candidates.map(object).filter((candidate) => {
     const expansion = object(candidate.expansion);
     return text(candidate.id) && english(candidate)
       && candidate.is_online_only !== true && expansion.is_online_only !== true
       && expansion.is_foreign_only !== true
       && verifiedName(product, candidate, spec.game)
-      && [expansion.name, expansion.code, expansion.id].some((value) => identity(value) === wantedSet)
+      && verifiedSetName(product, candidate, spec.game)
       && (spec.sealed || matchesNumber(product.cardNumber, candidate));
   });
   if (!matches.length) throw new ScrydexError("not_found", "No exact English Scrydex match for this name, set, and collector number.");
@@ -189,7 +216,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const candidate = matches[0];
   const variants = array(candidate.variants).map(object).filter((variant) => {
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (identity(candidateName(candidate, spec.game)) !== identity(productNameWithoutGame(product))) {
+    if (identity(candidateName(candidate, spec.game)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");
@@ -228,10 +255,9 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   if (spec.game === "lorcana" && names[0].includes(" - ")) names.push(names[0].split(" - ")[0]);
   const hasMarketplaceId = Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0;
   if (hasMarketplaceId) {
-    // Some searches do not index marketplace IDs, and Scrydex omits TCGplayer's art suffix.
+    // Some searches do not index marketplace IDs, and Scrydex omits TCGplayer annotations.
     // Candidate selection still requires the exact marketplace ID and printing metadata.
-    const baseName = nameWithoutArtAnnotation(productNameWithoutGame(product));
-    if (baseName && !names.includes(baseName)) names.push(baseName);
+    for (const alias of tcgplayerNameAliases(product, spec.game)) if (!names.includes(alias)) names.push(alias);
   }
   const clauses = names.map((name) => `!name:${queryLiteral(name)}`);
   if (hasMarketplaceId) {
