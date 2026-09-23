@@ -11,7 +11,7 @@ type Product = { id: string; status: string; pos: boolean; catalogId: { value: s
 type Fields = { namespace: string; key: string; value: string; compareDigest?: string | null };
 type VariantInput = { id?: string; barcodes?: { value: string; type?: string }[]; price?: string; inventoryPolicy?: string; inventoryItem?: { sku?: string; tracked?: boolean }; metafields?: Fields[]; optionValues?: { optionName: string; name: string }[] };
 type CatalogType = "app" | "market" | "company" | "none";
-function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean; channels?: { id: string; type: CatalogType }[]; incompleteChannels?: CatalogType; unpublishFailure?: "error" | "unconfirmed" | "response-loss"; changedPolicyIdentity?: boolean } = {}) {
+function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean; channels?: { id: string; type: CatalogType }[]; incompleteChannels?: CatalogType; unpublishFailure?: "error" | "unconfirmed" | "response-loss"; changedPolicyIdentity?: boolean; websiteChannel?: "missing" | "ambiguous" | "incomplete" | "same-as-pos" | "legacy"; websiteFailure?: "error" | "unconfirmed" | "response-loss"; changedWebsiteIdentity?: boolean } = {}) {
   let time = 1_800_000_000_000;
   let product = options.starting ? structuredClone(options.starting) : null;
   let serial = 0;
@@ -19,8 +19,9 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
   const calls: { name: string; variables: Record<string, unknown> }[] = [];
   const adjustments = new Map<string, string>();
   const channels = new Map((options.channels ?? []).map(channel => [channel.id, channel.type]));
+  const website = { product: false, variants: new Set<string>() };
   let quantityAdded = 0;
-  let failedCreate = false, failedStock = false, failedPublish = false, failedAdopt = false, failedUnpublish = false;
+  let failedCreate = false, failedStock = false, failedPublish = false, failedAdopt = false, failedUnpublish = false, failedWebsite = false;
   const clone = <T>(value: T) => structuredClone(value);
   const variant = (id: string, opts = [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }]): Variant => ({ id, sku: null, barcode: null, barcodes: { nodes: [], pageInfo: { hasNextPage: false } }, price: "0.00", inventoryQuantity: 0, inventoryPolicy: "DENY", inventoryItem: { id: `gid://shopify/InventoryItem/${id.split("/").at(-1)}`, tracked: false }, selectedOptions: opts, pos: false, qrIdentity: null });
   const deps: SkuLabelShopifyDependencies = {
@@ -35,7 +36,29 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
         case "QrLinkPreflight": result = { shop: { id: "gid://shopify/Shop/1", currencyCode: "USD", receiving: { value: "{}", namespace: "app--1--receiving" } }, location: { isActive: true }, currentAppInstallation: { accessScopes: (options.missingScopes ? ["write_products", "write_inventory"] : ["write_products", "write_inventory", "write_publications"]).map(handle => ({ handle })) } }; break;
         case "QrLinkStatusConnection": result = { currentAppInstallation: { accessScopes: (options.missingScopes ? ["write_products", "write_inventory"] : ["write_products", "write_inventory", "write_publications"]).map(handle => ({ handle })) } }; break;
         case "QrLinkCatalogScan": result = { products: { nodes: product ? [current()] : [], pageInfo: { hasNextPage: false, endCursor: null } } }; break;
-        case "QrLinkPublications": result = { publications: { nodes: [{ id: "gid://shopify/Publication/2", name: "Point of Sale", catalog: null }], pageInfo: { hasNextPage: false } } }; break;
+        case "QrLinkPublications": result = { publications: { nodes: [
+          { id: "gid://shopify/Publication/2", name: "Point of Sale", catalog: options.websiteChannel === "same-as-pos" ? { title: "Defy TCG website" } : null },
+          ...(options.websiteChannel === "missing" || options.websiteChannel === "same-as-pos" ? [] : [{ id: options.websiteChannel === "legacy" ? "gid://shopify/Publication/202600611926" : "gid://shopify/Publication/30", name: options.websiteChannel === "legacy" ? "Headless" : "Defy TCG website", catalog: null }]),
+          ...(options.websiteChannel === "ambiguous" ? [{ id: "gid://shopify/Publication/31", name: "Defy TCG website", catalog: null }] : []),
+        ], pageInfo: { hasNextPage: options.websiteChannel === "incomplete" } } }; break;
+        case "QrLinkWebsiteAvailability": {
+          const value = product?.variants.nodes.find(item => item.id === variables.variant);
+          result = { product: product ? { ...current(), website: website.product } : null, variant: value ? { ...clone(value), ...(options.changedWebsiteIdentity ? { qrIdentity: { value: "changed-identity" } } : {}), website: website.variants.has(value.id), product: { id: product!.id } } : null }; break;
+        }
+        case "QrLinkWebsitePublish":
+        case "QrLinkWebsitePublishVariant": {
+          assert.deepEqual(variables.input, [{ publicationId: options.websiteChannel === "legacy" ? "gid://shopify/Publication/202600611926" : "gid://shopify/Publication/30" }]);
+          if (options.websiteFailure === "error") result = { publishablePublish: { userErrors: [{ message: "Publication rejected" }] } };
+          else {
+            if (options.websiteFailure !== "unconfirmed") {
+              if (name === "QrLinkWebsitePublish") { assert.equal(variables.id, product!.id); website.product = true; }
+              else { assert.ok(product!.variants.nodes.some(item => item.id === variables.id)); website.variants.add(String(variables.id)); }
+            }
+            if (options.websiteFailure === "response-loss" && !failedWebsite) { failedWebsite = true; throw new Error("website publish response lost"); }
+            result = { publishablePublish: { userErrors: [] } };
+          }
+          break;
+        }
         case "QrLinkChannelPolicy": {
           for (const type of ["APP", "MARKET", "COMPANY_LOCATION", "NONE"]) assert.ok(query.includes(`catalogType: ${type}`));
           assert.equal(query.match(/onlyPublished: false/g)?.length, 4, "Scheduled publications must also be checked");
@@ -140,7 +163,7 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
       return clone(result) as T;
     },
   };
-  return { deps, calls, journals, channels, product: () => product!, quantityAdded: () => quantityAdded, advance: (amount: number) => { time += amount; } };
+  return { deps, calls, journals, channels, website, product: () => product!, quantityAdded: () => quantityAdded, advance: (amount: number) => { time += amount; } };
 }
 function existing(overrides: Partial<Variant> = {}): Product {
   return { id: "gid://shopify/Product/12", status: "ACTIVE", pos: true, catalogId: { value: "single:tcgplayer:printing:652905" }, sourceId: { value: "652905" }, options: [{ name: "Condition" }, { name: "Finish" }, { name: "Language" }], variants: { nodes: [{ id: "gid://shopify/ProductVariant/123", sku: card.sku, barcode: "9780262033848", barcodes: { nodes: [{ value: "9780262033848", type: "ISBN" }], pageInfo: { hasNextPage: false } }, price: "50.00", inventoryQuantity: 7, inventoryPolicy: "DENY", inventoryItem: { id: "gid://shopify/InventoryItem/1", tracked: true }, selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }], pos: true, qrIdentity: null, ...overrides }], pageInfo: { hasNextPage: false, endCursor: null } } };
@@ -444,6 +467,89 @@ test("non-Pokémon QR links preserve their other publications and never invoke t
     assert.equal((await getSkuLabelShopifyStatuses([input], f.deps))[0].status, "ready");
     assert.ok(f.channels.has("gid://shopify/Publication/3"));
     assert.ok(!f.calls.some(call => ["QrLinkChannelPolicy", "QrLinkInStoreOnly"].includes(call.name)));
+  }
+});
+test("Riftbound QR links publish the exact product and variant to the website without adding other channels", async () => {
+  const inputs = [
+    { ...card, game: "Riftbound", initialQuantity: 2 },
+    { ...card, game: "Riftbound TCG", tcgplayerId: null, listPriceCents: 5000, initialQuantity: 2 },
+    { ...card, game: "riftbound league of legends trading card game", finish: "Etched Foil", initialQuantity: 2 },
+  ];
+  for (const input of inputs) {
+    const f = fixture();
+    const result = await linkSkuLabelToShopify(input, f.deps);
+    assert.equal(result.status, "ready"); assert.match(result.message, /Defy website/);
+    assert.equal(result.priceCents, input.tcgplayerId ? 5090 : 5000);
+    assert.equal(f.website.product, true); assert.deepEqual([...f.website.variants], [result.variantId]);
+    assert.deepEqual(f.calls.filter(call => call.name === "QrLinkWebsitePublish" || call.name === "QrLinkWebsitePublishVariant").map(call => call.variables.id), [result.productId, result.variantId]);
+    assert.equal(f.quantityAdded(), 2);
+    const before = f.calls.length;
+    assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+    assert.equal((await readSkuLabelStockTarget(input, f.deps)).availableQuantity, 2);
+    assert.equal(f.quantityAdded(), 2);
+    assert.ok(!f.calls.slice(before).some(call => ["QrLinkWebsitePublish", "QrLinkWebsitePublishVariant", "QrLinkInitialStock", "QrLinkCreate"].includes(call.name)));
+  }
+});
+test("POS-ready Riftbound links with a missing website product or excluded variant become pending and repair without receiving stock again", async () => {
+  for (const missing of ["product", "variant"] as const) {
+    const f = fixture(), input = { ...card, game: "Riftbound", initialQuantity: 3 };
+    const first = await linkSkuLabelToShopify(input, f.deps);
+    assert.equal(first.status, "ready");
+    if (missing === "product") f.website.product = false; else f.website.variants.clear();
+    const before = f.calls.length;
+    const [status] = await getSkuLabelShopifyStatuses([input], f.deps);
+    assert.equal(status.status, "pending"); assert.match(status.message, /not available on the Defy website/);
+    await assert.rejects(readSkuLabelStockTarget(input, f.deps), /not available on the Defy website/);
+    assert.ok(!f.calls.slice(before).some(call => ["QrLinkWebsitePublish", "QrLinkWebsitePublishVariant", "QrLinkInitialStock"].includes(call.name)), "Status and stock checks stay read-only");
+    const repaired = await linkSkuLabelToShopify(input, f.deps);
+    assert.equal(repaired.status, "ready"); assert.equal(repaired.variantId, first.variantId);
+    assert.equal(f.quantityAdded(), 3); assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
+  }
+});
+test("Riftbound website channel must be unique and complete before any card or stock mutation", async () => {
+  for (const websiteChannel of ["missing", "ambiguous", "incomplete", "same-as-pos"] as const) {
+    const f = fixture({ websiteChannel });
+    const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound", initialQuantity: 2 }, f.deps);
+    assert.equal(result.status, "blocked");
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+    assert.ok(!f.calls.some(call => ["SinglesRecordCAS", "QrLinkCreate", "QrLinkInitialStock", "QrLinkWebsitePublish"].includes(call.name)));
+  }
+});
+test("legacy Headless ID is accepted only for the verified Defy store", async () => {
+  const input = { ...card, game: "Riftbound" };
+  const unverified = fixture({ websiteChannel: "legacy" });
+  assert.equal((await linkSkuLabelToShopify(input, unverified.deps)).status, "blocked");
+  const verified = fixture({ websiteChannel: "legacy" });
+  verified.deps.settings.shop = "n4a7aa-fi.myshopify.com";
+  assert.equal((await linkSkuLabelToShopify(input, verified.deps)).status, "ready");
+});
+test("failed website publication never reports ready and a lost response retains the same stock receipt", async () => {
+  const input = { ...card, game: "Riftbound", initialQuantity: 2 };
+  for (const websiteFailure of ["error", "unconfirmed"] as const) {
+    const f = fixture({ websiteFailure });
+    assert.notEqual((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+    assert.notEqual((await getSkuLabelShopifyStatuses([input], f.deps))[0].status, "ready");
+    assert.equal(f.quantityAdded(), 2);
+  }
+  const f = fixture({ websiteFailure: "response-loss" });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending");
+  const original = f.product().variants.nodes[0];
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  assert.equal(f.product().variants.nodes[0].id, original.id); assert.equal(f.quantityAdded(), 2);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
+});
+test("changed exact card identity blocks website publication", async () => {
+  const f = fixture({ changedWebsiteIdentity: true });
+  const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps);
+  assert.equal(result.status, "blocked"); assert.match(result.message, /identity changed/);
+  assert.ok(!f.calls.some(call => call.name.startsWith("QrLinkWebsitePublish")));
+});
+test("Pokémon and other games never acquire a website publication through QR linking", async () => {
+  for (const input of [japaneseCard, { ...card, game: "Pokémon" }, card]) {
+    const f = fixture({ websiteChannel: "missing" });
+    assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+    assert.equal(f.website.product, false); assert.equal(f.website.variants.size, 0);
+    assert.ok(!f.calls.some(call => call.name.startsWith("QrLinkWebsite")));
   }
 });
 test("uncertain stock outside Shopify replay window fails closed", async () => {

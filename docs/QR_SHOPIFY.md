@@ -3,8 +3,10 @@
 Saving a new TCGplayer card or a manual QR card in DefyOS queues its permanent QR
 for Shopify POS. Defy matches the exact existing Shopify card and variant, or
 creates the missing listing, saves the QR as a Shopify barcode, and publishes to
-the **Point of Sale** channel. Pokémon and Pokémon (Japanese) singles are
-**in-store only**: linking removes their existing and scheduled publications from
+the **Point of Sale** channel. Riftbound cards also publish their product and exact
+variant to the **Defy TCG website** Headless channel, including manual cards and
+special finishes. This does not add other online sales channels. Pokémon and
+Pokémon (Japanese) singles are **in-store only**: linking removes their existing and scheduled publications from
 every non-POS catalog, then verifies the result. A public site may display these
 cards through a read-only catalog feed, but they are not published for online
 checkout. Other games keep their existing channel behavior. Production use
@@ -122,8 +124,11 @@ Shopify metafields store identity, mapping, lease, adjustment, and status with
 compare-and-set writes. No Neon schema change is required.
 
 - **Ready:** Shopify confirmed the matching variant, saved barcode, sale price,
-  starting receipt, and POS publication. Pokémon singles also have no current or
-  scheduled non-POS publication.
+  starting receipt, and POS publication. Riftbound also requires live website
+  publication of both the product and exact variant. Missing website publication
+  becomes pending so the existing retry and nightly recovery can restore it using
+  the same QR and stock receipt. Pokémon singles have no current or scheduled
+  non-POS publication.
 - **Pending:** A request is queued, another employee holds its linking lease, or
   Shopify/pricing has not confirmed the result. Retry the same saved QR.
 - **Blocked:** Permissions, pricing, identity, or publication needs correction.

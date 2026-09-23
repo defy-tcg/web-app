@@ -65,6 +65,8 @@ const journalKey = (sku: string) => `qr_${digest(sku).slice(0, 60)}`;
 const lockKey = (printing: string) => `qr_lock_${digest(printing).slice(0, 55)}`;
 const money = (cents: number) => (cents / 100).toFixed(2);
 const inStoreOnly = (product: SkuLabelShopifyProduct) => ["pokemon", "pokemon-japanese"].includes(gameFromAlias(product.game)?.key ?? "");
+const onWebsite = (product: SkuLabelShopifyProduct) => gameFromAlias(product.game)?.key === "riftbound";
+type Publications = { nodes: { id: string; name: string; catalog: { title: string } | null }[]; pageInfo: { hasNextPage: boolean } };
 function priceCents(value: string) { return /^\d+(?:\.\d{1,2})?$/.test(value) ? Math.round(Number(value) * 100) : 0; }
 function check(payload: Payload | null | undefined) {
   if (!payload) pending("Shopify has not confirmed the link. Retry this saved QR code.");
@@ -142,6 +144,36 @@ function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
   return { sku, status: "pending", message: "The QR is saved. Shopify has not confirmed POS readiness yet; retry this same QR code." };
 }
 
+async function websitePublication(deps: SkuLabelShopifyDependencies, known?: Publications): Promise<string> {
+  const publications = known ?? (await deps.graphql<{ publications: Publications }>(`query QrLinkPublications { publications(first: 250, catalogType: APP) { nodes { id name catalog { title } } pageInfo { hasNextPage } } }`)).publications;
+  const matches = publications.nodes.filter(item => item.name === "Defy TCG website" || item.catalog?.title === "Defy TCG website" ||
+    (deps.settings.shop === LEGACY_DEFY_MAPPING.shop && item.id === "gid://shopify/Publication/202600611926"));
+  const pos = publications.nodes.filter(item => item.name === "Point of Sale" || item.catalog?.title === "Point of Sale");
+  if (publications.pageInfo.hasNextPage || matches.length !== 1 || pos.length !== 1 || matches[0].id === pos[0].id || !/^gid:\/\/shopify\/Publication\/\d+$/.test(matches[0].id)) {
+    fail("The Defy website sales channel could not be identified uniquely. Review its Headless channel connection before linking this Riftbound card.");
+  }
+  return matches[0].id;
+}
+
+/** A channel repair must prove the same saved card and exact variant before publishing it. */
+async function websiteAvailable(product: SkuLabelShopifyProduct, record: Pick<Journal, "productId" | "variantId" | "shopifySku" | "publicationId">, deps: SkuLabelShopifyDependencies, website: string): Promise<boolean> {
+  const identity = identityFor(product);
+  type WebsiteProduct = Pick<Product, "id" | "catalogId" | "sourceId" | "manualOrigin" | "variants"> & { website: boolean };
+  const data = await deps.graphql<{ product: WebsiteProduct | null; variant: (Variant & { website: boolean; product: { id: string } }) | null }>(`query QrLinkWebsiteAvailability($id: ID!, $variant: ID!, $pos: ID!, $website: ID!) {
+    product(id: $id) { id website: publishedOnPublication(publicationId: $website)
+      catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value } sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value }
+      manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value } variants(first: 2) { nodes { id } pageInfo { hasNextPage } } }
+    variant: productVariant(id: $variant) { ${V_FIELDS} website: publishedOnPublication(publicationId: $website) product { id } }
+  }`, { id: record.productId, variant: record.variantId, pos: record.publicationId, website });
+  const target = data.product, variant = data.variant;
+  if (!target || target.id !== record.productId || !variant || variant.id !== record.variantId || variant.product.id !== target.id ||
+    variant.sku !== record.shopifySku || variant.qrIdentity?.value !== identity.identity || !matchesSavedVariant(variant, target, identity, deps.settings.shop) ||
+    variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === product.sku)) {
+    fail("The Shopify card identity changed before its website availability could be verified. Review its saved QR link.");
+  }
+  return target!.website === true && variant!.website === true;
+}
+
 /** Include scheduled publications and every catalog type; APP alone omits other checkout catalogs. */
 async function nonPosPublications(product: SkuLabelShopifyProduct, record: Pick<Journal, "productId" | "variantId" | "shopifySku" | "publicationId">, deps: SkuLabelShopifyDependencies): Promise<string[]> {
   const identity = identityFor(product);
@@ -201,6 +233,7 @@ export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, d
     fail("This card is not ready at the configured Shopify POS stock location. Review its saved link before adding stock.");
   }
   if (inStoreOnly(product) && (await nonPosPublications(product, saved, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales before adding stock.");
+  if (onWebsite(product) && !await websiteAvailable(product, saved, deps, await websitePublication(deps))) fail("This Riftbound card is not available on the Defy website. Retry its saved link before adding stock.");
   // A QR moved or copied to another variant must never receive inventory silently.
   const duplicates = await deps.graphql<{ productVariants: { nodes: { id: string; barcodes: Variant["barcodes"] }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrStockScanCode($query: String!) {
     productVariants(first: 10, query: $query) { nodes { id barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } } pageInfo { hasNextPage } }
@@ -222,6 +255,7 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
     const missing = ["write_products", "write_inventory", "write_publications"].filter(scope => !scopes.has(scope));
     if (missing.length) return products.map(product => ({ sku: product.sku, status: "blocked", message: `The QR is saved. Shopify POS linking needs these app permissions: ${missing.join(", ")}. The owner must approve the updated Shopify app permissions.` }));
     const results: SkuLabelShopifyStatus[] = [];
+    let website: Promise<string> | undefined;
     for (let start = 0; start < products.length; start += 20) {
       const batch = products.slice(start, start + 20);
       const fields = batch.map((product, index) => `q${index}: metafield(namespace: "${NAMESPACE}", key: "${journalKey(product.sku)}") { value }`).join("\n");
@@ -267,6 +301,14 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
               results[index] = { ...current, ...safeFailure(product.sku, error), availableQuantity: undefined }; continue;
             }
           }
+          if (onWebsite(product)) {
+            try {
+              website ??= websitePublication(deps);
+              if (!await websiteAvailable(product, record, deps, await website)) pending("This Riftbound card is linked to POS but is not available on the Defy website. Retry its saved link to restore website availability.");
+            } catch (error) {
+              results[index] = { ...current, ...safeFailure(product.sku, error), availableQuantity: undefined }; continue;
+            }
+          }
           results[index] = { ...current, priceCents: priceCents(variant.price), availableQuantity: available, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
         }
       }
@@ -300,10 +342,11 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     if (preflight.shop.currencyCode !== "USD") fail("Shopify POS linking requires the store currency to be USD.");
     const receivingNamespace = preflight.shop.receiving?.namespace || "";
     if (!/^app--\d+--receiving$/.test(receivingNamespace)) fail("Initialize the Defy Shopify receiving connection before linking saved QR codes.");
-    const publications = await graphql<{ publications: { nodes: { id: string; name: string; catalog: { title: string } | null }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrLinkPublications { publications(first: 250, catalogType: APP) { nodes { id name catalog { title } } pageInfo { hasNextPage } } }`);
+    const publications = await graphql<{ publications: Publications }>(`query QrLinkPublications { publications(first: 250, catalogType: APP) { nodes { id name catalog { title } } pageInfo { hasNextPage } } }`);
     const matches = publications.publications.nodes.filter(publication => publication.name === "Point of Sale" || publication.catalog?.title === "Point of Sale");
     if (publications.publications.pageInfo.hasNextPage || matches.length !== 1) fail("Shopify's Point of Sale sales channel could not be identified uniquely. Review the POS channel connection.");
     const pos = matches[0].id;
+    const website = onWebsite(product) ? await websitePublication(deps, publications.publications) : null;
     // Exact unique-ID lookup also verifies the existing identifier definition before writes.
     const byIdentity = async () => (await graphql<{ productByIdentifier: Product | null }>(`query QrLinkByIdentity($identifier: ProductIdentifierInput!, $pos: ID!) { productByIdentifier(identifier: $identifier) { ${P_FIELDS} } }`, { identifier: { customId: { namespace: RECEIVING, key: "catalog_id", value: identity.printing } }, pos })).productByIdentifier;
     let target = await byIdentity();
@@ -579,7 +622,16 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     target = await readProduct(target.id);
     variant = target.variants.nodes.find(item => item.id === record!.variantId);
     if (target.status !== "ACTIVE" || !target.pos || !variant?.pos || !matchesSavedVariant(variant, target, identity, deps.settings.shop) || variant.qrIdentity?.value !== identity.identity || variant.sku !== record.shopifySku || !variant.barcodes.nodes.some(barcode => barcode.value === product.sku) || priceCents(variant.price) !== cents) pending("Shopify is still confirming POS availability. Retry this saved QR code shortly.");
-    record.status = { sku: product.sku, status: "ready", message: "Linked to Shopify POS. Refresh POS before scanning this saved QR.", productId: target.id, variantId: variant!.id,
+    if (website && !await websiteAvailable(product, record, deps, website)) {
+      await renew();
+      const published = await graphql<{ publishablePublish: Payload }>(`mutation QrLinkWebsitePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { message } } }`, { id: target.id, input: [{ publicationId: website }] });
+      check(published.publishablePublish);
+      await renew();
+      const publishedVariant = await graphql<{ publishablePublish: Payload }>(`mutation QrLinkWebsitePublishVariant($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { message } } }`, { id: variant!.id, input: [{ publicationId: website }] });
+      check(publishedVariant.publishablePublish);
+      if (!await websiteAvailable(product, record, deps, website)) pending("Shopify has not confirmed this Riftbound card on the Defy website. Retry the saved QR; its original stock receipt is retained.");
+    }
+    record.status = { sku: product.sku, status: "ready", message: website ? "Linked to Shopify POS and the Defy website. Refresh POS before scanning this saved QR." : "Linked to Shopify POS. Refresh POS before scanning this saved QR.", productId: target.id, variantId: variant!.id,
       adminUrl: `https://${deps.settings.shop}/admin/products/${target.id.split("/").at(-1)}/variants/${variant!.id.split("/").at(-1)}`, priceCents: cents, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
     await save();
     return (await getSkuLabelShopifyStatuses([product], deps))[0];
