@@ -4,7 +4,7 @@ import { resolveScrydexPrice, type ScrydexPrice, type ScrydexProduct } from "../
 import { readRiftboundCatalog } from "../singles/catalog.ts";
 import type { SinglesGraphQL } from "../singles/shopify.ts";
 import { canonicalSinglesCondition, type Catalog } from "../singles/types.ts";
-import { gameFromAlias } from "../tcg-games.ts";
+import { cardLanguageForGame, gameFromAlias } from "../tcg-games.ts";
 
 export class PosPricingError extends Error {
   readonly code: string;
@@ -62,7 +62,8 @@ const finishKey = (value: string) => {
   return key === "nonfoil" ? "normal" : key;
 };
 const conditionKey = (value: string) => canonicalSinglesCondition(value) || (["dm", "damaged"].includes(normalize(value)) ? "Damaged" : normalize(value));
-const languageKey = (value: string) => ["en", "english"].includes(normalize(value)) ? "english" : normalize(value);
+const languageKey = (value: string) => ["en", "english"].includes(normalize(value)) ? "english"
+  : ["ja", "japanese"].includes(normalize(value)) ? "japanese" : normalize(value);
 const numberKey = (value: string) => normalize(value).replace(/\s+/g, "").replace(/(^|[-/])0+(?=\d)/g, "$1");
 function scanCodes(variant: Variant) {
   if (!Array.isArray(variant.barcodes?.nodes) || variant.barcodes.pageInfo?.hasNextPage !== false) {
@@ -147,8 +148,10 @@ async function pricingIdentity(variant: Variant, readCatalog: () => Promise<Cata
   const productType = productKind(product.productType, game);
   if (fallback && productType !== fallback.productType) throw conflict();
   if (received && (gameFromAlias(game)?.key !== "riftbound" || productType !== "Single")) throw conflict();
-  const language = identityValue([option(variant, "Language"), field(product.language), fallbackLanguage], languageKey);
-  if (languageKey(language) !== "english") throw new PosPricingError("LANGUAGE_UNSUPPORTED", "Scrydex POS pricing requires a verified English product.");
+  const selectedLanguage = option(variant, "Language");
+  if (cardLanguageForGame(game) === "Japanese" && !selectedLanguage) throw new PosPricingError("LANGUAGE_UNSUPPORTED", "Japanese pricing requires an explicit matching Shopify language option.");
+  const language = identityValue([selectedLanguage, field(product.language), fallbackLanguage], languageKey);
+  if (languageKey(language) !== languageKey(cardLanguageForGame(game))) throw new PosPricingError("LANGUAGE_UNSUPPORTED", "The verified card game and Shopify language must agree before pricing.");
   const condition = identityValue([option(variant, "Condition"), field(product.condition), fallback?.condition || "", received?.condition || ""], conditionKey);
   const finish = identityValue([option(variant, "Finish"), field(product.finish), fallback?.finish || "", received?.finish || ""], finishKey);
   const name = identityValue([field(product.cardName), fallback?.name || ""]);

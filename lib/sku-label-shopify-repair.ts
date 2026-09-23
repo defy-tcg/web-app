@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { loadSkuLabelProducts } from "./sku-label-inventory-storage.ts";
-import { getSkuLabelShopifyStatuses, linkSkuLabelToShopify } from "./sku-label-shopify.ts";
+import { getSkuLabelShopifyStatuses } from "./sku-label-shopify.ts";
+import { linkSavedSkuProduct } from "./sku-label-shopify-service.ts";
 import { createShopifyGraphQL, ShopifySinglesAdapter } from "./singles/shopify.ts";
 import type { Snapshot } from "./singles/intake.ts";
 
@@ -64,7 +65,7 @@ export async function repairSavedSkuLinks() {
       const statuses = await getSkuLabelShopifyStatuses(products, client);
       return products.map(product => ({ id: product.id,
         ready: statuses.some(status => status.sku === product.sku && status.status === "ready"),
-        link: async () => { await linkSkuLabelToShopify(product, client); },
+        link: async () => { await linkSavedSkuProduct(product, client); },
       }));
     },
   });

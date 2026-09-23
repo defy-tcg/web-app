@@ -107,7 +107,7 @@ function publicError(error: unknown): { code: string; error: string; status: num
       IDENTITY_REQUIRED: ["The Shopify product needs complete card details before it can be priced.", 422],
       PRODUCT_TYPE_REQUIRED: ["The Shopify product must identify whether it is a single or sealed product.", 422],
       PRODUCT_UNAVAILABLE: ["This Shopify product is not available to sell.", 422],
-      LANGUAGE_UNSUPPORTED: ["Automatic Scrydex pricing currently supports English cards only.", 422],
+      LANGUAGE_UNSUPPORTED: ["The card's verified game and Shopify language must agree before automatic pricing.", 422],
       CURRENCY_UNSUPPORTED: ["Automatic Scrydex pricing currently supports USD only.", 422],
       VARIANT_INVALID: ["Shopify did not return a valid variant for this scan.", 502],
       PRICE_UPDATE_UNCONFIRMED: ["Shopify could not confirm the price update. Try the scan again shortly.", 502],

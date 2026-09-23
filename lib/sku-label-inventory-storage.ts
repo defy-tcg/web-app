@@ -2,8 +2,9 @@ import { neon } from "@neondatabase/serverless";
 import type { products } from "../db/schema.ts";
 import { tcgplayerImageUrl } from "./catalog-image.ts";
 import { TCG_GAME_REGISTRY } from "./tcg-games.ts";
+import { isGeneratedSku } from "./sku-labels.ts";
 import { INVENTORY_LABEL_FINISH_ALIASES, inventoryLabelConflictError, inventoryLabelIdentityText, inventoryLabelVariantKey, validateInventoryLabels, validateSkuLabelReservation,
-  type InventoryLabelConflict, type InventoryLabelInput } from "./sku-label-inventory.ts";
+  SkuLabelInventoryError, type InventoryLabelConflict, type InventoryLabelInput } from "./sku-label-inventory.ts";
 
 export type SavedSkuLabelProduct = typeof products.$inferSelect & { imageUrl: string | null };
 export type SaveSkuLabelsResult = { products: SavedSkuLabelProduct[]; createdCount: number; existingCount: number };
@@ -209,6 +210,26 @@ export async function reserveSkuLabel(input: InventoryLabelInput): Promise<Reser
 }
 
 export type ShopifyLinkableSkuProduct = SavedSkuLabelProduct & { initialQuantity: number };
+
+/** Called only after exact TCGplayer category-85 verification during a link attempt. */
+export async function correctLegacyJapaneseSkuGame(product: ShopifyLinkableSkuProduct): Promise<ShopifyLinkableSkuProduct> {
+  if (product.game !== "Other" || product.productType !== "Single" || !isGeneratedSku(product.sku) ||
+    !Number.isSafeInteger(product.id) || product.id <= 0 || !Number.isSafeInteger(product.tcgplayerId) || Number(product.tcgplayerId) <= 0) {
+    throw new SkuLabelInventoryError(409, "The saved card cannot be safely corrected. Reload its original QR and review its catalog details.");
+  }
+  if (!process.env.DATABASE_URL) throw new Error("Inventory database is unavailable.");
+  const sql = neon(process.env.DATABASE_URL);
+  // Compare every identity field to the verified snapshot. Only game is changed;
+  // quantities, prices, costs, timestamps and all inventory receipts are preserved.
+  const rows = await sql.query(`UPDATE products SET game = 'Pokémon (Japanese)'
+    WHERE id = $1 AND sku = $2 AND tcgplayer_id = $3 AND game = 'Other' AND product_type = 'Single'
+      AND name = $4 AND set_name = $5 AND card_number = $6 AND condition = $7 AND finish = $8
+      AND tcgplayer_url IS NOT DISTINCT FROM $9
+    RETURNING *`, [product.id, product.sku, product.tcgplayerId, product.name, product.setName, product.cardNumber,
+    product.condition, product.finish, product.tcgplayerUrl]);
+  if (rows.length !== 1) throw new SkuLabelInventoryError(409, "This saved card changed while its Japanese catalog identity was being verified. Reload and retry its original QR.");
+  return { ...productRecord(rows[0]), initialQuantity: product.initialQuantity };
+}
 
 /** The immutable first receipt, never the current balance, determines Shopify's one-time stock addition. */
 export async function loadSkuLabelProducts(options: { skus?: readonly string[]; afterId?: number; limit?: number } = {}): Promise<ShopifyLinkableSkuProduct[]> {

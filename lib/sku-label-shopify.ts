@@ -1,7 +1,7 @@
 // Server-only Shopify registration of the permanent QR identity saved in Defy.
 import { randomUUID } from "node:crypto";
 import { canonicalInventoryLabelFinish, inventoryLabelIdentityText } from "./sku-label-inventory.ts";
-import { gameFromAlias } from "./tcg-games.ts";
+import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
 import { resolveScrydexPrice, ScrydexError, type ScrydexPrice, type ScrydexProduct } from "./scrydex.ts";
 import { digest, SinglesError, type PlannedSingle } from "./singles/intake.ts";
@@ -79,20 +79,38 @@ function identityFor(product: SkuLabelShopifyProduct) {
   const riftbound = gameFromAlias(product.game)?.key === "riftbound" && source !== null && ["Normal", "Foil"].includes(finish);
   const printing = riftbound ? `single:riftbound:printing:${source}` : source ? `single:tcgplayer:printing:${source}` :
     `single:manual:printing:${digest(JSON.stringify([product.game, product.name, product.setName, product.cardNumber].map(textKey)))}`;
-  const identity = JSON.stringify([printing, condition, textKey(finish), "English"]);
+  const language = cardLanguageForGame(product.game);
+  const identity = JSON.stringify([printing, condition, textKey(finish), language]);
   const sku = riftbound ? `DEFY-RFB-${source}-${finish.toUpperCase()}-EN-${conditions[condition!]}` : product.sku;
-  return { printing, identity, source, riftbound, condition: condition!, finish, sku };
+  return { printing, identity, source, riftbound, condition: condition!, finish, language, sku };
 }
 function optionsFor(identity: ReturnType<typeof identityFor>) {
-  return [{ name: "Condition", value: identity.condition }, { name: "Finish", value: identity.finish === "Normal" ? "Nonfoil" : identity.finish }, { name: "Language", value: "English" }];
+  return [{ name: "Condition", value: identity.condition }, { name: "Finish", value: identity.finish === "Normal" ? "Nonfoil" : identity.finish }, { name: "Language", value: identity.language }];
+}
+function languageMatches(value: string, language: ReturnType<typeof cardLanguageForGame>) {
+  return (language === "Japanese" ? ["ja", "japanese"] : ["en", "english"]).includes(textKey(value));
 }
 function exactOptions(variant: Variant, identity: ReturnType<typeof identityFor>) {
   return variant.selectedOptions.length === 3 && optionsFor(identity).every(expected => variant.selectedOptions.some(actual => {
     if (actual.name !== expected.name) return false;
     if (actual.name === "Condition") return canonicalSinglesCondition(actual.value) === identity.condition;
     if (actual.name === "Finish") return textKey(canonicalInventoryLabelFinish(actual.value)) === textKey(identity.finish);
-    return ["en", "english"].includes(textKey(actual.value));
+    return languageMatches(actual.value, identity.language);
   }));
+}
+function canCorrectPrecreationLanguage(record: Journal | null, product: SkuLabelShopifyProduct, identity: ReturnType<typeof identityFor>) {
+  if (!record || identity.language !== "Japanese" || !identity.source || record.version !== 1 || record.sku !== product.sku ||
+    record.identity !== JSON.stringify([identity.printing, identity.condition, textKey(identity.finish), "English"]) ||
+    record.initialQuantity !== product.initialQuantity || record.owner !== null || record.expiresAt !== 0 ||
+    record.status?.status !== "blocked" || record.status.sku !== product.sku ||
+    (record.stockRequestKey !== undefined && (typeof record.stockRequestKey !== "string" || !record.stockRequestKey.trim()))) return false;
+  // Absence of every intent marker is required; even an unconfirmed create cannot be relabeled.
+  const untouched = [record.productId, record.variantId, record.shopifySku, record.publicationId,
+    record.creationStartedAt, record.stockInventoryItemId, record.stockLocationId, record.adjustmentStartedAt,
+    record.adjustmentId, record.previousIdentity, record.adoptionPending];
+  const status = record.status;
+  return untouched.every(value => value === undefined) && [status.productId, status.variantId, status.adminUrl,
+    status.priceCents, status.checkedAt, status.transferredQuantity, status.availableQuantity].every(value => value === undefined);
 }
 function matchesProductIdentity(product: { catalogId: Field | null; sourceId: Field | null; manualOrigin?: Field | null }, identity: ReturnType<typeof identityFor>) {
   const oldIdentity = identity.riftbound ? `single:riftbound:${identity.source}:${encodeURIComponent(identity.finish)}:English:${conditions[identity.condition]}` : "";
@@ -223,6 +241,7 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
   let leaseName = "";
   let skuLeaseName = "";
   let owner = "";
+  let languageCorrectionPending = false;
   try {
     const identity = identityFor(product);
     const deps: SkuLabelShopifyDependencies = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
@@ -275,10 +294,13 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     const saved = await adapter.read<Journal>(journalKey(product.sku));
     const manualIdentity = identityFor({ ...product, tcgplayerId: null, tcgplayerUrl: null });
     const canAdoptManual = Boolean(identity.source && saved.value?.identity === manualIdentity.identity && !saved.value.previousIdentity);
-    if (saved.value && (saved.value.version !== 1 || (saved.value.identity !== identity.identity && !canAdoptManual) || saved.value.sku !== product.sku)) fail("This saved QR already has a different Shopify card identity. Review its mapping; no duplicate was created.");
+    const canCorrectLanguage = canCorrectPrecreationLanguage(saved.value, product, identity);
+    languageCorrectionPending = canCorrectLanguage;
+    if (saved.value && (saved.value.version !== 1 || (saved.value.identity !== identity.identity && !canAdoptManual && !canCorrectLanguage) || saved.value.sku !== product.sku)) fail("This saved QR already has a different Shopify card identity. Review its mapping; no duplicate was created.");
     if (!Number.isSafeInteger(product.initialQuantity) || product.initialQuantity < 0 || product.initialQuantity > 100_000) fail("This saved card's original starting quantity needs review before Shopify linking.");
     record = saved.value ?? { version: 1, identity: identity.identity, sku: product.sku, owner: null, expiresAt: 0, initialQuantity: product.initialQuantity };
     record.stockRequestKey ??= `defy-qr-${digest(JSON.stringify([deps.settings.shop, product.id, record.identity])).slice(0, 48)}`;
+    if (canCorrectLanguage) record = { ...record, identity: identity.identity, status: { sku: product.sku, status: "pending", message: "Verifying the Japanese card before creating its Shopify link." } };
     if (canAdoptManual && !record.productId) {
       // A lost create response must be reconciled under its ORIGINAL unique ID.
       // Looking only under the new TCGplayer ID would create a second product.
@@ -289,11 +311,16 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     if (canAdoptManual) record = { ...record, identity: identity.identity, previousIdentity: record.identity, adoptionPending: Boolean(record.productId), status: { sku: product.sku, status: "pending", message: "Linking the TCGplayer identity to the existing Shopify card and stock receipt." } };
     if (record.initialQuantity !== product.initialQuantity) fail("The original starting quantity differs from the saved Shopify receipt. Review the receipt; stock was not added again.");
     const save = async () => {
-      const reservation = await adapter!.read<Journal>(leaseName);
-      if (reservation.value?.owner !== owner || reservation.value.expiresAt <= deps.clock()) pending("The Shopify linking reservation expired. Retry this saved QR code.");
+      for (const name of [skuLeaseName, leaseName]) {
+        const reservation = await adapter!.read<Journal>(name);
+        if (reservation.value?.owner !== owner || reservation.value.expiresAt <= deps.clock()) pending("The Shopify linking reservation expired. Retry this saved QR code.");
+      }
       const current = await adapter!.read<Journal>(journalKey(product.sku));
-      if (current.value && current.value.identity !== identity.identity && !(record!.previousIdentity === current.value.identity && canAdoptManual)) fail("The saved Shopify mapping changed during linking. Review this card.");
+      const unchangedLanguageCorrection = languageCorrectionPending && current.digest === saved.digest && canCorrectPrecreationLanguage(current.value, product, identity);
+      if (languageCorrectionPending && !unchangedLanguageCorrection) fail("The saved Shopify mapping changed before its language could be corrected. Retry the saved QR after reviewing its mapping.");
+      if (current.value && current.value.identity !== identity.identity && !(record!.previousIdentity === current.value.identity && canAdoptManual) && !unchangedLanguageCorrection) fail("The saved Shopify mapping changed during linking. Review this card.");
       if (!await adapter!.cas(journalKey(product.sku), current, record!)) pending("The saved Shopify link changed during this request. Retry this QR code.");
+      languageCorrectionPending = false;
     };
     const renew = async () => {
       for (const name of [skuLeaseName, leaseName]) {
@@ -366,12 +393,16 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
       target = await readProduct(mappedId);
     } else if (target) target = await readProduct(target.id);
     if (exact.length && (!target || exact[0].product.id !== target.id || (mappedVariant && exact[0].id !== mappedVariant))) fail("This QR code already belongs to another Shopify product. Review the existing barcode; it was not replaced.");
+    if (identity.language === "Japanese" && target && !target.variants.nodes.some(variant =>
+      variant.selectedOptions.some(option => option.name === "Language" && languageMatches(option.value, "Japanese")))) {
+      fail("The existing Shopify listing does not identify a Japanese card. Review its language before linking this QR; no English listing was changed.");
+    }
     if (!target) {
       await renew();
       if (!record.creationStartedAt) { record.creationStartedAt = deps.clock(); await save(); }
       const title = `${product.name} — ${product.setName} (${product.cardNumber})`;
       const created = await graphql<{ productCreate: Payload & { product: { id: string } | null } }>(`mutation QrLinkCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) { productCreate(product: $product, media: $media) { product { id } userErrors { message } } }`, {
-        product: { title, status: "DRAFT", productType: `${product.game} single`, tags: [product.game, "Singles", "English", ...(identity.source ? [`defy-catalog-${identity.source}`] : [])],
+        product: { title, status: "DRAFT", productType: `${product.game} single`, tags: [product.game, "Singles", identity.language, ...(identity.source ? [`defy-catalog-${identity.source}`] : [])],
           productOptions: optionsFor(identity).map(option => ({ name: option.name, values: [{ name: option.value }] })),
           metafields: [{ namespace: receivingNamespace, key: "catalog_id", value: identity.printing },
             ...(identity.source ? [{ namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(identity.source) }] : []),
@@ -499,7 +530,7 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     return (await getSkuLabelShopifyStatuses([product], deps))[0];
   } catch (error) {
     const status = { ...safeFailure(product.sku, error), ...(record?.productId ? { productId: record.productId } : {}), ...(record?.variantId ? { variantId: record.variantId } : {}) };
-    if (adapter && record) {
+    if (adapter && record && !languageCorrectionPending) {
       try { const reservation = await adapter.read<Journal>(leaseName); const saved = await adapter.read<Journal>(journalKey(product.sku)); if (reservation.value?.owner === owner && saved.value?.identity === record.identity) await adapter.cas(journalKey(product.sku), saved, { ...saved.value, status }); } catch { /* A retry reconciles any unconfirmed status. */ }
     }
     return status;

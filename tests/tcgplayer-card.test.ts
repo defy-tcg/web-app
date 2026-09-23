@@ -45,6 +45,7 @@ test("TCGplayer links return exact card identity through fixed-host requests wit
   const card = await lookupTcgplayerCard(`  ${CARD_URL}  `, mock);
   assert.deepEqual(card, {
     productId: 517045,
+    categoryId: 3,
     name: "Charizard ex - 199/165",
     game: "Pokémon",
     setName: "SV: Scarlet & Violet 151",
@@ -129,6 +130,7 @@ test("sealed products, decks and accessories cannot become singles", async () =>
 test("game mappings prefer registry category IDs, then exact aliases, and preserve unsupported category context", async () => {
   for (const [categoryId, categoryName, expected] of [
     [3, "Pokemon", "Pokémon"],
+    [85, "Pokemon Japan", "Pokémon (Japanese)"],
     [1, "Magic: The Gathering", "MTG"],
     [68, "One Piece Card Game", "One Piece"],
     [89, "Riftbound League of Legends Trading Card Game", "Riftbound"],
@@ -142,6 +144,7 @@ test("game mappings prefer registry category IDs, then exact aliases, and preser
     const mock = fixtures(details({ productLineId: categoryId, productLineName: categoryName }));
     const card = await lookupTcgplayerCard(CARD_URL, mock);
     assert.equal(card.game, expected);
+    assert.equal(card.categoryId, categoryId);
     assert.equal(mock.calls[1].url, `https://tcgcsv.com/tcgplayer/${categoryId}/23237/prices`);
     if (expected === "Other") assert.match(card.warnings.join(" "), /YuGiOh.*Other/);
     else assert.deepEqual(card.warnings, []);

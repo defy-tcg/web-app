@@ -1,7 +1,8 @@
-import { loadSkuLabelProducts } from "./sku-label-inventory-storage.ts";
+import { loadSkuLabelProducts, type ShopifyLinkableSkuProduct } from "./sku-label-inventory-storage.ts";
+import { verifySavedSkuLabelGame } from "./sku-label-game-correction.ts";
 import { SkuLabelInventoryError } from "./sku-label-inventory.ts";
 import { isGeneratedSku } from "./sku-labels.ts";
-import { getSkuLabelShopifyStatuses, linkSkuLabelToShopify, type SkuLabelShopifyStatus } from "./sku-label-shopify.ts";
+import { getSkuLabelShopifyStatuses, linkSkuLabelToShopify, type SkuLabelShopifyDependencies, type SkuLabelShopifyStatus } from "./sku-label-shopify.ts";
 
 export function skuLinkRequestSkus(value: unknown): string[] {
   if (!Array.isArray(value) || !value.length || value.length > 100 || value.some(sku => !isGeneratedSku(sku))) {
@@ -27,6 +28,16 @@ export async function readSavedSkuLinks(skus: readonly string[]): Promise<SkuLab
   });
 }
 
+/** An explicit/background link may repair a verified legacy game; status reads cannot. */
+export async function linkSavedSkuProduct(product: ShopifyLinkableSkuProduct, dependencies?: SkuLabelShopifyDependencies): Promise<SkuLabelShopifyStatus> {
+  try { return await linkSkuLabelToShopify(await verifySavedSkuLabelGame(product), dependencies); }
+  catch (error) {
+    return error instanceof SkuLabelInventoryError
+      ? { sku: product.sku, status: "blocked", message: error.message }
+      : pendingSkuLink(product.sku);
+  }
+}
+
 /** Limit Shopify concurrency and finish each attempt before the server's work budget expires. */
 export async function linkSavedSkuLabels(skus: readonly string[], budgetMs = 240_000): Promise<SkuLabelShopifyStatus[]> {
   const products = await loadSkuLabelProducts({ skus });
@@ -36,8 +47,7 @@ export async function linkSavedSkuLabels(skus: readonly string[], budgetMs = 240
   await Promise.all(Array.from({ length: Math.min(2, products.length) }, async () => {
     while (next < products.length && Date.now() < deadline) {
       const product = products[next++];
-      try { statuses.set(product.sku, await linkSkuLabelToShopify(product)); }
-      catch { statuses.set(product.sku, pendingSkuLink(product.sku)); }
+      statuses.set(product.sku, await linkSavedSkuProduct(product));
     }
   }));
   const known = new Set(products.map(product => product.sku));

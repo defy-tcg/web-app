@@ -1,4 +1,4 @@
-import { gameFromAlias } from "./tcg-games.ts";
+import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 
 /** Server-side only. Credentials are read on demand and never returned with prices. */
 export function getScrydexConfig() {
@@ -49,7 +49,7 @@ export type ScrydexPrice = {
 const API_BASE = "https://api.scrydex.com";
 const PAGE_SIZE = 100;
 const GAME_PATHS: Record<string, string> = {
-  pokemon: "pokemon", "one-piece": "onepiece", mtg: "magicthegathering",
+  pokemon: "pokemon", "pokemon-japanese": "pokemon", "one-piece": "onepiece", mtg: "magicthegathering",
   riftbound: "riftbound", gundam: "gundam", lorcana: "lorcana",
 };
 const SEALED_GAMES = new Set(["pokemon", "onepiece", "riftbound"]);
@@ -77,12 +77,16 @@ function numberKey(value: unknown) {
 
 function productSpec(product: ScrydexProduct) {
   const game = GAME_PATHS[gameFromAlias(product.game)?.key ?? ""];
+  const language = cardLanguageForGame(product.game);
   if (!game) throw new ScrydexError("unsupported", "Scrydex pricing does not support this game.");
   const kind = identity(product.productType);
   if (kind !== "single" && kind !== "sealed") throw new ScrydexError("unsupported", "Scrydex pricing supports singles and sealed products only.");
   const sealed = kind === "sealed";
+  if (language === "Japanese" && (sealed || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0)) {
+    throw new ScrydexError("unsupported", "Japanese Pokémon pricing requires a single with an exact TCGplayer product ID.");
+  }
   if (sealed && !SEALED_GAMES.has(game)) throw new ScrydexError("unsupported", "Scrydex sealed pricing is supported for Pokémon, One Piece, and Riftbound only.");
-  if (/\b(?:Japanese|Chinese|Korean|French|German|Spanish|Italian|Portuguese|Simplified|Traditional)\b|[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/i.test(`${product.name} ${product.setName}`)) {
+  if (language === "English" && /\b(?:Japanese|Chinese|Korean|French|German|Spanish|Italian|Portuguese|Simplified|Traditional)\b|[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/i.test(`${product.name} ${product.setName}`)) {
     throw new ScrydexError("unsupported", "Scrydex automatic pricing currently requires an English product and a USD price.");
   }
   if (!text(product.name) || !text(product.setName) || (!sealed && !text(product.cardNumber))) {
@@ -94,7 +98,7 @@ function productSpec(product: ScrydexProduct) {
   if (!condition) throw new ScrydexError("unsupported", "Scrydex requires a recognized raw condition; graded or unspecified single conditions are not supported.");
   const finish = finishKey(product.finish) || (sealed ? "normal" : "");
   if (!finish) throw new ScrydexError("incomplete_identity", "Scrydex matching requires the single's exact finish.");
-  return { game, sealed, condition, finish, resource: sealed ? "sealed" : "cards" };
+  return { game, language, sealed, condition, finish, resource: sealed ? "sealed" : "cards" };
 }
 
 function english(candidate: ObjectValue) {
@@ -104,7 +108,19 @@ function english(candidate: ObjectValue) {
   return codes.length + names.length > 0 && codes.every((code) => code === "en") && names.every((name) => name === "english");
 }
 
-function candidateName(candidate: ObjectValue, game: string) {
+function japanese(candidate: ObjectValue) {
+  const expansion = object(candidate.expansion);
+  // Require explicit Japanese codes on both records, and reject contradictory names.
+  return identity(candidate.language_code) === "ja" && identity(expansion.language_code) === "ja"
+    && [candidate.language, expansion.language].map(identity).filter(Boolean).every(name => name === "japanese");
+}
+
+function translatedName(candidate: ObjectValue) {
+  return text(object(object(candidate.translation).en).name);
+}
+
+function candidateName(candidate: ObjectValue, game: string, language: "English" | "Japanese") {
+  if (language === "Japanese") return translatedName(candidate);
   // Lorcana keeps the character's subtitle in a separate documented `version` field.
   return game === "lorcana" && text(candidate.version)
     ? `${text(candidate.name)} - ${text(candidate.version)}` : text(candidate.name);
@@ -144,12 +160,12 @@ function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
   return [...names].filter(Boolean);
 }
 
-function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
+function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   const name = productNameWithoutGame(product);
-  if (identity(candidateName(candidate, game)) === identity(name)) return true;
+  if (language === "English" && identity(candidateName(candidate, game, language)) === identity(name)) return true;
   // TCGplayer can append an art label or Pokémon collector number absent from Scrydex's name.
   // Only the exact marketplace ID permits removing those verified annotations.
-  return tcgplayerNameAliases(product, game).some(alias => identity(alias) === identity(candidateName(candidate, game)))
+  return tcgplayerNameAliases(product, game).some(alias => identity(alias) === identity(candidateName(candidate, game, language)))
     && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
     && array(candidate.variants).map(object).some((variant) => marketplaceId(variant, product.tcgplayerId!));
 }
@@ -164,7 +180,16 @@ const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: st
   "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
 };
 
-function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string) {
+function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
+  if (language === "Japanese") {
+    const expansion = object(candidate.expansion);
+    // This alias is verified against the Japanese category, native set, and English translation.
+    return identity(product.setName) === "sv2a: pokemon card 151"
+      && identity(expansion.id) === "sv2a_ja" && identity(expansion.code) === "sv2a"
+      && identity(expansion.name) === "ポケモンカード151" && identity(expansion.series) === "scarlet & violet"
+      && identity(translatedName(expansion)) === "pokémon card 151"
+      && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+  }
   if (exactSetName(product, candidate)) return true;
   const expansion = object(candidate.expansion);
   const alias = POKEMON_SET_ALIASES[identity(product.setName)];
@@ -210,19 +235,19 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const spec = productSpec(product);
   const matches = candidates.map(object).filter((candidate) => {
     const expansion = object(candidate.expansion);
-    return text(candidate.id) && english(candidate)
+    return text(candidate.id) && (spec.language === "Japanese" ? japanese(candidate) : english(candidate))
       && candidate.is_online_only !== true && expansion.is_online_only !== true
       && expansion.is_foreign_only !== true
-      && verifiedName(product, candidate, spec.game)
-      && verifiedSetName(product, candidate, spec.game)
+      && verifiedName(product, candidate, spec.game, spec.language)
+      && verifiedSetName(product, candidate, spec.game, spec.language)
       && (spec.sealed || matchesNumber(product.cardNumber, candidate));
   });
-  if (!matches.length) throw new ScrydexError("not_found", "No exact English Scrydex match for this name, set, and collector number.");
+  if (!matches.length) throw new ScrydexError("not_found", `No exact ${spec.language} Scrydex match for this name, set, and collector number.`);
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
   const candidate = matches[0];
   const variants = array(candidate.variants).map(object).filter((variant) => {
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (identity(candidateName(candidate, spec.game)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
+    if (spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");
@@ -233,6 +258,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const variant = variants[0];
   const prices = array(variant.prices).map(object).filter((price) =>
     price.type === "raw" && price.condition === spec.condition && price.currency === "USD"
+    && (spec.language !== "Japanese" || price.source_currency === "USD")
     && price.is_signed !== true && price.is_error !== true && price.is_perfect !== true);
   if (prices.length > 1) throw new ScrydexError("ambiguous", "Multiple Scrydex prices match this condition; no price was changed.");
   const market = prices[0]?.market;
@@ -241,7 +267,8 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
     throw new ScrydexError("price_unavailable", "Scrydex has no valid USD market price for this exact finish and condition.");
   }
   return {
-    cents, matchedName: candidateName(candidate, spec.game), groupName: text(object(candidate.expansion).name),
+    cents, matchedName: candidateName(candidate, spec.game, spec.language),
+    groupName: spec.language === "Japanese" ? translatedName(object(candidate.expansion)) : text(object(candidate.expansion).name),
     variation: `${text(variant.name)} / ${spec.condition}`, scrydexId: text(candidate.id),
     imageUrl: safeImage(variant.images) ?? safeImage(candidate.images),
     url: `${API_BASE}/${spec.game}/v1/${spec.resource}/${encodeURIComponent(text(candidate.id))}`,
@@ -265,7 +292,13 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
     // Candidate selection still requires the exact marketplace ID and printing metadata.
     for (const alias of tcgplayerNameAliases(product, spec.game)) if (!names.includes(alias)) names.push(alias);
   }
-  const clauses = names.map((name) => `!name:${queryLiteral(name)}`);
+  // Japanese names are native script. Keep that search bounded to the exact collector
+  // numerator and language; the matcher still verifies its denominator, translated name,
+  // native set metadata, and the selected finish's exact marketplace ID.
+  const numbers = [...new Set([product.cardNumber.split("/")[0].trim(), numberKey(product.cardNumber).split("/")[0]])];
+  const clauses = spec.language === "Japanese"
+    ? [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
+    : names.map((name) => `!name:${queryLiteral(name)}`);
   if (hasMarketplaceId) {
     clauses.push(`variants.marketplaces.product_id:${queryLiteral(String(product.tcgplayerId))}`);
   }

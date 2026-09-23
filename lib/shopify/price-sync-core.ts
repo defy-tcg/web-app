@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { gameFromAlias } from "../tcg-games.ts";
+import { cardLanguageForGame, gameFromAlias } from "../tcg-games.ts";
 import { scrydexSellPriceCents } from "../pricing-policy.ts";
 import type { ScrydexPrice, ScrydexProduct } from "../scrydex.ts";
 import type { Catalog } from "../singles/types.ts";
@@ -13,7 +13,7 @@ export interface PricingVariant {
   product: {
     id: string; title: string; status: string; productType: string;
     catalogId: Field; storefrontCatalogId: Field;
-    game: Field; cardName: Field; setName: Field; cardNumber: Field;
+    game: Field; cardName: Field; setName: Field; cardNumber: Field; language?: Field;
   };
 }
 export type LegacyPricingProduct = ScrydexProduct & { id: number; sku: string; barcode: string | null };
@@ -27,6 +27,8 @@ const textKey = (value: string) => value.trim().toLowerCase();
 const finishKey = (value: string) => textKey(value).replace(/[\s-]/g, "").replace(/^nonfoil$/, "normal");
 const conditions: Record<string, string> = { NM: "Near Mint", LP: "Lightly Played", MP: "Moderately Played", HP: "Heavily Played", DMG: "Damaged" };
 const conditionKey = (value: string) => textKey(conditions[value.toUpperCase()] ?? value);
+const languageKey = (value: string) => ["en", "english"].includes(textKey(value)) ? "english"
+  : ["ja", "japanese"].includes(textKey(value)) ? "japanese" : textKey(value);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 function variantCodes(variant: Pick<PricingVariant, "sku" | "barcode" | "barcodes">) {
   if (!Array.isArray(variant.barcodes?.nodes) || variant.barcodes.pageInfo?.hasNextPage !== false) {
@@ -44,6 +46,7 @@ export const PRICING_VARIANT_FIELDS = `id sku barcode barcodes(first: 20) { node
     cardName: metafield(namespace: "card", key: "name") { value }
     setName: metafield(namespace: "card", key: "set") { value }
     cardNumber: metafield(namespace: "card", key: "number") { value }
+    language: metafield(namespace: "card", key: "language") { value }
   }`;
 
 /** Identity comes from saved codes/catalog metadata, never a fuzzy Shopify title. */
@@ -82,9 +85,13 @@ export function pricingIdentity(variant: PricingVariant, legacy: LegacyPricingPr
   for (const [field, expected] of [[product.cardName, identity.name], [product.setName, identity.setName], [product.cardNumber, identity.cardNumber]] as const) {
     if (field?.value && textKey(field.value) !== textKey(expected)) return fail("Shopify's saved card details conflict with the matched product.");
   }
+  const expectedLanguage = languageKey(cardLanguageForGame(identity.game));
+  const languages = variant.selectedOptions.filter(option => textKey(option.name) === "language");
+  if (expectedLanguage === "japanese" && languages.length !== 1) return fail("Japanese pricing requires one explicit matching Shopify language option.");
+  if (product.language?.value && languageKey(product.language.value) !== expectedLanguage) return fail("The Shopify language metadata conflicts with the matched product.");
   for (const option of variant.selectedOptions) {
     const name = textKey(option.name);
-    if (name === "language" && !["en", "english"].includes(textKey(option.value))) return fail("Automatic pricing supports English products only.");
+    if (name === "language" && languageKey(option.value) !== expectedLanguage) return fail("The Shopify language conflicts with the matched product.");
     if (name === "finish" && finishKey(option.value) !== finishKey(identity.finish || "normal")) return fail("The Shopify finish conflicts with its SKU.");
     if (name === "condition" && conditionKey(option.value) !== conditionKey(identity.condition || "sealed")) return fail("The Shopify condition conflicts with its SKU.");
   }

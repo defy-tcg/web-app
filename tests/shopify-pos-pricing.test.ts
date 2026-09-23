@@ -26,6 +26,17 @@ function variant() {
   };
 }
 type Variant = ReturnType<typeof variant>;
+function japaneseVariant(): Variant {
+  const item = variant();
+  item.sku = "DEFY-3448510729";
+  item.barcode = item.sku;
+  item.barcodes.nodes = [{ value: item.sku, type: null }];
+  item.selectedOptions = [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "Japanese" }];
+  Object.assign(item.product, { title: "Charmander - 168/165", productType: "Pokémon (Japanese) single",
+    cardName: field("Charmander - 168/165"), game: field("Pokémon (Japanese)"), set: field("SV2a: Pokemon Card 151"),
+    number: field("168/165"), language: field("Japanese"), catalogId: field("566513"), receivingId: field("single:tcgplayer:printing:566513") });
+  return item;
+}
 function fixture(initial = [variant()]) {
   const state = { variants: initial, currency: "USD", truncated: false, quoted: [] as ScrydexProduct[], current: undefined as Variant | null | undefined,
     quoteFailure: false, marketCents: 1000, updateFailure: false, returnedId: "gid://shopify/ProductVariant/123", returnedPrice: "", mutations: [] as Record<string, unknown>[], queries: [] as { query: string; variables: Record<string, unknown> }[] };
@@ -55,6 +66,27 @@ test("POS scan updates only the exact Riftbound single price with 6%, never cost
   assert.deepEqual(f.state.mutations, [{ productId: "gid://shopify/Product/456", variants: [{ id: "gid://shopify/ProductVariant/123", price: "10.60" }] }]);
   assert.equal(f.state.quoted[0].finish, "Nonfoil");
   assert.equal(f.state.queries.filter(call => call.query.includes("query DefyPosVerify")).length, 1);
+});
+
+test("Japanese Pokémon POS pricing keeps its exact game and language without a markup", async () => {
+  const item = japaneseVariant(); const f = fixture([item]); f.state.marketCents = 2773;
+  const result = await refreshPosPrice(item.sku!, f.dependencies);
+  assert.equal(result.priceCents, 2773);
+  assert.equal(f.state.quoted[0].game, "Pokémon (Japanese)");
+  assert.equal(f.state.quoted[0].tcgplayerId, 566513);
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "27.73" }] }]);
+  for (const change of [
+    (v: Variant) => { v.selectedOptions[2].value = "English"; },
+    (v: Variant) => { v.product.game = field("Pokémon"); v.product.productType = "Pokémon single"; },
+    (v: Variant) => { v.product.language = field("English"); },
+    (v: Variant) => { v.selectedOptions = v.selectedOptions.filter(option => option.name !== "Language"); },
+    (v: Variant) => { v.selectedOptions[2].value = ""; },
+    (v: Variant) => { v.selectedOptions = v.selectedOptions.filter(option => option.name !== "Language"); v.product.language = null; },
+  ]) {
+    const changed = japaneseVariant(); change(changed); const blocked = fixture([changed]);
+    await assert.rejects(refreshPosPrice(changed.sku!, blocked.dependencies));
+    assert.equal(blocked.state.quoted.length, 0); assert.equal(blocked.state.mutations.length, 0);
+  }
 });
 
 test("a secondary QR finds the same variant and updates only its price", async () => {

@@ -2,6 +2,7 @@ import { gameFromAlias, TCG_GAME_REGISTRY, type TcgGameName } from "./tcg-games.
 
 export type TcgplayerCardLookup = {
   productId: number;
+  categoryId: number;
   name: string;
   game: TcgGameName;
   setName: string;
@@ -147,7 +148,7 @@ export async function lookupTcgplayerCard(
   if (!finishes.length) warnings.push(FINISH_WARNING);
 
   return {
-    productId, name, game, setName, cardNumber,
+    productId, categoryId: details.productLineId, name, game, setName, cardNumber,
     imageUrl: `https://tcgplayer-cdn.tcgplayer.com/product/${productId}_in_1000x1000.jpg`,
     productUrl: `https://www.tcgplayer.com/product/${productId}`,
     finishes, warnings,

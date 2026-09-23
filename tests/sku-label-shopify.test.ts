@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
+import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, readSkuLabelStockTarget, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
 import { ScrydexError, selectScrydexPrice } from "../lib/scrydex.ts";
+import { digest } from "../lib/singles/intake.ts";
 
 const card: SkuLabelShopifyProduct = { id: 77, sku: "DEFY-9775456393", name: "Time Warp", game: "Magic: The Gathering", setName: "Test set", cardNumber: "122", condition: "Near Mint", finish: "Foil", tcgplayerId: 652905, costCents: 0, listPriceCents: 0, quantity: 0, initialQuantity: 0 };
 type Barcode = { value: string; type: string | null };
@@ -51,6 +52,14 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
         }
         case "QrLinkStatuses": { const fields: Record<string, unknown> = {}; for (const match of query.matchAll(/(q\d+): metafield\(namespace: "[^"]+", key: "([^"]+)"\)/g)) fields[match[1]] = journals.get(match[2]) || null; result = { shop: fields }; break; }
         case "QrLinkCode": { const code = /sku:"([^"]+)"/.exec(String(variables.query))?.[1]; result = { productVariants: { nodes: (product?.variants.nodes || []).filter(item => item.sku === code || item.barcodes.nodes.some(barcode => barcode.value === code)).map(item => ({ ...clone(item), product: { id: product!.id } })), pageInfo: { hasNextPage: false } } }; break; }
+        case "QrStockTarget": {
+          const value = product?.variants.nodes.find(item => item.id === variables.id);
+          result = { productVariant: value ? { ...clone(value), product: current(), inventoryItem: { ...clone(value.inventoryItem), inventoryLevel: { location: { id: "gid://shopify/Location/1" }, quantities: [{ name: "available", quantity: value.inventoryQuantity }] } } } : null }; break;
+        }
+        case "QrStockScanCode": {
+          const code = /barcode:"([^"]+)"/.exec(String(variables.query))?.[1];
+          result = { productVariants: { nodes: (product?.variants.nodes || []).filter(item => item.barcodes.nodes.some(barcode => barcode.value === code)).map(clone), pageInfo: { hasNextPage: false } } }; break;
+        }
         case "QrLinkCreate": {
           assert.equal(product, null, "No duplicate product creation");
           const input = variables.product as { metafields: Fields[]; productOptions: { name: string; values: { name: string }[] }[] };
@@ -110,6 +119,17 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
 }
 function existing(overrides: Partial<Variant> = {}): Product {
   return { id: "gid://shopify/Product/12", status: "ACTIVE", pos: true, catalogId: { value: "single:tcgplayer:printing:652905" }, sourceId: { value: "652905" }, options: [{ name: "Condition" }, { name: "Finish" }, { name: "Language" }], variants: { nodes: [{ id: "gid://shopify/ProductVariant/123", sku: card.sku, barcode: "9780262033848", barcodes: { nodes: [{ value: "9780262033848", type: "ISBN" }], pageInfo: { hasNextPage: false } }, price: "50.00", inventoryQuantity: 7, inventoryPolicy: "DENY", inventoryItem: { id: "gid://shopify/InventoryItem/1", tracked: true }, selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }], pos: true, qrIdentity: null, ...overrides }], pageInfo: { hasNextPage: false, endCursor: null } } };
+}
+const japaneseCard: SkuLabelShopifyProduct = { ...card, id: 79, sku: "DEFY-3448510729", name: "Charmander", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165", tcgplayerId: 566513, quantity: 1, initialQuantity: 1 };
+const qrJournalKey = (sku: string) => `qr_${digest(sku).slice(0, 60)}`;
+const quoteFixture: NonNullable<SkuLabelShopifyDependencies["resolvePrice"]> = async () => ({ cents: 4802, matchedName: "Charmander", groupName: "Pokemon Card 151", variation: "Foil", scrydexId: "fixture-japanese", url: "https://example.com" });
+
+async function blockedJapaneseFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const f = fixture({ ...options, priceError: true });
+  assert.equal((await linkSkuLabelToShopify({ ...japaneseCard, game: "Other" }, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  f.deps.resolvePrice = quoteFixture;
+  return f;
 }
 
 test("QR registration creates one exact card, publishes only POS, and caches confirmed status", async () => {
@@ -208,6 +228,130 @@ test("Nidoking's actual Pokémon printing keeps its QR, exact market price, and 
   const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
   assert.equal(stockCalls.length, 2);
   assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
+});
+test("a price-blocked Japanese card corrects only its unused language identity and retains the original QR stock receipt", async () => {
+  const f = await blockedJapaneseFixture({ failAfterStock: true });
+  const key = qrJournalKey(japaneseCard.sku);
+  const before = JSON.parse(f.journals.get(key)!.value);
+  assert.equal(JSON.parse(before.identity)[3], "English");
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "pending");
+  const partial = JSON.parse(f.journals.get(key)!.value);
+  assert.equal(JSON.parse(partial.identity)[3], "Japanese");
+  assert.equal(partial.stockRequestKey, before.stockRequestKey);
+  assert.equal(partial.initialQuantity, 1);
+  assert.equal(partial.previousIdentity, undefined);
+  assert.equal(partial.adoptionPending, undefined);
+  const ready = await linkSkuLabelToShopify(japaneseCard, f.deps);
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.priceCents, 4802, "Japanese Pokémon does not receive a Riftbound markup");
+  assert.equal(ready.transferredQuantity, 1);
+  const variant = f.product().variants.nodes[0];
+  assert.equal(variant.sku, japaneseCard.sku);
+  assert.deepEqual(variant.barcodes.nodes, [{ value: japaneseCard.sku, type: null }]);
+  assert.equal(variant.selectedOptions.find(option => option.name === "Language")!.value, "Japanese");
+  assert.equal(variant.qrIdentity!.value, partial.identity);
+  const creation = f.calls.find(call => call.name === "QrLinkCreate")!.variables.product as { tags: string[] };
+  assert.ok(creation.tags.includes("Japanese"));
+  assert.ok(!creation.tags.includes("English"));
+  assert.equal((await linkSkuLabelToShopify({ ...japaneseCard, quantity: 0 }, f.deps)).status, "ready");
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  assert.equal(f.product().variants.nodes.length, 1);
+  assert.equal(f.quantityAdded(), 1);
+  const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(stockCalls.length, 2);
+  assert.equal(stockCalls[0].variables.key, `${before.stockRequestKey}-receive`);
+  assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
+  assert.equal((await readSkuLabelStockTarget(japaneseCard, f.deps)).identity, partial.identity);
+  assert.equal((await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0].status, "ready");
+
+  const count = f.calls.length;
+  variant.selectedOptions.find(option => option.name === "Language")!.value = "English";
+  assert.equal((await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0].status, "blocked");
+  await assert.rejects(readSkuLabelStockTarget(japaneseCard, f.deps), /identity changed/);
+  assert.ok(f.calls.slice(count).every(call => ["QrLinkStatusConnection", "QrLinkStatuses", "QrLinkLiveStatuses", "SinglesRecord", "QrStockTarget"].includes(call.name)));
+});
+test("a precreation Japanese correction fills a missing stock key from the original English identity", async () => {
+  const f = await blockedJapaneseFixture();
+  const key = qrJournalKey(japaneseCard.sku), stored = f.journals.get(key)!;
+  const record = JSON.parse(stored.value);
+  const originalKey = record.stockRequestKey;
+  delete record.stockRequestKey;
+  f.journals.set(key, { value: JSON.stringify(record), compareDigest: "legacy-no-stock-key" });
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "ready");
+  assert.equal(JSON.parse(f.journals.get(key)!.value).stockRequestKey, originalKey);
+  assert.equal(f.quantityAdded(), 1);
+});
+test("Japanese identity correction refuses any creation, mapping, stock, adoption, or completed-status evidence", async () => {
+  const recordPatches: Record<string, unknown>[] = [
+    { creationStartedAt: 0 }, { creationStartedAt: null }, { productId: "gid://shopify/Product/12" }, { variantId: "gid://shopify/ProductVariant/123" },
+    { shopifySku: "" }, { publicationId: "gid://shopify/Publication/2" }, { stockInventoryItemId: "gid://shopify/InventoryItem/1" },
+    { stockLocationId: "gid://shopify/Location/1" }, { adjustmentStartedAt: 0 }, { adjustmentId: "gid://shopify/InventoryAdjustmentGroup/1" },
+    { previousIdentity: "previous" }, { adoptionPending: false }, { owner: "in-flight" }, { stockRequestKey: null },
+  ];
+  const statusPatches: Record<string, unknown>[] = [
+    { status: "ready" }, { productId: "gid://shopify/Product/12" }, { variantId: "gid://shopify/ProductVariant/123" },
+    { adminUrl: "https://example.com" }, { transferredQuantity: 0 }, { availableQuantity: 0 }, { priceCents: 0 }, { checkedAt: "2026-09-23" },
+  ];
+  for (const [recordPatch, statusPatch] of [...recordPatches.map(patch => [patch, {}]), ...statusPatches.map(patch => [{}, patch])]) {
+    const f = await blockedJapaneseFixture();
+    const key = qrJournalKey(japaneseCard.sku), current = f.journals.get(key)!;
+    const record = JSON.parse(current.value);
+    Object.assign(record, recordPatch); Object.assign(record.status, statusPatch);
+    const changed = JSON.stringify(record);
+    f.journals.set(key, { value: changed, compareDigest: "blocked-intent" });
+    assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "blocked", JSON.stringify({ recordPatch, statusPatch }));
+    assert.equal(f.journals.get(key)!.value, changed);
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+  for (const patch of [{ tcgplayerId: 566514 }, { condition: "Lightly Played" }, { finish: "Normal" }, { initialQuantity: 2 }]) {
+    const f = await blockedJapaneseFixture();
+    assert.equal((await linkSkuLabelToShopify({ ...japaneseCard, ...patch }, f.deps)).status, "blocked");
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+});
+test("Japanese language correction requires the unchanged journal snapshot under both leases", async () => {
+  for (const language of ["English", "Japanese"]) {
+    const f = await blockedJapaneseFixture();
+    const key = qrJournalKey(japaneseCard.sku), graphql = f.deps.graphql;
+    let reads = 0;
+    f.deps.graphql = async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
+      if (query.includes("query SinglesRecord(") && variables.key === key && ++reads === 2) {
+        const record = JSON.parse(f.journals.get(key)!.value);
+        const identity = JSON.parse(record.identity); identity[3] = language; record.identity = JSON.stringify(identity);
+        record.status.message = "Changed by another request";
+        f.journals.set(key, { value: JSON.stringify(record), compareDigest: "changed-before-language-cas" });
+      }
+      return graphql<T>(query, variables);
+    };
+    assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "blocked");
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+    assert.equal(JSON.parse(JSON.parse(f.journals.get(key)!.value).identity)[3], language);
+    assert.equal(JSON.parse(f.journals.get(key)!.value).status.message, "Changed by another request");
+  }
+  const f = await blockedJapaneseFixture();
+  const key = qrJournalKey(japaneseCard.sku), original = f.journals.get(key)!.value;
+  const skuLease = `qr_lock_${digest(`sku:${japaneseCard.sku}`).slice(0, 55)}`, graphql = f.deps.graphql;
+  let reads = 0;
+  f.deps.graphql = async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
+    if (query.includes("query SinglesRecord(") && variables.key === skuLease && ++reads === 2) {
+      const lock = JSON.parse(f.journals.get(skuLease)!.value); lock.owner = "another-worker";
+      f.journals.set(skuLease, { value: JSON.stringify(lock), compareDigest: "changed-sku-lease" });
+    }
+    return graphql<T>(query, variables);
+  };
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "pending");
+  assert.equal(f.journals.get(key)!.value, original);
+  assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+});
+test("Japanese cards do not adopt an English-only Shopify listing or attach another language variant", async () => {
+  const starting = existing({ sku: "ENGLISH-CARD", barcode: null, barcodes: { nodes: [], pageInfo: { hasNextPage: false } } });
+  starting.catalogId = { value: "single:tcgplayer:printing:566513" }; starting.sourceId = { value: "566513" };
+  const f = fixture({ starting });
+  const result = await linkSkuLabelToShopify(japaneseCard, f.deps);
+  assert.equal(result.status, "blocked"); assert.match(result.message, /does not identify a Japanese card/);
+  assert.deepEqual(f.product(), starting);
+  assert.equal(f.quantityAdded(), 0);
+  assert.ok(!f.calls.some(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock", "QrLinkStockActivate"].includes(call.name)));
 });
 test("uncertain stock outside Shopify replay window fails closed", async () => {
   const f = fixture({ failAfterStock: true }); const input = { ...card, initialQuantity: 4 };

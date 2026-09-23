@@ -91,9 +91,23 @@ the saved number, and recognizes the verified Scarlet & Violet 151 and Scarlet &
 Violet Promo Cards set labels.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
-named editions remain distinct. English language, collector number, condition,
+named editions remain distinct. Verified language, collector number, condition,
 and a positive USD market quote still have to match. A failed link keeps the
 original QR and starting receipt for a safe retry after matching is corrected.
+
+Pokémon Japan (TCGplayer category 85) is saved as **Pokémon (Japanese)**,
+separately from English Pokémon. Japanese pricing requires the exact marketplace
+ID, Japanese provider metadata, verified English name translation, printing,
+finish, condition, and a native USD quote. Yen prices are never converted or used
+as USD. The verified Japanese 151 set label is supported. Shopify receives an
+explicit **Japanese** language option, which status, stock, and price refreshes
+must continue to match.
+
+Retrying an older Japanese QR saved under Other verifies its TCGplayer category
+and complete card identity before correcting only its saved game. An old
+English-language linking journal may be corrected only before any product,
+variant, creation, or stock intent exists. Its QR, original quantity, and stock
+request key remain fixed; existing English mappings require review.
 
 ## Recovery and status
 

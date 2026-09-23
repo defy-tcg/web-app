@@ -1,7 +1,7 @@
 # Shopify POS pricing from Scrydex
 
 The **Defy Pricing** smart-grid tile looks up a scanned Shopify SKU or barcode,
-finds the exact English card/printing/condition in Scrydex, and updates that
+finds the exact card/printing/condition and verified language in Scrydex, and updates that
 existing Shopify variant's customer selling price. Open this tile before scanning;
 Shopify's standard search/scanner does not call this integration.
 
@@ -39,9 +39,13 @@ rejects duplicates or truncated searches. It checks the active product, USD shop
 currency, and complete card metadata. Canonical and legacy Riftbound single SKUs
 can be resolved through the bundled catalog only when their options and saved
 metadata agree. Other games require complete Shopify `card` metafields: `name`,
-`game`, `set`, `number` (singles), plus English `language`, `condition`, and `finish`
+`game`, `set`, `number` (singles), plus matching `language`, `condition`, and `finish`
 from the variant options or consistent product metadata. Product type must
 identify Single or Sealed, optionally prefixed by its matching game name.
+
+English remains the default. **Pokémon (Japanese)** requires an explicit Japanese
+language option and an exact TCGplayer-backed Japanese Scrydex match with a raw
+USD price. English printings and yen quotes cannot substitute for that card.
 
 After obtaining a quote, the backend rechecks the Shopify identity and changes
 only the existing variant's price. It never receives stock, modifies cost,

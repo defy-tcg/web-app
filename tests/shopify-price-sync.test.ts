@@ -53,6 +53,35 @@ test("sealed products match registered codes and keep raw market pricing", async
   assert.equal(result.priceCents, 12999);
 });
 
+test("scheduled Japanese Pokémon pricing verifies language and retains raw USD pricing", async () => {
+  const saved: LegacyPricingProduct = { id: 19, sku: "DEFY-3448510729", barcode: null,
+    name: "Charmander - 168/165", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165",
+    productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 566513 };
+  const variant: PricingVariant = { ...single(), sku: saved.sku, barcode: saved.sku,
+    barcodes: { nodes: [{ value: saved.sku, type: null }], pageInfo: { hasNextPage: false } },
+    selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "Japanese" }],
+    product: { ...single().product, productType: "Pokémon (Japanese) single", catalogId: { value: "single:tcgplayer:printing:566513" },
+      storefrontCatalogId: { value: "566513" }, game: { value: saved.game }, cardName: { value: saved.name },
+      setName: { value: saved.setName }, cardNumber: { value: saved.cardNumber }, language: { value: "Japanese" } } };
+  const client = shopify(variant);
+  const result = await updateVariantPrice({ variant, legacy: [saved], catalog, ...client, now: "2026-09-23T12:00:00Z", resolve: async identity => {
+    assert.equal(identity.game, saved.game); assert.equal(identity.tcgplayerId, 566513);
+    return { ...quote, cents: 2773, scrydexId: "sv2a_ja-168" };
+  } });
+  assert.equal(result.priceCents, 2773);
+  assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  for (const language of ["English", "Korean", ""]) {
+    const changed = structuredClone(variant);
+    changed.selectedOptions[2].value = language;
+    assert.throws(() => pricingIdentity(changed, [saved], catalog));
+  }
+  const missing = structuredClone(variant); missing.selectedOptions.pop();
+  assert.throws(() => pricingIdentity(missing, [saved], catalog));
+  const conflict = structuredClone(variant); conflict.product.language = { value: "English" };
+  assert.throws(() => pricingIdentity(conflict, [saved], catalog));
+  assert.throws(() => pricingIdentity(variant, [{ ...saved, game: "Pokémon" }], catalog));
+});
+
 test("a secondary custom QR matches Defy for scheduled pricing without changing any barcode", async () => {
   const variant = single(); variant.sku = "EXISTING-STORE-SKU"; variant.barcode = "012345678901";
   variant.barcodes = { nodes: [{ value: variant.barcode, type: "UPC" }, { value: "DEFY-9775456393", type: null }], pageInfo: { hasNextPage: false } };

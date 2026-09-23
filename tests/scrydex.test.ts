@@ -43,6 +43,27 @@ function pokemonPromoCandidate(promo: typeof pokemonPromos[number]) {
     variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: String(promo.tcgplayerId) }], prices: [price({ market: promo.market })] }],
   });
 }
+const japaneseProduct: ScrydexProduct = {
+  name: "Charmander - 168/165", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165",
+  productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 566513,
+};
+function japaneseCandidate(overrides: Record<string, unknown> = {}) {
+  // Sanitized identity and native USD/JPY quotes from Scrydex's sv2a_ja-168 response.
+  return {
+    id: "sv2a_ja-168", name: "ヒトカゲ", number: "168", printed_number: "168/165",
+    language: "Japanese", language_code: "JA", translation: { en: { name: "Charmander" } },
+    expansion: {
+      id: "sv2a_ja", name: "ポケモンカード151", series: "Scarlet & Violet", code: "SV2a", printed_total: 165,
+      language: "Japanese", language_code: "JA", translation: { en: { name: "Pokémon Card 151" } },
+    },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "566513" }], prices: [
+      price({ currency: "JPY", source_currency: "JPY", market: 4980 }),
+      price({ currency: "USD", source_currency: "USD", market: 27.73 }),
+      price({ condition: "LP", currency: "USD", source_currency: "USD", market: 26.31 }),
+    ] }],
+    ...overrides,
+  };
+}
 function errorCode(code: ScrydexErrorCode) {
   return (error: unknown) => error instanceof ScrydexError && error.code === code;
 }
@@ -214,6 +235,83 @@ test("verified Scarlet & Violet promo labels preserve exact Mewtwo and Mew ex id
   }
 });
 
+test("explicit Japanese Pokémon identity selects the verified translated Charmander and native USD quote", () => {
+  const result = selectScrydexPrice(japaneseProduct, [japaneseCandidate()]);
+  assert.equal(result.cents, 2773); assert.equal(result.scrydexId, "sv2a_ja-168");
+  assert.equal(result.matchedName, "Charmander"); assert.equal(result.groupName, "Pokémon Card 151");
+  assert.equal(result.url, "https://api.scrydex.com/pokemon/v1/cards/sv2a_ja-168");
+  assert.equal(result.variation, "holofoil / NM");
+  assert.equal(selectScrydexPrice({ ...japaneseProduct, condition: "Lightly Played" }, [japaneseCandidate()]).cents, 2631);
+  assert.equal(selectScrydexPrice({ ...japaneseProduct, name: "Charmander - 0168/0165", cardNumber: "0168/0165" }, [japaneseCandidate()]).cents, 2773);
+});
+
+test("Japanese support never infers language from a title or reuses an English or unknown-language candidate", () => {
+  for (const game of ["Pokémon", "Other"]) {
+    assert.throws(() => selectScrydexPrice({ ...japaneseProduct, game }, [japaneseCandidate()]), ScrydexError);
+  }
+  const entry = japaneseCandidate();
+  for (const patch of [
+    { language: "English", language_code: "EN" }, { language: "English" },
+    { language_code: undefined }, { language_code: "KO", language: "Korean" },
+    { expansion: { ...entry.expansion, language: "English", language_code: "EN" } },
+    { expansion: { ...entry.expansion, language_code: undefined } },
+    { expansion: { ...entry.expansion, language: "English" } },
+  ]) assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate(patch)]), errorCode("not_found"));
+  for (const tcgplayerId of [undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => selectScrydexPrice({ ...japaneseProduct, tcgplayerId }, [entry]), errorCode("unsupported"));
+  }
+  assert.throws(() => selectScrydexPrice({ ...japaneseProduct, productType: "Sealed" }, [entry]), errorCode("unsupported"));
+});
+
+test("Japanese translated names, native set metadata, collector and marketplace remain mandatory", () => {
+  const entry = japaneseCandidate();
+  for (const patch of [
+    { translation: undefined }, { translation: { en: { name: "Charmeleon" } } },
+    { number: "169", printed_number: "169/165" }, { printed_number: "168/166" },
+    { printed_number: "168a/165" }, { is_online_only: true },
+    { variants: [{ ...entry.variants[0], marketplaces: [] }] },
+    { variants: [{ ...entry.variants[0], marketplaces: [{ name: "tcgplayer", product_id: "517029" }] }] },
+  ]) assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate(patch)]), errorCode("not_found"));
+  for (const patch of [
+    { id: "sv3pt5" }, { name: "151" }, { series: "Sword & Shield" }, { code: "MEW" },
+    { translation: undefined }, { translation: { en: { name: "Pokémon Card 152" } } }, { is_online_only: true },
+  ]) assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate({ expansion: { ...entry.expansion, ...patch } })]), errorCode("not_found"));
+  for (const patch of [
+    { name: "Charmander - 169/165" }, { name: "Charmeleon - 168/165" }, { name: "Charmander (Promo) - 168/165" },
+    { setName: "SV: Scarlet & Violet 151" }, { setName: "SV2a: Pokemon Card 152" }, { tcgplayerId: 517029 },
+  ]) assert.throws(() => selectScrydexPrice({ ...japaneseProduct, ...patch }, [entry]), errorCode("not_found"));
+  assert.throws(() => selectScrydexPrice(japaneseProduct, [entry, entry]), errorCode("ambiguous"));
+});
+
+test("Japanese selected finish must own the TCGplayer ID and preserve named editions", () => {
+  const entry = japaneseCandidate();
+  const wrongFinishId = japaneseCandidate({ variants: [
+    { ...entry.variants[0], marketplaces: [{ name: "tcgplayer", product_id: "1" }] },
+    { ...entry.variants[0], name: "reverseHolofoil" },
+  ] });
+  for (const name of [japaneseProduct.name, "Charmander"]) {
+    assert.throws(() => selectScrydexPrice({ ...japaneseProduct, name }, [wrongFinishId]), errorCode("price_unavailable"));
+  }
+  for (const name of ["reverseHolofoil", "pokeballHolofoil", "masterballHolofoil", "firstEditionHolofoil"]) {
+    assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate({ variants: [{ ...entry.variants[0], name }] })]), errorCode("price_unavailable"));
+  }
+  assert.throws(() => selectScrydexPrice({ ...japaneseProduct, condition: "Moderately Played" }, [entry]), errorCode("price_unavailable"));
+});
+
+test("Japanese pricing never converts JPY or uses a USD quote sourced from another currency", () => {
+  const entry = japaneseCandidate();
+  for (const changes of [
+    { currency: "JPY", source_currency: "JPY", market: 4980 }, { source_currency: "JPY" },
+    { source_currency: undefined }, { currency: "EUR", source_currency: "EUR" },
+    { condition: "LP" }, { type: "graded" }, { is_signed: true }, { is_error: true }, { is_perfect: true },
+  ]) {
+    const prices = [price({ source_currency: "USD", market: 27.73, ...changes })];
+    assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate({ variants: [{ ...entry.variants[0], prices }] })]), errorCode("price_unavailable"));
+  }
+  const duplicate = [price({ source_currency: "USD" }), price({ source_currency: "USD", market: 27.73 })];
+  assert.throws(() => selectScrydexPrice(japaneseProduct, [japaneseCandidate({ variants: [{ ...entry.variants[0], prices: duplicate }] })]), errorCode("ambiguous"));
+});
+
 test("sealed supports only documented games, exact names and sets, unopened condition and explicit editions", () => {
   const sealed = { ...product, name: "Origins Booster Pack", productType: "Sealed", cardNumber: "", condition: "", finish: "" };
   const entry = candidate({ name: sealed.name, variants: [{ name: "normal", prices: [price({ condition: "U", market: 13.32 })] }] });
@@ -371,6 +469,29 @@ test("numbered Pokémon promos search their exact base names without merging Mew
     const result = await resolveScrydexPrice({ ...pokemonProduct, name: `${promo.name} - ${promo.number}`, cardNumber: promo.number, tcgplayerId: promo.tcgplayerId, setName: "SV: Scarlet & Violet Promo Cards" }, { fetch: fetcher });
     assert.equal(result.scrydexId, promo.id); assert.equal(result.cents, promo.cents); assert.equal(calls, 1);
   }
+});
+
+test("Japanese lookup uses one collector-number and JA search with exact marketplace proof", async (t) => {
+  config(t);
+  for (const cardNumber of ["168/165", "0168/0165"]) {
+    let calls = 0;
+    const fetcher: typeof fetch = async input => {
+      calls++; const url = new URL(String(input)); const query = url.searchParams.get("q") ?? "";
+      assert.equal(url.pathname, "/pokemon/v1/cards");
+      assert.equal(url.searchParams.get("page_size"), "100"); assert.equal(url.searchParams.get("page"), "1");
+      assert.ok(query.includes('number:"168"')); assert.ok(query.includes("AND language_code:JA"));
+      assert.ok(query.includes('variants.marketplaces.product_id:"566513"'));
+      assert.equal(query.includes("name:"), false);
+      if (cardNumber.startsWith("0")) assert.ok(query.includes('number:"0168"'));
+      return Response.json({ data: [japaneseCandidate(), japaneseCandidate({ id: "other-ja", translation: { en: { name: "Pikachu" } } })], total_count: 2 });
+    };
+    assert.equal((await resolveScrydexPrice({ ...japaneseProduct, cardNumber }, { fetch: fetcher })).cents, 2773);
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const incomplete: typeof fetch = async () => { calls++; return Response.json({ data: [japaneseCandidate()], total_count: 101 }); };
+  await assert.rejects(resolveScrydexPrice(japaneseProduct, { fetch: incomplete }), errorCode("ambiguous"));
+  assert.equal(calls, 1);
 });
 
 test("malformed, truncated and duplicate search results fail without a second request", async (t) => {

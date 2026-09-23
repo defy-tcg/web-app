@@ -1,5 +1,15 @@
 export const TCG_GAME_REGISTRY = [
   {
+    key: "pokemon-japanese",
+    name: "Pokémon (Japanese)",
+    label: "Pokémon (Japanese)",
+    code: "PKJ",
+    tcgplayerCategoryId: 85,
+    aliases: ["pokemon japanese", "pokemon japan", "pokémon japan", "japanese pokemon"],
+    // Language comes from the explicit game/category, never a guessed card or set name.
+    namePatterns: [],
+  },
+  {
     key: "pokemon",
     name: "Pokémon",
     label: "Pokémon",
@@ -157,6 +167,10 @@ export function gameCode(value: unknown) {
 
 export function tcgplayerCategoryIdForGame(value: unknown) {
   return gameFromAlias(value)?.tcgplayerCategoryId ?? null;
+}
+
+export function cardLanguageForGame(game: unknown): "English" | "Japanese" {
+  return gameFromAlias(game)?.key === "pokemon-japanese" ? "Japanese" : "English";
 }
 
 export function inferGameFromName(name: string): TcgGameName | null {
