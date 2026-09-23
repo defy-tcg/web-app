@@ -135,6 +135,18 @@ named editions remain distinct. Verified language, collector number, condition,
 and a positive USD market quote still have to match. A failed link keeps the
 original QR and starting receipt for a safe retry after matching is corrected.
 
+Gundam imports recognize trailing **C**, **U**, **R**, and **LR** rarity labels,
+with or without **+**, only when Scrydex confirms the base rarity and exact
+TCGplayer product ID. A **+** card saved as Foil can use Scrydex's **altArt**
+variant only when that variant owns the exact product ID and its printing
+metadata identifies exactly one matching expansion. For example, **Amuro Ray
+(R+)**, GD05-085, uses its alternate-art quote, never the regular holofoil quote.
+Set, card number, language, condition, and positive USD price still have to match.
+This rule does not turn Foil into a general alias for beta or premium editions,
+and it does not modify the saved QR, finish, or starting-stock receipt.
+The word **Gundam** is preserved in actual unit names; only an explicit
+game prefix followed by a colon is removed for matching.
+
 Pokémon Japan (TCGplayer category 85) is saved as **Pokémon (Japanese)**,
 separately from English Pokémon. Japanese pricing requires the exact marketplace
 ID, Japanese provider metadata, verified English name translation, printing,

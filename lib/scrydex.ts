@@ -138,7 +138,10 @@ function productNameWithoutGame(product: ScrydexProduct) {
   for (const prefix of prefixes) {
     if (name.toLowerCase().startsWith(prefix.toLowerCase())) {
       const suffix = name.slice(prefix.length);
-      if (/^(?:\s|:)/.test(suffix)) return suffix.replace(/^[\s:]+/, "");
+      // Gundam is also part of real unit names (Gundam Aerial, Gundam (R+)).
+      // Only an explicit colon identifies a game label for those products.
+      const gameLabel = game?.key === "gundam" ? /^\s*:/.test(suffix) : /^(?:\s|:)/.test(suffix);
+      if (gameLabel) return suffix.replace(/^[\s:]+/, "");
     }
   }
   return name;
@@ -153,8 +156,17 @@ function nameWithoutArtAnnotation(name: string, pokemonSingle: boolean) {
   return name.replace(annotation, "");
 }
 
+function gundamRarityAnnotation(product: ScrydexProduct, game: string) {
+  if (game !== "gundam" || identity(product.productType) !== "single") return undefined;
+  const match = /^(.+?)\s*\((C|U|R|LR)(\+)?\)$/i.exec(productNameWithoutGame(product));
+  if (!match || !match[1].trim()) return undefined;
+  return { name: match[1].trim(), rarity: identity(match[2]), alternate: Boolean(match[3]) };
+}
+
 function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
   const name = productNameWithoutGame(product);
+  const gundamRarity = gundamRarityAnnotation(product, game);
+  if (gundamRarity) return [name, gundamRarity.name];
   const pokemonSingle = game === "pokemon" && identity(product.productType) === "single";
   if (!pokemonSingle) return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
   const names = new Set([name]);
@@ -171,6 +183,15 @@ function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
 
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   const name = productNameWithoutGame(product);
+  const gundamRarity = gundamRarityAnnotation(product, game);
+  if (gundamRarity) {
+    // Gundam's rarity label describes its printing, not part of the pilot/unit
+    // name. The base rarity and exact marketplace identity must both agree.
+    return identity(gundamRarity.name) === identity(candidateName(candidate, game, language))
+      && gundamRarity.rarity === identity(candidate.rarity_code)
+      && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
+      && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+  }
   if (language === "English" && identity(candidateName(candidate, game, language)) === identity(name)) return true;
   // TCGplayer can append an art label or Pokémon collector number absent from Scrydex's name.
   // Only the exact marketplace ID permits removing those verified annotations.
@@ -251,6 +272,18 @@ function matchesNumber(number: string, candidate: ObjectValue) {
   return wanted === numberKey(candidate.number);
 }
 
+function verifiedGundamPrinting(candidate: ObjectValue, variant: ObjectValue) {
+  const expansion = object(candidate.expansion);
+  const expansionId = identity(expansion.id);
+  const expansionCode = identity(expansion.code);
+  const printings = array(variant.printings);
+  // A variant can instead be a later-set reprint of an earlier numbered card.
+  // This alias only covers one unambiguous printing in the card's own set.
+  return Boolean(expansionId) && expansionId === expansionCode
+    && identity(candidate.printed_number).startsWith(`${expansionCode}-`)
+    && printings.length === 1 && identity(printings[0]) === expansionId;
+}
+
 function safeImage(images: unknown): string | undefined {
   const front = array(images).map(object).find((entry) => identity(entry.type) === "front");
   for (const value of [front?.medium, front?.large, front?.small]) {
@@ -281,7 +314,15 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   if (!matches.length) throw new ScrydexError("not_found", `No exact ${spec.language} Scrydex match for this name, set, and collector number.`);
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
   const candidate = matches[0];
+  const gundamRarity = gundamRarityAnnotation(product, spec.game);
   const variants = array(candidate.variants).map(object).filter((variant) => {
+    if (gundamRarity) {
+      if (!marketplaceId(variant, product.tcgplayerId!) || !verifiedGundamPrinting(candidate, variant)) return false;
+      // TCGplayer calls these foil; Scrydex identifies the alternate artwork.
+      // A plus rarity must never fall back to the much cheaper regular foil.
+      if (gundamRarity.alternate) return ["foil", "altart"].includes(spec.finish) && finishKey(variant.name) === "altart";
+      return ["normal", "foil"].includes(spec.finish) && finishKey(variant.name) === spec.finish;
+    }
     if (finishKey(variant.name) !== spec.finish) return false;
     if (spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
