@@ -3,8 +3,12 @@
 Saving a new TCGplayer card or a manual QR card in DefyOS queues its permanent QR
 for Shopify POS. Defy matches the exact existing Shopify card and variant, or
 creates the missing listing, saves the QR as a Shopify barcode, and publishes to
-the **Point of Sale** channel. Other sales channels are not selected by this
-workflow. Production use requires the one-time Shopify app permission release
+the **Point of Sale** channel. Pokémon and Pokémon (Japanese) singles are
+**in-store only**: linking removes their existing and scheduled publications from
+every non-POS catalog, then verifies the result. A public site may display these
+cards through a read-only catalog feed, but they are not published for online
+checkout. Other games keep their existing channel behavior. Production use
+requires the one-time Shopify app permission release
 described below; the source changes and Git deployment alone do not activate it.
 
 ## Save, link, and scan
@@ -118,7 +122,8 @@ Shopify metafields store identity, mapping, lease, adjustment, and status with
 compare-and-set writes. No Neon schema change is required.
 
 - **Ready:** Shopify confirmed the matching variant, saved barcode, sale price,
-  starting receipt, and POS publication.
+  starting receipt, and POS publication. Pokémon singles also have no current or
+  scheduled non-POS publication.
 - **Pending:** A request is queued, another employee holds its linking lease, or
   Shopify/pricing has not confirmed the result. Retry the same saved QR.
 - **Blocked:** Permissions, pricing, identity, or publication needs correction.
@@ -129,6 +134,14 @@ and a server cron provides nightly reconciliation. The current Vercel team uses
 the Hobby plan, which allows a cron job at most once daily and may invoke it
 within the scheduled hour. This recovery schedule does not promise immediate
 completion during an outage. All retry paths preserve the original QR and receipt.
+
+Pokémon channel verification covers APP, MARKET, COMPANY_LOCATION, and NONE
+catalog types, including scheduled publications. An incomplete publication list,
+failed removal, or changed card identity prevents readiness. Library status and
+stock receiving only check this policy; they never unpublish a product. If a card
+is later published outside POS, retry its saved link to restore in-store-only
+sales. Repeated policy enforcement leaves its QR, original stock receipt, and
+POS publication intact. This policy does not apply to sealed products.
 
 ## Connection and one-time release
 
@@ -195,5 +208,6 @@ reprints preserve variant IDs and never add inventory a second time.
 Official references: [Multiple barcodes](https://shopify.dev/changelog/product-variant-barcode-is-being-replaced-by-barcodes),
 [metafield compare-and-set](https://shopify.dev/docs/api/admin-graphql/latest/mutations/metafieldsSet),
 [publication requirements](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/publishablePublish),
+[publication removal](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/publishableUnpublish),
 [scope updates](https://shopify.dev/docs/apps/build/authentication-authorization/manage-access-scopes),
 and [Vercel cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).

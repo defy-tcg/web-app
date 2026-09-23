@@ -64,6 +64,7 @@ const pending = (message: string) => { throw new SinglesError("QR_LINK_PENDING",
 const journalKey = (sku: string) => `qr_${digest(sku).slice(0, 60)}`;
 const lockKey = (printing: string) => `qr_lock_${digest(printing).slice(0, 55)}`;
 const money = (cents: number) => (cents / 100).toFixed(2);
+const inStoreOnly = (product: SkuLabelShopifyProduct) => ["pokemon", "pokemon-japanese"].includes(gameFromAlias(product.game)?.key ?? "");
 function priceCents(value: string) { return /^\d+(?:\.\d{1,2})?$/.test(value) ? Math.round(Number(value) * 100) : 0; }
 function check(payload: Payload | null | undefined) {
   if (!payload) pending("Shopify has not confirmed the link. Retry this saved QR code.");
@@ -141,6 +142,38 @@ function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
   return { sku, status: "pending", message: "The QR is saved. Shopify has not confirmed POS readiness yet; retry this same QR code." };
 }
 
+/** Include scheduled publications and every catalog type; APP alone omits other checkout catalogs. */
+async function nonPosPublications(product: SkuLabelShopifyProduct, record: Pick<Journal, "productId" | "variantId" | "shopifySku" | "publicationId">, deps: SkuLabelShopifyDependencies): Promise<string[]> {
+  const identity = identityFor(product);
+  type Connection = { nodes: { publication: { id: string } }[]; pageInfo: { hasNextPage: boolean } };
+  type Channels = Pick<Product, "id" | "catalogId" | "sourceId" | "manualOrigin" | "variants"> & { app: Connection; market: Connection; company: Connection; none: Connection };
+  const fields = [["app", "APP"], ["market", "MARKET"], ["company", "COMPANY_LOCATION"], ["none", "NONE"]]
+    .map(([alias, type]) => `${alias}: resourcePublicationsV2(first: 100, onlyPublished: false, catalogType: ${type}) { nodes { publication { id } } pageInfo { hasNextPage } }`).join("\n");
+  const data = await deps.graphql<{ product: Channels | null; variant: (Variant & { product: { id: string } }) | null }>(`query QrLinkChannelPolicy($id: ID!, $variant: ID!, $pos: ID!) {
+    product(id: $id) { id catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value }
+      sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value } manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value }
+      variants(first: 2) { nodes { id } pageInfo { hasNextPage } } ${fields} }
+    variant: productVariant(id: $variant) { ${V_FIELDS} product { id } }
+  }`, { id: record.productId, variant: record.variantId, pos: record.publicationId });
+  const target = data.product, variant = data.variant;
+  if (!target || target.id !== record.productId || !variant || variant.id !== record.variantId || variant.product.id !== target.id ||
+    variant.sku !== record.shopifySku || variant.qrIdentity?.value !== identity.identity || !matchesSavedVariant(variant, target, identity, deps.settings.shop) ||
+    variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === product.sku)) {
+    fail("The Shopify card identity changed before its in-store-only sales policy could be verified. Review its saved QR link.");
+  }
+  const ids = new Set<string>();
+  for (const connection of [target!.app, target!.market, target!.company, target!.none]) {
+    if (!connection || !Array.isArray(connection.nodes) || connection.nodes.length > 100 || connection.pageInfo?.hasNextPage !== false) {
+      fail("Shopify could not return every publication for this Pokémon single. Its in-store-only sales policy needs review before it is ready.");
+    }
+    for (const node of connection.nodes) {
+      if (!/^gid:\/\/shopify\/Publication\/\d+$/.test(node?.publication?.id)) fail("Shopify returned an invalid publication for this Pokémon single. Review its in-store-only sales policy.");
+      if (node.publication.id !== record.publicationId) ids.add(node.publication.id);
+    }
+  }
+  return [...ids];
+}
+
 /** Read-only proof for a separate stock receipt; never repairs or reprices a saved link. */
 export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, deps: SkuLabelShopifyDependencies): Promise<SkuLabelStockTarget> {
   const identity = identityFor(product);
@@ -167,6 +200,7 @@ export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, d
   if (verified.product.status !== "ACTIVE" || !verified.product.pos || !verified.pos || priceCents(verified.price) <= 0 || level?.location.id !== deps.settings.locationId || !Number.isSafeInteger(availableQuantity)) {
     fail("This card is not ready at the configured Shopify POS stock location. Review its saved link before adding stock.");
   }
+  if (inStoreOnly(product) && (await nonPosPublications(product, saved, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales before adding stock.");
   // A QR moved or copied to another variant must never receive inventory silently.
   const duplicates = await deps.graphql<{ productVariants: { nodes: { id: string; barcodes: Variant["barcodes"] }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrStockScanCode($query: String!) {
     productVariants(first: 10, query: $query) { nodes { id barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } } pageInfo { hasNextPage } }
@@ -216,18 +250,25 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
         });
         type LiveVariant = { id: string; sku: string | null; price: string; inventoryPolicy: string; selectedOptions: Variant["selectedOptions"]; qrIdentity: Field | null; barcodes: { nodes: { value: string }[]; pageInfo: { hasNextPage: boolean } }; pos: boolean; product: { id: string; status: string; pos: boolean; catalogId: Field | null; sourceId: Field | null; manualOrigin?: Field | null; variants: { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } } }; inventoryItem: { id: string; tracked: boolean; inventoryLevel: { quantities: { name: string; quantity: number }[] } | null } };
         const live = await deps.graphql<Record<string, LiveVariant | null>>(`query QrLinkLiveStatuses(${declarations.join(", ")}) { ${fields.join("\n")} }`, variables);
-        ready.forEach(({ index, record, product }, offset) => {
+        for (const [offset, { index, record, product }] of ready.entries()) {
           const variant = live[`v${offset}`];
           const current = results[index];
           if (!variant || variant.id !== record.variantId || variant.product.id !== record.productId || variant.qrIdentity?.value !== record.identity || !matchesSavedVariant(variant, variant.product, identityFor(product), deps.settings.shop) || (variant.sku || "") !== record.shopifySku || variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === record.sku)) {
-            results[index] = { ...current, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling.", availableQuantity: undefined }; return;
+            results[index] = { ...current, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling.", availableQuantity: undefined }; continue;
           }
           const available = variant.inventoryItem.inventoryLevel?.quantities.find(quantity => quantity.name === "available")?.quantity;
           if (variant.product.status !== "ACTIVE" || !variant.product.pos || !variant.pos || !Number.isSafeInteger(available) || priceCents(variant.price) <= 0) {
-            results[index] = { ...current, status: "pending", message: "Shopify POS availability changed. Retry the saved link to verify its price and sales channel.", availableQuantity: undefined }; return;
+            results[index] = { ...current, status: "pending", message: "Shopify POS availability changed. Retry the saved link to verify its price and sales channel.", availableQuantity: undefined }; continue;
+          }
+          if (inStoreOnly(product)) {
+            try {
+              if ((await nonPosPublications(product, record, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales.");
+            } catch (error) {
+              results[index] = { ...current, ...safeFailure(product.sku, error), availableQuantity: undefined }; continue;
+            }
           }
           results[index] = { ...current, priceCents: priceCents(variant.price), availableQuantity: available, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
-        });
+        }
       }
     }
     return results;
@@ -484,6 +525,20 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     if (!variant || variant.sku !== record.shopifySku || variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(barcode => barcode.value === product.sku) || retainedBarcodes.some(code => !variant!.barcodes.nodes.some(current => current.value === code.value && current.type === code.type)) || priceCents(variant.price) !== cents) pending("Shopify has not confirmed the original SKU, QR barcode, and price. Retry this saved QR.");
     if (!matchesSavedVariant(variant!, target, identity, deps.settings.shop) || variant!.qrIdentity?.value !== identity.identity) fail("The Shopify card identity changed. Its starting stock and POS publication were not applied.");
     if (target.variants.nodes.some(item => item.inventoryQuantity > 0 && priceCents(item.price) <= 0)) fail("Another stocked variant of this Shopify product has no positive price. Price it before enabling the product in POS.");
+    if (inStoreOnly(product)) {
+      await renew();
+      const outsidePos = await nonPosPublications(product, record, deps);
+      if (outsidePos.length) {
+        for (let start = 0; start < outsidePos.length; start += 100) {
+          await renew();
+          const removed = await graphql<{ publishableUnpublish: Payload }>(`mutation QrLinkInStoreOnly($id: ID!, $input: [PublicationInput!]!) {
+            publishableUnpublish(id: $id, input: $input) { userErrors { message } }
+          }`, { id: target.id, input: outsidePos.slice(start, start + 100).map(publicationId => ({ publicationId })) });
+          check(removed.publishableUnpublish);
+        }
+        if ((await nonPosPublications(product, record, deps)).length) pending("Shopify has not confirmed in-store-only sales for this Pokémon single. Retry the same QR; it is not ready yet.");
+      }
+    }
     // Only the immutable original Defy receipt is transferred, never today's stock.
     {
       if (!record.adjustmentId && record.adjustmentStartedAt && deps.clock() - record.adjustmentStartedAt >= 23 * 60 * 60 * 1000) fail("The stock transfer response is uncertain and its safe retry window expired. Review the Shopify receipt before adding stock; this QR will not add it twice.");

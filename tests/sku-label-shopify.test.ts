@@ -10,15 +10,17 @@ type Variant = { id: string; sku: string | null; barcode: string | null; barcode
 type Product = { id: string; status: string; pos: boolean; catalogId: { value: string } | null; sourceId: { value: string } | null; manualOrigin?: { value: string } | null; options: { name: string }[]; variants: { nodes: Variant[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } };
 type Fields = { namespace: string; key: string; value: string; compareDigest?: string | null };
 type VariantInput = { id?: string; barcodes?: { value: string; type?: string }[]; price?: string; inventoryPolicy?: string; inventoryItem?: { sku?: string; tracked?: boolean }; metafields?: Fields[]; optionValues?: { optionName: string; name: string }[] };
-function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean } = {}) {
+type CatalogType = "app" | "market" | "company" | "none";
+function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean; channels?: { id: string; type: CatalogType }[]; incompleteChannels?: CatalogType; unpublishFailure?: "error" | "unconfirmed" | "response-loss"; changedPolicyIdentity?: boolean } = {}) {
   let time = 1_800_000_000_000;
   let product = options.starting ? structuredClone(options.starting) : null;
   let serial = 0;
   const journals = new Map<string, { value: string; compareDigest: string }>();
   const calls: { name: string; variables: Record<string, unknown> }[] = [];
   const adjustments = new Map<string, string>();
+  const channels = new Map((options.channels ?? []).map(channel => [channel.id, channel.type]));
   let quantityAdded = 0;
-  let failedCreate = false, failedStock = false, failedPublish = false, failedAdopt = false;
+  let failedCreate = false, failedStock = false, failedPublish = false, failedAdopt = false, failedUnpublish = false;
   const clone = <T>(value: T) => structuredClone(value);
   const variant = (id: string, opts = [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }]): Variant => ({ id, sku: null, barcode: null, barcodes: { nodes: [], pageInfo: { hasNextPage: false } }, price: "0.00", inventoryQuantity: 0, inventoryPolicy: "DENY", inventoryItem: { id: `gid://shopify/InventoryItem/${id.split("/").at(-1)}`, tracked: false }, selectedOptions: opts, pos: false, qrIdentity: null });
   const deps: SkuLabelShopifyDependencies = {
@@ -34,6 +36,29 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
         case "QrLinkStatusConnection": result = { currentAppInstallation: { accessScopes: (options.missingScopes ? ["write_products", "write_inventory"] : ["write_products", "write_inventory", "write_publications"]).map(handle => ({ handle })) } }; break;
         case "QrLinkCatalogScan": result = { products: { nodes: product ? [current()] : [], pageInfo: { hasNextPage: false, endCursor: null } } }; break;
         case "QrLinkPublications": result = { publications: { nodes: [{ id: "gid://shopify/Publication/2", name: "Point of Sale", catalog: null }], pageInfo: { hasNextPage: false } } }; break;
+        case "QrLinkChannelPolicy": {
+          for (const type of ["APP", "MARKET", "COMPANY_LOCATION", "NONE"]) assert.ok(query.includes(`catalogType: ${type}`));
+          assert.equal(query.match(/onlyPublished: false/g)?.length, 4, "Scheduled publications must also be checked");
+          const bindings = Object.fromEntries((["app", "market", "company", "none"] as const).map(type => [type, {
+            nodes: [...channels].filter(([, catalogType]) => catalogType === type).map(([id]) => ({ publication: { id } })),
+            pageInfo: { hasNextPage: options.incompleteChannels === type },
+          }]));
+          const value = product?.variants.nodes.find(item => item.id === variables.variant);
+          result = { product: product ? { ...current(), ...bindings } : null, variant: value ? { ...clone(value), ...(options.changedPolicyIdentity ? { qrIdentity: { value: "changed-identity" } } : {}), product: { id: product!.id } } : null }; break;
+        }
+        case "QrLinkInStoreOnly": {
+          assert.equal(variables.id, product!.id);
+          const input = variables.input as { publicationId: string }[];
+          assert.ok(input.length <= 100);
+          assert.ok(input.every(item => item.publicationId !== "gid://shopify/Publication/2"), "Never remove POS");
+          if (options.unpublishFailure === "error") result = { publishableUnpublish: { userErrors: [{ message: "Unpublish rejected" }] } };
+          else {
+            if (options.unpublishFailure !== "unconfirmed") input.forEach(item => channels.delete(item.publicationId));
+            if (options.unpublishFailure === "response-loss" && !failedUnpublish) { failedUnpublish = true; throw new Error("Unpublish response lost"); }
+            result = { publishableUnpublish: { userErrors: [] } };
+          }
+          break;
+        }
         case "QrLinkByIdentity": case "QrLinkOriginalManual": case "SinglesProduct": {
           const identifier = variables.identifier as { customId: { value: string } };
           result = { productByIdentifier: product?.catalogId?.value === identifier.customId.value ? current() : null }; break;
@@ -115,7 +140,7 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
       return clone(result) as T;
     },
   };
-  return { deps, calls, journals, product: () => product!, quantityAdded: () => quantityAdded, advance: (amount: number) => { time += amount; } };
+  return { deps, calls, journals, channels, product: () => product!, quantityAdded: () => quantityAdded, advance: (amount: number) => { time += amount; } };
 }
 function existing(overrides: Partial<Variant> = {}): Product {
   return { id: "gid://shopify/Product/12", status: "ACTIVE", pos: true, catalogId: { value: "single:tcgplayer:printing:652905" }, sourceId: { value: "652905" }, options: [{ name: "Condition" }, { name: "Finish" }, { name: "Language" }], variants: { nodes: [{ id: "gid://shopify/ProductVariant/123", sku: card.sku, barcode: "9780262033848", barcodes: { nodes: [{ value: "9780262033848", type: "ISBN" }], pageInfo: { hasNextPage: false } }, price: "50.00", inventoryQuantity: 7, inventoryPolicy: "DENY", inventoryItem: { id: "gid://shopify/InventoryItem/1", tracked: true }, selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }], pos: true, qrIdentity: null, ...overrides }], pageInfo: { hasNextPage: false, endCursor: null } } };
@@ -352,6 +377,74 @@ test("Japanese cards do not adopt an English-only Shopify listing or attach anot
   assert.deepEqual(f.product(), starting);
   assert.equal(f.quantityAdded(), 0);
   assert.ok(!f.calls.some(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock", "QrLinkStockActivate"].includes(call.name)));
+});
+test("English and Japanese Pokémon singles remove every non-POS catalog publication and keep the same card and stock on retry", async () => {
+  for (const input of [{ ...japaneseCard, game: "Pokémon", name: "Nidoking", sku: "DEFY-3099353165", tcgplayerId: 517029, cardNumber: "174/165" }, japaneseCard]) {
+    const starting = existing({ sku: "EXISTING-STORE-SKU" });
+    starting.catalogId = { value: `single:tcgplayer:printing:${input.tcgplayerId}` }; starting.sourceId = { value: String(input.tcgplayerId) };
+    starting.variants.nodes[0].selectedOptions[2].value = input.game === "Pokémon" ? "English" : "Japanese";
+    const channels = (["app", "market", "company", "none"] as const).map((type, index) => ({ id: `gid://shopify/Publication/${index + 10}`, type }));
+    const f = fixture({ starting, channels: [...channels, { id: "gid://shopify/Publication/2", type: "app" }] });
+    const result = await linkSkuLabelToShopify(input, f.deps);
+    assert.equal(result.status, "ready");
+    assert.equal(result.productId, starting.id); assert.equal(result.variantId, starting.variants.nodes[0].id);
+    assert.equal(f.product().variants.nodes[0].sku, "EXISTING-STORE-SKU");
+    assert.equal(f.product().pos, true); assert.equal(f.product().variants.nodes[0].pos, true);
+    assert.equal(f.product().variants.nodes[0].price, "48.02");
+    assert.equal(f.quantityAdded(), 1);
+    const mutations = f.calls.filter(call => call.name === "QrLinkInStoreOnly");
+    assert.equal(mutations.length, 1);
+    assert.deepEqual(mutations[0].variables.input, channels.map(channel => ({ publicationId: channel.id })));
+    assert.deepEqual([...f.channels.keys()], ["gid://shopify/Publication/2"]);
+    assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+    assert.equal((await readSkuLabelStockTarget(input, f.deps)).availableQuantity, 8);
+    assert.equal(f.calls.filter(call => call.name === "QrLinkInStoreOnly").length, 1);
+    assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 0);
+    assert.equal(f.quantityAdded(), 1);
+  }
+});
+test("Pokémon policy failures or incomplete publication enumeration never report ready or transfer starting stock", async () => {
+  for (const extra of [{ unpublishFailure: "error" as const }, { unpublishFailure: "unconfirmed" as const }, { incompleteChannels: "market" as const }, { changedPolicyIdentity: true }]) {
+    const f = fixture({ ...extra, channels: [{ id: "gid://shopify/Publication/3", type: "app" }] });
+    const result = await linkSkuLabelToShopify(japaneseCard, f.deps);
+    assert.notEqual(result.status, "ready");
+    assert.equal(f.quantityAdded(), 0);
+    assert.ok(f.channels.has("gid://shopify/Publication/3"));
+    assert.ok(!f.calls.some(call => ["QrLinkInitialStock", "QrLinkPublish", "QrLinkPublishVariant"].includes(call.name)));
+    if ("incompleteChannels" in extra || "changedPolicyIdentity" in extra) assert.ok(!f.calls.some(call => call.name === "QrLinkInStoreOnly"));
+    assert.notEqual((await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0].status, "ready");
+  }
+});
+test("a lost Pokémon unpublish response reconciles the same product before receiving stock once", async () => {
+  const f = fixture({ unpublishFailure: "response-loss", channels: [{ id: "gid://shopify/Publication/3", type: "app" }] });
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "pending");
+  assert.equal(f.quantityAdded(), 0); assert.equal(f.channels.size, 0);
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "ready");
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkInStoreOnly").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+});
+test("read-only readiness detects Pokémon republished or scheduled outside POS and requires an explicit relink", async () => {
+  const f = fixture(); assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "ready");
+  f.channels.set("gid://shopify/Publication/3", "market");
+  const count = f.calls.length;
+  const status = (await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0];
+  assert.equal(status.status, "blocked"); assert.match(status.message, /outside POS/); assert.equal(status.availableQuantity, undefined);
+  await assert.rejects(readSkuLabelStockTarget(japaneseCard, f.deps), /outside POS/);
+  assert.ok(f.channels.has("gid://shopify/Publication/3"));
+  assert.ok(!f.calls.slice(count).some(call => ["QrLinkInStoreOnly", "QrLinkInitialStock", "QrLinkPublish"].includes(call.name)));
+  assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "ready");
+  assert.equal(f.channels.size, 0); assert.equal(f.quantityAdded(), 1);
+});
+test("non-Pokémon QR links preserve their other publications and never invoke the Pokémon policy", async () => {
+  for (const game of ["MTG", "Riftbound"]) {
+    const f = fixture({ channels: [{ id: "gid://shopify/Publication/3", type: "app" }] });
+    const input = { ...card, game };
+    assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+    assert.equal((await getSkuLabelShopifyStatuses([input], f.deps))[0].status, "ready");
+    assert.ok(f.channels.has("gid://shopify/Publication/3"));
+    assert.ok(!f.calls.some(call => ["QrLinkChannelPolicy", "QrLinkInStoreOnly"].includes(call.name)));
+  }
 });
 test("uncertain stock outside Shopify replay window fails closed", async () => {
   const f = fixture({ failAfterStock: true }); const input = { ...card, initialQuantity: 4 };
