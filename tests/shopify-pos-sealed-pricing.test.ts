@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { ScrydexError } from "../lib/scrydex.ts";
 import { linkSealedPrice, lookupSealedPrice } from "../lib/shopify/pos-sealed-pricing.ts";
-import type { SealedCatalogProduct } from "../lib/scrydex-sealed-catalog.ts";
+import { getSealedCatalogProduct, type SealedCatalogProduct } from "../lib/scrydex-sealed-catalog.ts";
 import type { SinglesGraphQL } from "../lib/singles/shopify.ts";
 
 const key = (code: string) => createHash("sha256").update(code).digest("hex");
@@ -86,6 +86,41 @@ test("an unregistered manufacturer code is unmapped without any catalog guess or
   assert.deepEqual(await lookupSealedPrice("290-85316", f.dependencies), { status: "unmapped", code: "290-85316" });
   assert.equal(f.state.fetched.length, 0);
   assert.equal(f.state.mutations.length, 0);
+});
+
+test("a standalone collection fixture can be confirmed and rescanned for a fresh price", async t => {
+  const oldKey = process.env.SCRYDEX_API_KEY;
+  const oldTeam = process.env.SCRYDEX_TEAM_ID;
+  process.env.SCRYDEX_API_KEY = "test-only-key";
+  process.env.SCRYDEX_TEAM_ID = "test-only-team";
+  t.after(() => {
+    if (oldKey === undefined) delete process.env.SCRYDEX_API_KEY; else process.env.SCRYDEX_API_KEY = oldKey;
+    if (oldTeam === undefined) delete process.env.SCRYDEX_TEAM_ID; else process.env.SCRYDEX_TEAM_ID = oldTeam;
+  });
+  const f = fixture();
+  let calls = 0;
+  const dependencies = { ...f.dependencies, getProduct: (id: string) => getSealedCatalogProduct({ game: "pokemon", id }, {
+    fresh: true, fetch: async (_url, init) => {
+      assert.equal(init?.cache, "no-store");
+      calls++;
+      return Response.json({ data: {
+        id: "collection-s1", name: "Day 2026 Collection", type: "Collection Box", language_code: "EN", expansion: null,
+        variants: [{ name: "normal", prices: [{ type: "raw", condition: "U", currency: "USD", market: calls === 1 ? 19.99 : 21.25 }] }],
+      } });
+    },
+  }) };
+  const barcode = "196214141537";
+  assert.equal((await lookupSealedPrice(barcode, dependencies)).status, "unmapped");
+  assert.equal(calls, 0);
+  const quote = await linkSealedPrice({ code: barcode, id: "collection-s1", expectedId: null }, dependencies);
+  assert.equal(quote.product.marketCents, 1999);
+  assert.equal(quote.product.setName, "No set listed");
+  assert.equal(quote.mappingSource, "confirmed");
+  const scanned = await lookupSealedPrice(barcode, dependencies);
+  assert.equal(scanned.status === "quoted" && scanned.quote.product.marketCents, 2125);
+  assert.equal(scanned.status === "quoted" && scanned.quote.mappingSource, "saved");
+  assert.equal(calls, 2);
+  assert.equal(f.state.mutations.length, 1);
 });
 
 test("a confirmed SKU mapping is authoritative and reads fresh market price on every scan", async () => {

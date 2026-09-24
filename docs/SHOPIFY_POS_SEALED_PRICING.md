@@ -30,6 +30,13 @@ and an unambiguous raw USD market price**. Japanese, multi-edition vintage, and
 products without usable prices return an unavailable result. Failed lookups
 never substitute another product, zero price, or another pricing provider.
 
+Name search accepts a leading `Pokemon` / `Pokémon` (and optional `TCG`)
+and matches the remaining words across the product name, set name, and package
+type. The year and package words remain required. A standalone product with
+explicit English language metadata but no expansion displays **No set listed**;
+staff still confirm its exact product and package before saving the barcode.
+Missing language, conflicting language, and unsupported editions remain excluded.
+
 ## Price freshness
 
 Every successful scan, confirmation, and refresh retrieves the exact product
@@ -38,6 +45,11 @@ catalog cache. The displayed timestamp describes when Defy fetched the quote;
 Scrydex determines when its underlying market data changes. Internet access
 and Scrydex API credits are required. Search previews keep their existing cache,
 and confirming a match obtains a fresh price.
+
+Server logs record `scrydex.sealed.search` result counts to distinguish an empty
+Scrydex result from products excluded by validation. These logs omit search
+text, barcodes, product data, and credentials; they are not API billing counters
+because catalog responses may be cached.
 
 Checking a price does not change Shopify selling prices, inventory, acquisition
 costs, or the cart. Keep **Defy Pricing** for the existing selling-price/cart

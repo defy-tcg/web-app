@@ -45,18 +45,61 @@ test("documented English sealed fixtures return bounded identity, package, image
   }
 });
 
-test("search escapes each name term and fixes English scope, page limit, prices, timeout, cache and destination", async t => {
+test("search escapes each term across product, set and package fields and fixes English scope and request bounds", async t => {
   config(t);
   const f = provider(searchResult([]));
   await searchSealedCatalog({ game: "pokemon", query: ' Paldean Fates") OR name:* ' }, f);
   assert.equal(f.calls.length, 1);
   const { url, init } = f.calls[0];
   assert.equal(url.origin, "https://api.scrydex.com");
-  assert.equal(url.searchParams.get("q"), String.raw`(name:"Paldean" AND name:"Fates\"\)" AND name:"OR" AND name:"name\:\*") AND (language_code:EN OR expansion.language_code:EN)`);
+  assert.equal(url.searchParams.get("q"), String.raw`((name:"Paldean" OR expansion.name:"Paldean" OR type:"Paldean") AND (name:"Fates\"\)" OR expansion.name:"Fates\"\)" OR type:"Fates\"\)") AND (name:"OR" OR expansion.name:"OR" OR type:"OR") AND (name:"name\:\*" OR expansion.name:"name\:\*" OR type:"name\:\*")) AND (language_code:EN OR expansion.language_code:EN OR language:"English" OR expansion.language:"English")`);
   assert.equal(url.searchParams.get("page"), "1"); assert.equal(url.searchParams.get("page_size"), "20");
   assert.equal(url.searchParams.get("include"), "prices"); assert.equal(url.searchParams.get("casing"), "snake");
   assert.equal(init.redirect, "error"); assert.equal(init.next?.revalidate, 86_400); assert.ok(init.signal instanceof AbortSignal);
   assert.deepEqual(init.headers, { "X-Api-Key": "test-only-secret", "X-Team-ID": "test-only-team", Accept: "application/json" });
+});
+
+test("Pokémon retailer branding does not prevent a collection name from matching and never removes the year or package", async t => {
+  config(t);
+  for (const query of ["Pokemon Day 2026 Collection", "Pokémon Day 2026 Collection", "Poke\u0301mon TCG: Day 2026 Collection", "Day 2026 Collection"]) {
+    const f = provider(searchResult([]));
+    await searchSealedCatalog({ game: "pokemon", query }, f);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].url.searchParams.get("q"), '((name:"Day" OR expansion.name:"Day" OR type:"Day") AND (name:"2026" OR expansion.name:"2026" OR type:"2026") AND (name:"Collection" OR expansion.name:"Collection" OR type:"Collection")) AND (language_code:EN OR expansion.language_code:EN OR language:"English" OR expansion.language:"English")');
+  }
+  const f = provider(searchResult([]));
+  for (const query of ["Pokemon", "Pokémon TCG", "Pokémon TCG:"]) {
+    await assert.rejects(searchSealedCatalog({ game: "pokemon", query }, f), code("incomplete_identity"));
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test("standalone English collection fixtures remain selectable with their USD price and an explicit missing-set label", async t => {
+  config(t);
+  for (const expansion of [undefined, null]) {
+    const item = candidate({ id: "collection-s1", name: "Day 2026 Collection", type: "Collection Box", expansion, language: "English" });
+    const result = await searchSealedCatalog({ game: "pokemon", query: "Pokemon Day 2026 Collection" }, provider(searchResult([item])));
+    assert.equal(result.products.length, 1);
+    assert.equal(result.products[0].setName, "No set listed");
+    assert.equal(result.products[0].marketCents, 713);
+    assert.deepEqual(await getSealedCatalogProduct({ game: "pokemon", id: item.id }, provider({ data: item })), result.products[0]);
+  }
+  for (const fields of [{}, { language: "Japanese" }, { language: "English", language_code: "JA" }]) {
+    const item = candidate({ expansion: null, ...fields });
+    assert.equal((await searchSealedCatalog({ game: "pokemon", query: "Day Collection" }, provider(searchResult([item])))).products.length, 0);
+  }
+});
+
+test("search diagnostics distinguish an empty provider result from filtered products without recording queries or credentials", async t => {
+  config(t);
+  const log = t.mock.method(console, "info", () => {});
+  await searchSealedCatalog({ game: "pokemon", query: "PRIVATE_QUERY" }, provider(searchResult([])));
+  await searchSealedCatalog({ game: "pokemon", query: "PRIVATE_QUERY" }, provider(searchResult([candidate({ language_code: "JA" })])));
+  assert.deepEqual(log.mock.calls.map(call => JSON.parse(call.arguments[0])), [
+    { event: "scrydex.sealed.search", game: "pokemon", returnedCount: 0, acceptedCount: 0, filteredCount: 0, totalCount: 0, hasMore: false },
+    { event: "scrydex.sealed.search", game: "pokemon", returnedCount: 1, acceptedCount: 0, filteredCount: 1, totalCount: 1, hasMore: false },
+  ]);
+  assert.doesNotMatch(JSON.stringify(log.mock.calls.map(call => call.arguments)), /PRIVATE_QUERY|test-only|me1-s1/);
 });
 
 test("bad games, query lengths, controls and unsafe detail IDs are rejected before any provider call", async t => {

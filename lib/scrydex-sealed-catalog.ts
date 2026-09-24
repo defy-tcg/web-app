@@ -26,11 +26,18 @@ function productId(value: unknown): string {
   if (typeof value !== "string" || !SAFE_ID.test(value)) throw new ScrydexError("incomplete_identity", "Choose a valid Scrydex sealed product ID.");
   return value;
 }
-function searchTerms(value: unknown): string[] {
+function searchTerms(value: unknown, sourceGame: SealedCatalogGame): string[] {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || value.trim().length < 3 || value.trim().length > 100) {
     throw new ScrydexError("incomplete_identity", "Enter a product name between 3 and 100 characters.");
   }
-  return value.trim().split(/\s+/);
+  const normalized = value.trim().normalize("NFC");
+  // The game is already scoped by the endpoint. Retailer titles often add this
+  // prefix even when Scrydex omits it or uses the accented spelling.
+  const query = sourceGame === "pokemon"
+    ? normalized.replace(/^pok[eé]mon(?:\s+tcg)?(?:\s*:\s*|\s+|$)/iu, "").trim()
+    : normalized;
+  if (query.length < 3) throw new ScrydexError("incomplete_identity", "Enter a set or product name after Pokémon.");
+  return query.split(/\s+/);
 }
 const quote = (value: string) => `"${value.replace(/[+\-!(){}\[\]^"~*?:\\/|&]/g, "\\$&")}"`;
 
@@ -89,7 +96,9 @@ function product(value: unknown, sourceGame: SealedCatalogGame): SealedCatalogPr
   const candidate = object(value);
   const id = text(candidate.id, 100);
   const name = text(candidate.name);
-  const setName = text(object(candidate.expansion).name, 300);
+  // Standalone sealed collections may have no expansion. Keep that absence
+  // explicit; language and the exact provider ID are still required below.
+  const setName = candidate.expansion == null ? "No set listed" : text(object(candidate.expansion).name, 300);
   const type = text(candidate.type, 100);
   if (!SAFE_ID.test(id) || !name || !setName || !type || !english(candidate) || !normalEdition(candidate)) return null;
   return { id, game: sourceGame, name, setName, language: "English", unit: unit(type, name), imageUrl: image(candidate), marketCents: market(candidate) };
@@ -122,16 +131,22 @@ async function request(url: URL, options: Options, detail = false): Promise<Obje
 
 export async function searchSealedCatalog(input: { game: unknown; query: unknown }, options: Options = {}): Promise<{ products: SealedCatalogProduct[]; hasMore: boolean }> {
   const sourceGame = game(input?.game);
-  const terms = searchTerms(input?.query);
+  const terms = searchTerms(input?.query, sourceGame);
   const url = new URL(`${API_BASE}/${sourceGame}/v1/sealed`);
-  const q = `(${terms.map(term => `name:${quote(term)}`).join(" AND ")}) AND (language_code:EN OR expansion.language_code:EN)`;
+  // A set name or package type may be separate from the provider's product
+  // title. Every descriptive term still has to match; staff confirm the ID.
+  const q = `(${terms.map(term => `(name:${quote(term)} OR expansion.name:${quote(term)} OR type:${quote(term)})`).join(" AND ")}) AND (language_code:EN OR expansion.language_code:EN OR language:"English" OR expansion.language:"English")`;
   url.search = new URLSearchParams({ q, include: "prices", casing: "snake", page: "1", page_size: String(PAGE_SIZE) }).toString();
   const result = await request(url, options);
   const total = result.total_count ?? result.totalCount;
   if (!Array.isArray(result.data) || result.data.length > PAGE_SIZE || typeof total !== "number" || !Number.isSafeInteger(total) || total < result.data.length) throw upstream();
   const products = result.data.map(value => product(value, sourceGame)).filter((value): value is SealedCatalogProduct => value !== null);
   if (new Set(products.map(value => value.id)).size !== products.length) throw upstream();
-  return { products, hasMore: total > result.data.length };
+  const hasMore = total > result.data.length;
+  console.info(JSON.stringify({ event: "scrydex.sealed.search", game: sourceGame,
+    returnedCount: result.data.length, acceptedCount: products.length, filteredCount: result.data.length - products.length,
+    totalCount: total, hasMore }));
+  return { products, hasMore };
 }
 
 export async function getSealedCatalogProduct(input: { game: unknown; id: unknown }, options: Options = {}): Promise<SealedCatalogProduct> {
