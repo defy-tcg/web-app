@@ -275,6 +275,37 @@ const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: st
   "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
 };
 
+// TCGplayer assigns some unnumbered promos a catalog number. Each exception
+// pins both providers' complete printing identity; missing numbers alone never
+// authorize a match or map the whole Miscellaneous bucket to one expansion.
+const POKEMON_UNNUMBERED_PRINTINGS: Record<number, {
+  name: string; setName: string; catalogNumber: string; scrydexId: string;
+  expansion: { id: string; name: string; series: string; code: string };
+}> = {
+  108589: {
+    name: "Ancient Mew", setName: "miscellaneous cards & products", catalogNumber: "1", scrydexId: "miscp-1",
+    expansion: { id: "miscp", name: "miscellaneous", series: "other", code: "misc" },
+  },
+};
+
+function unnumberedPokemonPrinting(product: ScrydexProduct) {
+  if (gameFromAlias(product.game)?.key !== "pokemon" || identity(product.productType) !== "single"
+    || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0) return undefined;
+  const printing = POKEMON_UNNUMBERED_PRINTINGS[product.tcgplayerId!];
+  return printing && identity(productNameWithoutGame(product)) === identity(printing.name)
+    && identity(product.setName) === printing.setName && numberKey(product.cardNumber) === printing.catalogNumber
+    ? printing : undefined;
+}
+
+function verifiedUnnumberedPokemonPrinting(product: ScrydexProduct, candidate: ObjectValue) {
+  const printing = unnumberedPokemonPrinting(product), expansion = object(candidate.expansion);
+  return Boolean(printing && text(candidate.id) === printing.scrydexId && identity(candidate.name) === identity(printing.name)
+    && candidate.number === null && candidate.printed_number === null && expansion.printed_total === null
+    && identity(candidate.rarity) === "promo" && identity(candidate.language_code) === "en" && identity(expansion.language_code) === "en"
+    && Object.entries(printing.expansion).every(([key, value]) => identity(expansion[key]) === value)
+    && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)));
+}
+
 const POKEMON_SERIES_PREFIXES: Record<string, string> = {
   sv: "scarlet & violet", swsh: "sword & shield", sm: "sun & moon",
   xy: "xy", bw: "black & white", me: "mega evolution",
@@ -370,12 +401,13 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const spec = productSpec(product);
   const matches = candidates.map(object).filter((candidate) => {
     const expansion = object(candidate.expansion);
+    const unnumbered = verifiedUnnumberedPokemonPrinting(product, candidate);
     return text(candidate.id) && (spec.language === "Japanese" ? japanese(candidate) : english(candidate))
       && candidate.is_online_only !== true && expansion.is_online_only !== true
       && expansion.is_foreign_only !== true
       && verifiedName(product, candidate, spec.game, spec.language)
-      && verifiedSetName(product, candidate, spec.game, spec.language)
-      && (spec.sealed || matchesNumber(product.cardNumber, candidate));
+      && (verifiedSetName(product, candidate, spec.game, spec.language) || unnumbered)
+      && (spec.sealed || matchesNumber(product.cardNumber, candidate) || unnumbered);
   });
   if (!matches.length) throw new ScrydexError("not_found", `No exact ${spec.language} Scrydex match for this name, set, and collector number.`);
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
@@ -391,7 +423,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
       return ["normal", "foil"].includes(spec.finish) && finishKey(variant.name) === spec.finish;
     }
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (pokemonRarity || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
+    if (pokemonRarity || unnumberedPokemonPrinting(product) || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");
@@ -457,6 +489,13 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
     // collector lookup supplies candidates without changing exact selection.
     const setQuery = ["expansion.name", "expansion.code", "expansion.id"].map(field => `${field}:${queryLiteral(product.setName)}`).join(" OR ");
     clauses.push(`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND (${setQuery}) AND language_code:EN)`);
+  }
+  const unnumbered = unnumberedPokemonPrinting(product);
+  if (unnumbered) {
+    // Its TCGplayer catalog numeral is not a printed card number in Scrydex.
+    // Scrydex does not index this card's ID. Bound its retrieval to the known
+    // exact name, expansion and language; selection still verifies its ID.
+    clauses.push(`(!name:${queryLiteral(unnumbered.name)} AND expansion.id:${queryLiteral(unnumbered.expansion.id)} AND language_code:EN)`);
   }
   if (hasMarketplaceId) {
     clauses.push(`variants.marketplaces.product_id:${queryLiteral(String(product.tcgplayerId))}`);

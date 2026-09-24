@@ -332,6 +332,37 @@ test("Mega Evolution resumes a price-blocked QR with its exact quote and one ori
   assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
 });
+test("Ancient Mew's verified unnumbered promo repairs the existing QR and transfers starting stock once", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 98, sku: "DEFY-7174844875", name: "Ancient Mew", game: "Pokémon",
+    setName: "Miscellaneous Cards & Products", cardNumber: "1", tcgplayerId: 108589, quantity: 1, initialQuantity: 1,
+  };
+  const f = fixture({ priceError: true });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  // Verified live miscp-1 record: TCGplayer's catalog numeral is not printed
+  // on this promo, so both Scrydex collector fields are explicitly null.
+  f.deps.resolvePrice = async product => selectScrydexPrice(product, [{
+    id: "miscp-1", name: "Ancient Mew", number: null, printed_number: null, rarity: "Promo", language_code: "EN",
+    expansion: { id: "miscp", name: "Miscellaneous", series: "Other", code: "MISC", printed_total: null, language_code: "EN" },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "108589" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 117.64 }] }],
+  }]);
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.priceCents, 11764, "Pokémon uses the unmarked exact market price");
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  const variants = f.product().variants.nodes;
+  assert.equal(variants.length, 1);
+  assert.equal(variants[0].barcode, input.sku);
+  assert.equal(variants[0].price, "117.64");
+  assert.equal(variants[0].pos, true);
+  assert.equal(f.website.product, false, "Pokémon remains available in-store only");
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
+});
 test("a price-blocked Japanese card corrects only its unused language identity and retains the original QR stock receipt", async () => {
   const f = await blockedJapaneseFixture({ failAfterStock: true });
   const key = qrJournalKey(japaneseCard.sku);

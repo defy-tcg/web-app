@@ -160,6 +160,13 @@ gallery cannot silently match its main set or a different gallery.
 English Pokémon searches include the saved collector number and language, plus
 an exact marketplace-ID alternative, so common names such as Pikachu do not
 overflow the result limit before identity verification.
+Ancient Mew is a verified exception for an unnumbered promo: TCGplayer product
+**108589** uses catalog number **1** in **Miscellaneous Cards & Products**, while
+Scrydex record **miscp-1** uses **Miscellaneous** and explicit null collector
+numbers. This mapping pins the exact card, Promo rarity, expansion metadata,
+English language, and selected-variant marketplace ID. Its search adds the known
+name and expansion in the same request. It does not relax number checks for
+other cards or combine the English promo with Japanese printings.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
 named editions remain distinct. Verified language, collector number, condition,
