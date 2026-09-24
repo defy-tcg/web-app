@@ -261,73 +261,85 @@ export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, d
 /** Read-only status: persisted progress plus live barcode, POS, price, and location stock verification. */
 export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShopifyProduct[], dependencies?: SkuLabelShopifyDependencies): Promise<SkuLabelShopifyStatus[]> {
   if (!products.length) return [];
+  const unavailable = (sku: string): SkuLabelShopifyStatus => ({ sku, status: "pending", message: "Shopify POS status is temporarily unavailable. The QR remains saved." });
+  const unverified = (status: SkuLabelShopifyStatus): SkuLabelShopifyStatus => ({ ...status,
+    availableQuantity: undefined, checkedAt: undefined, priceCents: undefined, transferredQuantity: undefined });
+  let deps: SkuLabelShopifyDependencies;
   try {
-    const deps: SkuLabelShopifyDependencies = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
+    deps = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
     const connection = await deps.graphql<{ currentAppInstallation: { accessScopes: { handle: string }[] } }>(`query QrLinkStatusConnection { currentAppInstallation { accessScopes { handle } } }`);
     const scopes = new Set(connection.currentAppInstallation.accessScopes.map(scope => scope.handle));
     const missing = ["write_products", "write_inventory", "write_publications"].filter(scope => !scopes.has(scope));
     if (missing.length) return products.map(product => ({ sku: product.sku, status: "blocked", message: `The QR is saved. Shopify POS linking needs these app permissions: ${missing.join(", ")}. The owner must approve the updated Shopify app permissions.` }));
-    const results: SkuLabelShopifyStatus[] = [];
-    let website: Promise<string> | undefined;
-    for (let start = 0; start < products.length; start += 20) {
-      const batch = products.slice(start, start + 20);
-      const fields = batch.map((product, index) => `q${index}: metafield(namespace: "${NAMESPACE}", key: "${journalKey(product.sku)}") { value }`).join("\n");
-      const response = await deps.graphql<{ shop: Record<string, Field | null> }>(`query QrLinkStatuses { shop { ${fields} } }`);
-      const ready: { index: number; record: Journal; product: SkuLabelShopifyProduct }[] = [];
-      batch.forEach((product, index) => {
-        let stored: Journal | null = null;
-        try { stored = JSON.parse(response.shop[`q${index}`]?.value || "null") as Journal | null; } catch { /* An invalid journal cannot confirm readiness. */ }
-        try {
-          const identity = identityFor(product).identity;
-          const valid = stored?.version === 1 && stored.sku === product.sku && stored.identity === identity && stored.initialQuantity === product.initialQuantity && stored.status?.sku === product.sku;
-          results.push(valid && stored?.status ? stored.status : { sku: product.sku, status: "pending", message: "Shopify POS has not confirmed this saved QR yet." });
-          if (valid && stored && stored.status?.status === "ready") {
-            if (stored.variantId && stored.productId && stored.publicationId && (stored.initialQuantity === 0 || stored.adjustmentId)) ready.push({ index: results.length - 1, record: stored, product });
-            else results[results.length - 1] = { sku: product.sku, status: "pending", message: "Shopify POS needs to reverify this saved QR link." };
-          }
-        } catch (error) { results.push(safeFailure(product.sku, error)); }
+  } catch { return products.map(product => unavailable(product.sku)); }
+  const results: SkuLabelShopifyStatus[] = [];
+  let website: Promise<string> | undefined;
+  for (let start = 0; start < products.length; start += 20) {
+    const batch = products.slice(start, start + 20);
+    const fields = batch.map((product, index) => `q${index}: metafield(namespace: "${NAMESPACE}", key: "${journalKey(product.sku)}") { value }`).join("\n");
+    let response: { shop: Record<string, Field | null> };
+    try {
+      response = await deps.graphql(`query QrLinkStatuses { shop { ${fields} } }`);
+    } catch {
+      results.push(...batch.map(product => unavailable(product.sku)));
+      continue;
+    }
+    const ready: { index: number; record: Journal; product: SkuLabelShopifyProduct }[] = [];
+    batch.forEach((product, index) => {
+      let stored: Journal | null = null;
+      try { stored = JSON.parse(response.shop[`q${index}`]?.value || "null") as Journal | null; } catch { /* An invalid journal cannot confirm readiness. */ }
+      try {
+        const identity = identityFor(product).identity;
+        const valid = stored?.version === 1 && stored.sku === product.sku && stored.identity === identity && stored.initialQuantity === product.initialQuantity && stored.status?.sku === product.sku;
+        results.push(valid && stored?.status ? unverified(stored.status) : { sku: product.sku, status: "pending", message: "Shopify POS has not confirmed this saved QR yet." });
+        if (valid && stored && stored.status?.status === "ready") {
+          // A saved ready status is only a candidate until every live check succeeds.
+          results[results.length - 1] = unverified({ ...stored.status, ...unavailable(product.sku) });
+          if (stored.variantId && stored.productId && stored.publicationId && (stored.initialQuantity === 0 || stored.adjustmentId)) ready.push({ index: results.length - 1, record: stored, product });
+          else results[results.length - 1].message = "Shopify POS needs to reverify this saved QR link.";
+        }
+      } catch (error) { results.push(safeFailure(product.sku, error)); }
+    });
+    // Live variant queries are substantially more expensive than journal reads.
+    // Isolate their failures so one throttled request cannot erase other results.
+    for (let liveStart = 0; liveStart < ready.length; liveStart += 5) {
+      const liveBatch = ready.slice(liveStart, liveStart + 5);
+      const variables: Record<string, unknown> = { location: deps.settings.locationId };
+      const declarations = ["$location: ID!"];
+      const fields = liveBatch.map(({ record }, index) => {
+        variables[`variant${index}`] = record.variantId; variables[`pos${index}`] = record.publicationId;
+        declarations.push(`$variant${index}: ID!`, `$pos${index}: ID!`);
+        return `v${index}: productVariant(id: $variant${index}) { id sku price inventoryPolicy selectedOptions { name value } qrIdentity: metafield(namespace: "${NAMESPACE}", key: "qr_identity") { value } barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } pos: publishedOnPublication(publicationId: $pos${index}) product { id status catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value } sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value } manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value } variants(first: 2) { nodes { id } pageInfo { hasNextPage } } pos: publishedOnPublication(publicationId: $pos${index}) } inventoryItem { id tracked inventoryLevel(locationId: $location) { quantities(names: ["available"]) { name quantity } } } }`;
       });
-      if (ready.length) {
-        const variables: Record<string, unknown> = { location: deps.settings.locationId };
-        const declarations = ["$location: ID!"];
-        const fields = ready.map(({ record }, index) => {
-          variables[`variant${index}`] = record.variantId; variables[`pos${index}`] = record.publicationId;
-          declarations.push(`$variant${index}: ID!`, `$pos${index}: ID!`);
-          return `v${index}: productVariant(id: $variant${index}) { id sku price inventoryPolicy selectedOptions { name value } qrIdentity: metafield(namespace: "${NAMESPACE}", key: "qr_identity") { value } barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } pos: publishedOnPublication(publicationId: $pos${index}) product { id status catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value } sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value } manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value } variants(first: 2) { nodes { id } pageInfo { hasNextPage } } pos: publishedOnPublication(publicationId: $pos${index}) } inventoryItem { id tracked inventoryLevel(locationId: $location) { quantities(names: ["available"]) { name quantity } } } }`;
-        });
-        type LiveVariant = { id: string; sku: string | null; price: string; inventoryPolicy: string; selectedOptions: Variant["selectedOptions"]; qrIdentity: Field | null; barcodes: { nodes: { value: string }[]; pageInfo: { hasNextPage: boolean } }; pos: boolean; product: { id: string; status: string; pos: boolean; catalogId: Field | null; sourceId: Field | null; manualOrigin?: Field | null; variants: { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } } }; inventoryItem: { id: string; tracked: boolean; inventoryLevel: { quantities: { name: string; quantity: number }[] } | null } };
-        const live = await deps.graphql<Record<string, LiveVariant | null>>(`query QrLinkLiveStatuses(${declarations.join(", ")}) { ${fields.join("\n")} }`, variables);
-        for (const [offset, { index, record, product }] of ready.entries()) {
+      type LiveVariant = { id: string; sku: string | null; price: string; inventoryPolicy: string; selectedOptions: Variant["selectedOptions"]; qrIdentity: Field | null; barcodes: { nodes: { value: string }[]; pageInfo: { hasNextPage: boolean } }; pos: boolean; product: { id: string; status: string; pos: boolean; catalogId: Field | null; sourceId: Field | null; manualOrigin?: Field | null; variants: { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } } }; inventoryItem: { id: string; tracked: boolean; inventoryLevel: { quantities: { name: string; quantity: number }[] } | null } };
+      let live: Record<string, LiveVariant | null>;
+      try {
+        live = await deps.graphql(`query QrLinkLiveStatuses(${declarations.join(", ")}) { ${fields.join("\n")} }`, variables);
+      } catch { continue; } // These candidates remain pending; other batches still get checked.
+      for (const [offset, { index, record, product }] of liveBatch.entries()) {
+        const current = results[index];
+        try {
           const variant = live[`v${offset}`];
-          const current = results[index];
           if (!variant || variant.id !== record.variantId || variant.product.id !== record.productId || variant.qrIdentity?.value !== record.identity || !matchesSavedVariant(variant, variant.product, identityFor(product), deps.settings.shop) || (variant.sku || "") !== record.shopifySku || variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === record.sku)) {
-            results[index] = { ...current, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling.", availableQuantity: undefined }; continue;
+            results[index] = { ...current, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling." }; continue;
           }
           const available = variant.inventoryItem.inventoryLevel?.quantities.find(quantity => quantity.name === "available")?.quantity;
           if (variant.product.status !== "ACTIVE" || !variant.product.pos || !variant.pos || !Number.isSafeInteger(available) || priceCents(variant.price) <= 0) {
-            results[index] = { ...current, status: "pending", message: "Shopify POS availability changed. Retry the saved link to verify its price and sales channel.", availableQuantity: undefined }; continue;
+            results[index] = { ...current, status: "pending", message: "Shopify POS availability changed. Retry the saved link to verify its price and sales channel." }; continue;
           }
-          if (inStoreOnly(product)) {
-            try {
-              if ((await nonPosPublications(product, record, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales.");
-            } catch (error) {
-              results[index] = { ...current, ...safeFailure(product.sku, error), availableQuantity: undefined }; continue;
-            }
-          }
+          if (inStoreOnly(product) && (await nonPosPublications(product, record, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales.");
           if (onWebsite(product)) {
-            try {
-              website ??= websitePublication(deps);
-              if (!await websiteAvailable(product, record, deps, await website)) pending("This Riftbound card is linked to POS but is not available on the Defy website. Retry its saved link to restore website availability.");
-            } catch (error) {
-              results[index] = { ...current, ...safeFailure(product.sku, error), availableQuantity: undefined }; continue;
-            }
+            website ??= websitePublication(deps);
+            if (!await websiteAvailable(product, record, deps, await website)) pending("This Riftbound card is linked to POS but is not available on the Defy website. Retry its saved link to restore website availability.");
           }
-          results[index] = { ...current, priceCents: priceCents(variant.price), availableQuantity: available, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
+          results[index] = { ...record.status!, priceCents: priceCents(variant.price), availableQuantity: available, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
+        } catch (error) {
+          results[index] = { ...current, ...safeFailure(product.sku, error) };
         }
       }
     }
-    return results;
-  } catch { return products.map(product => ({ sku: product.sku, status: "pending", message: "Shopify POS status is temporarily unavailable. The QR remains saved." })); }
+  }
+  return results;
 }
 
 /** Transfers only original starting stock; never changes unit cost. Retries retain both identities. */

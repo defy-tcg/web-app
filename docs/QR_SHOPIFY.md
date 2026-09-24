@@ -167,6 +167,11 @@ numbers. This mapping pins the exact card, Promo rarity, expansion metadata,
 English language, and selected-variant marketplace ID. Its search adds the known
 name and expansion in the same request. It does not relax number checks for
 other cards or combine the English promo with Japanese printings.
+Pokémon Center Exclusive promos retain their stamped edition when TCGplayer
+calls the finish Foil. The exact TCGplayer ID must belong to Scrydex's
+`pokemonCenterStamp` variant, with the same name, set, collector number,
+language, and condition. For example, Eevee #173, TCGplayer **610757**, uses
+its stamped quote; the regular holofoil version **610758** cannot supply its price.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
 named editions remain distinct. Verified language, collector number, condition,
@@ -206,6 +211,12 @@ The server loads card identity and the original receipt from the database; clien
 cannot choose Shopify product IDs or submit a replacement stock delta. App-owned
 Shopify metafields store identity, mapping, lease, adjustment, and status with
 compare-and-set writes. No Neon schema change is required.
+
+Library status reads check up to 20 saved journals at a time and verify live
+variants in groups of five to stay within Shopify's request budget. A failed
+request affects only that group: other confirmed results and specific saved
+blockers remain visible. Unverified cards show no stale price, stock count, or
+verification timestamp. Status reads never create products or receive stock.
 
 - **Ready:** Shopify confirmed the matching variant, saved barcode, sale price,
   starting receipt, and POS publication. Riftbound also requires live website

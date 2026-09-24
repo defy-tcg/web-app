@@ -505,7 +505,7 @@ export default function SkuLabelsClient() {
   function print() {
     if (!canPrint || busy || pdfBusy || inventoryBusy || shopifyBusy) return;
     setError("");
-    setMessage("Use paper width 38 mm across the roll and height 13 mm in the feed direction, at 100% / actual size. Sideways or split labels in Mac Chrome? Choose More settings → Print using system dialog (Option + Command + P), then select your 38 × 13 mm paper and Portrait with no additional rotation.");
+    setMessage("Print requested. If no dialog opens, download the PDF and open it in Preview to print.");
     try {
       // Keep the print request in the click event and avoid unsupported popup windows.
       window.print();
@@ -584,7 +584,7 @@ export default function SkuLabelsClient() {
             </div>
             <div className="sku-print-settings">
               <label>Copies per SKU<input disabled={inventoryBusy || pdfBusy} type="number" inputMode="numeric" min={1} max={100} step={1} value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
-              <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>labels to print</span></div>
+              <div className="sku-total"><strong>{canPrint ? total : "—"}</strong><span>{total === 1 ? "label" : "labels"} to print</span></div>
               <div className="sku-print-actions">
                 <button className="dark-button" disabled={!canPrint || busy || pdfBusy || inventoryBusy || shopifyBusy} onClick={() => void downloadPdf()}>{pdfBusy ? "Preparing PDF…" : "Download PDF"}</button>
                 <button className="secondary-button" disabled={!canPrint || busy || pdfBusy || inventoryBusy || shopifyBusy} onClick={print}>Print {canPrint ? total : ""} label{total === 1 ? "" : "s"}</button>
@@ -599,7 +599,7 @@ export default function SkuLabelsClient() {
           </section>
         </div>
 
-        <div className="sku-feedback" aria-live="polite">{message && <p className={unreadyForPos > 0 ? "sku-storage-warning" : "sku-success"} role="status">{message}</p>}{error && <p className="sku-inline-error" role="alert">{error}</p>}{storageWarning && <p className="sku-storage-warning" role="status">{storageWarning}</p>}</div>
+        <div className="sku-feedback" aria-live="polite">{message && <p className="sku-success" role="status">{message}</p>}{error && <p className="sku-inline-error" role="alert">{error}</p>}{storageWarning && <p className="sku-storage-warning" role="status">{storageWarning}</p>}</div>
 
         {labels.length > 0 && <section className="sku-panel sku-batch" aria-labelledby="sku-batch-title">
           <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button><button className="secondary-button" disabled={inventoryBusy || busy || pdfBusy} onClick={() => {

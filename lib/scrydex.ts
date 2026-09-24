@@ -167,6 +167,7 @@ function pokemonNameAliases(product: ScrydexProduct) {
   const name = productNameWithoutGame(product);
   const names = new Set([name]);
   const rarities = new Set<"secret" | "rainbow">();
+  let pokemonCenterStamp = false;
   const printedNumber = numberKey(product.cardNumber);
   // Visit newly added aliases too: TCGplayer can put the art description before
   // or after rarity and collector number. Each removal strictly shortens the
@@ -185,9 +186,14 @@ function pokemonNameAliases(product: ScrydexProduct) {
       rarities.add(identity(rarity[1]) as "secret" | "rainbow");
       aliases.push(value.slice(0, rarity.index));
     }
+    const center = /\s*\(Pok[eé]mon Center Exclusive\)\s*$/i.exec(value);
+    if (center && center.index > 0) {
+      pokemonCenterStamp = true;
+      aliases.push(value.slice(0, center.index));
+    }
     for (const alias of aliases) if (alias && alias.length < value.length) names.add(alias);
   }
-  return { names: [...names].filter(Boolean), rarities: [...rarities] };
+  return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp };
 }
 
 function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow">, candidate: ObjectValue) {
@@ -242,6 +248,11 @@ function verifiedRiftboundName(product: ScrydexProduct, candidate: ObjectValue) 
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   const name = productNameWithoutGame(product);
   const pokemonAliases = game === "pokemon" && identity(product.productType) === "single" ? pokemonNameAliases(product) : undefined;
+  // Pokémon Center is a collectible edition, not a disposable name suffix.
+  // Only the stamped variant's exact marketplace ID can authorize this alias.
+  if (pokemonAliases?.pokemonCenterStamp && (!Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
+    || !array(candidate.variants).map(object).some(variant => finishKey(variant.name) === "pokemoncenterstamp"
+      && marketplaceId(variant, product.tcgplayerId!)))) return false;
   if (pokemonAliases?.rarities.length && (!verifiedPokemonRarities(pokemonAliases.rarities, candidate)
     || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
     || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)))) return false;
@@ -414,7 +425,13 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const candidate = matches[0];
   const gundamRarity = gundamRarityAnnotation(product, spec.game);
   const pokemonRarity = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).rarities.length > 0;
+  const pokemonCenterStamp = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).pokemonCenterStamp;
   const variants = array(candidate.variants).map(object).filter((variant) => {
+    if (pokemonCenterStamp) {
+      // TCGplayer calls the stamped promo Foil; never take the regular ETB's holofoil price.
+      return ["foil", "pokemoncenterstamp"].includes(spec.finish) && finishKey(variant.name) === "pokemoncenterstamp"
+        && marketplaceId(variant, product.tcgplayerId!);
+    }
     if (gundamRarity) {
       if (!marketplaceId(variant, product.tcgplayerId!) || !verifiedGundamPrinting(candidate, variant)) return false;
       // TCGplayer calls these foil; Scrydex identifies the alternate artwork.
