@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { BUYLIST_CARDS, buildBuylistSnapshot, buylistOffers, currentBuylist } from "../lib/buylist.ts";
+import type { ScrydexProduct } from "../lib/scrydex.ts";
 
 const now = Date.parse("2026-09-23T20:00:00Z");
 const price = (cents: number) => ({ cents, matchedName: "Verified card", groupName: "Origins", variation: "foil / NM", scrydexId: "OGN-001", url: "https://api.scrydex.com/riftbound/v1/cards/OGN-001" });
@@ -12,7 +13,7 @@ test("buylist pays from raw market in cents, without the retail markup", () => {
   for (const value of [0,-1,1.5,NaN,Infinity,100_000_001]) assert.throws(()=>buylistOffers(value));
 });
 test("fixed approved buylist requests only standard English Near Mint cards with bounded concurrency", async () => {
-  let active=0,max=0;const requests=[];
+  let active=0,max=0;const requests: ScrydexProduct[]=[];
   const result=await buildBuylistSnapshot(async product=>{requests.push(product);active++;max=Math.max(max,active);await new Promise(resolve=>setTimeout(resolve,1));active--;return price(10000);},()=>now);
   assert.equal(requests.length,9);assert.equal(max,3);
   for(const product of requests){assert.equal(product.game,"Riftbound");assert.equal(product.condition,"Near Mint");assert.equal(product.productType,"Single");assert(product.tcgplayerId);}

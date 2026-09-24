@@ -22,7 +22,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
     variants: [{ name: "normal", prices: [raw()] }], ...overrides };
 }
 function provider(payload: unknown, status = 200) {
-  const calls: { url: URL; init: RequestInit & { next?: { revalidate: number } } }[] = [];
+  const calls: { url: URL; init: RequestInit & { next?: { revalidate?: number | false } } }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     calls.push({ url: new URL(String(input)), init: init ?? {} });
     return Response.json(payload, { status });
@@ -218,4 +218,24 @@ test("credentials are required and provider failures are sanitized with no fallb
     });
     assert.equal(count, 1);
   }
+});
+
+test("live sealed quotes bypass the Next.js cache on every request without changing catalog defaults", async t => {
+  config(t);
+  const calls: RequestInit[] = [];
+  const freshFetch: typeof fetch = async (_url, init) => {
+    calls.push(init ?? {});
+    return Response.json({ data: candidate({ variants: [{ name: "normal", prices: [raw({ market: calls.length === 1 ? 7.13 : 8.24 })] }] }) });
+  };
+  const input = { game: "pokemon", id: "me1-s1" };
+  assert.equal((await getSealedCatalogProduct(input, { fetch: freshFetch, fresh: true })).marketCents, 713);
+  assert.equal((await getSealedCatalogProduct(input, { fetch: freshFetch, fresh: true })).marketCents, 824);
+  assert.equal(calls.length, 2);
+  for (const init of calls) {
+    assert.equal(init.cache, "no-store");
+    assert.equal("next" in init, false);
+  }
+  const cached = provider({ data: candidate() });
+  await getSealedCatalogProduct(input, cached);
+  assert.equal(cached.calls[0].init.next?.revalidate, 86_400);
 });

@@ -5,7 +5,7 @@ export type SealedCatalogProduct = {
   id: string; game: SealedCatalogGame; name: string; setName: string; language: "English";
   unit: string; imageUrl: string | null; marketCents: number | null;
 };
-type Options = { fetch?: typeof fetch };
+type Options = { fetch?: typeof fetch; fresh?: boolean };
 type ObjectValue = Record<string, unknown>;
 const PAGE_SIZE = 20;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
@@ -102,9 +102,10 @@ async function request(url: URL, options: Options, detail = false): Promise<Obje
   let response: Response;
   let payload: unknown;
   try {
-    const init: RequestInit & { next: { revalidate: number } } = {
+    const init: RequestInit & { next?: { revalidate: number } } = {
       headers: { "X-Api-Key": apiKey, "X-Team-ID": teamId, Accept: "application/json" },
-      next: { revalidate: 86_400 }, redirect: "error", signal: AbortSignal.timeout(10_000),
+      ...(options.fresh ? { cache: "no-store" as const } : { next: { revalidate: 86_400 } }),
+      redirect: "error", signal: AbortSignal.timeout(10_000),
     };
     response = await (options.fetch ?? fetch)(url, init);
     if (detail && response.status === 404) throw new ScrydexError("not_found", "This Scrydex sealed product is no longer available.");

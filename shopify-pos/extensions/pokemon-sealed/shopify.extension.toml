@@ -1,0 +1,17 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Pokémon Sealed"
+handle = "pokemon-sealed"
+uid = "c10075f1-9f0e-1d22-311e-8b4adc54b6d5741dd92c"
+description = "Scan manufacturer SKUs or barcodes for live Pokémon sealed market prices from Scrydex."
+# Shopify CLI assigns uid when this new extension is linked to the existing app.
+
+[[extensions.targeting]]
+module = "./src/Tile.tsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.tsx"
+target = "pos.home.modal.render"
