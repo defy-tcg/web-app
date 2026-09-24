@@ -14,7 +14,9 @@ embedded_app_direct_api_access = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_locations,write_inventory,write_products,write_publications"
+# read_orders powers the private monthly singles report. Apply this scope through
+# the separately authorized Shopify app release; a Git push alone cannot grant it.
+scopes = "read_locations,read_orders,write_inventory,write_products,write_publications"
 
 [auth]
 redirect_urls = [ ]

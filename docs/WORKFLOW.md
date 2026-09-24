@@ -299,6 +299,11 @@ A code rollback does not undo database changes.
 
 ## Existing functional limits
 
+The private [monthly singles report](MONTHLY_SINGLES.md) reads Shopify orders
+independently of the legacy dashboard limits below. It requires a separately
+authorized Shopify app release granting `read_orders` and explicitly blocks
+months outside Shopify's permitted order-history window.
+
 The reporting API loads up to 1,000 sales, 5,000 sale items, 1,000 expenses, and
 500 events. Reports and exports reflect the loaded records, including when
 `All time` is selected. Seller Tax summaries intentionally show incomplete

@@ -355,6 +355,7 @@ export default function ShopifyClient() {
           </span>
         </Link>
         <div className="shopify-top-actions">
+          <Link href="/reports/monthly-singles">Monthly singles</Link>
           <Link href="/">← Back to Defy OS</Link>
           <ThemeToggle />
         </div>

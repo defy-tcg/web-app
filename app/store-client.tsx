@@ -2703,6 +2703,17 @@ export default function StoreOS() {
   function renderReportsView() {
     return (
       <>
+        <section className="panel">
+          <header>
+            <div>
+              <h2>Monthly singles sales</h2>
+              <p>Defy’s top 50 singles by copies sold through Shopify POS and web orders.</p>
+            </div>
+            <Link className="secondary-button" href="/reports/monthly-singles">
+              Open Shopify sales report
+            </Link>
+          </header>
+        </section>
         {profitIncomplete && <ProfitIncompleteNotice />}
         <section className="report-summary">
           <article>
