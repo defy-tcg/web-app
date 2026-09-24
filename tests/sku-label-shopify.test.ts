@@ -632,6 +632,48 @@ test("stocked sibling with no price blocks product publication", async () => {
 test("Riftbound registration retains canonical SKU and applies established markup", async () => {
   const f = fixture(); const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps); assert.equal(result.status, "ready"); assert.equal(result.priceCents, 5090); assert.equal(f.product().variants.nodes[0].sku, "DEFY-RFB-652905-FOIL-EN-NM"); assert.equal(f.product().variants.nodes[0].barcode, card.sku);
 });
+test("Kha'Zix Overnumbered recovers its saved QR with the correct price, website link, and one starting copy", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 97, sku: "DEFY-9588198806", name: "Kha'Zix, Voidreaver (Overnumbered)", game: "Riftbound",
+    setName: "Unleashed", cardNumber: "236/219", tcgplayerId: 684507, quantity: 1, initialQuantity: 1,
+  };
+  const f = fixture({ priceError: true, failAfterStock: true });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  // The live provider splits the Legend's character and name; its Signature
+  // sibling has a different collector number and marketplace identity.
+  const printing = {
+    id: "UNL-236", name: "Voidreaver", type: "Legend", subtypes: ["Kha'Zix"], rarity: "Showcase",
+    number: "236", printed_number: "236/219", language_code: "EN",
+    expansion: { id: "UNL", name: "Unleashed", code: "UNL", printed_total: 219, language_code: "EN" },
+    variants: [{ name: "foil", marketplaces: [{ name: "tcgplayer", product_id: "684507" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 112.45 }] }],
+  };
+  const signature = { ...printing, id: "UNL-236s", number: "236*", printed_number: "236*/219",
+    variants: [{ name: "foil", marketplaces: [{ name: "tcgplayer", product_id: "684210" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 395.47 }] }] };
+  f.deps.resolvePrice = async product => selectScrydexPrice(product, [printing, signature]);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending", "A lost stock response stays retryable");
+  assert.equal(f.quantityAdded(), 1);
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.priceCents, 11920, "The exact market quote receives the existing 6% Riftbound markup");
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  const variants = f.product().variants.nodes;
+  assert.equal(variants.length, 1);
+  assert.equal(variants[0].sku, "DEFY-RFB-684507-FOIL-EN-NM");
+  assert.equal(variants[0].barcode, input.sku);
+  assert.equal(variants[0].price, "119.20");
+  assert.equal(variants[0].pos, true);
+  assert.equal(f.website.product, true);
+  assert.ok(f.website.variants.has(variants[0].id));
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(stockCalls.length, 2);
+  assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
+});
 
 test("exact TCGplayer and variant identity preserves an existing non-Defy Shopify SKU", async () => {
   const f = fixture({ starting: existing({ sku: "STORE-EXISTING-CARD" }) });

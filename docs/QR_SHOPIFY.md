@@ -116,6 +116,15 @@ still makes one request and verifies the complete name, set, collector number,
 language, finish, and condition before pricing. Other printings, including
 Overnumbered cards, remain separate; the 6% Riftbound markup is unchanged.
 
+Some Riftbound Legend records split the character from the printed title. For
+example, Scrydex's **Voidreaver** with character **Kha'Zix** can match TCGplayer's
+**Kha'Zix, Voidreaver (Overnumbered)** only with the exact selected-variant
+TCGplayer ID. The Overnumbered label additionally requires Showcase rarity and
+a numeric collector number above the set's printed total, with the complete
+printed number verified. Regular, alternate, and Signature printings remain
+distinct; a Signature collector number such as **236*/219** cannot supply the
+price for **236/219**.
+
 Pokémon imports can use different catalog labels from Scrydex. The matcher
 recognizes a trailing collector number in the card name only when it agrees with
 the saved number. It also recognizes Pokémon's **Full Art**, **Alternate Full

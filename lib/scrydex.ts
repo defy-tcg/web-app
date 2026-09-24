@@ -213,6 +213,32 @@ function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
   return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
 }
 
+function verifiedRiftboundName(product: ScrydexProduct, candidate: ObjectValue) {
+  if (!Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0) return false;
+  const name = productNameWithoutGame(product);
+  const overnumbered = /^(.+?)\s*\(Overnumbered\)$/i.exec(name);
+  if (overnumbered) {
+    // Overnumbered is a specific Showcase printing. Never strip Signature,
+    // collector suffixes, or an arbitrary edition annotation to obtain a quote.
+    const printed = numberKey(product.cardNumber);
+    const parts = /^(\d+)\/(\d+)$/.exec(printed);
+    if (!parts) return false;
+    const numerator = Number(parts[1]), denominator = Number(parts[2]);
+    if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || denominator <= 0 || numerator <= denominator
+      || identity(candidate.rarity) !== "showcase" || object(candidate.expansion).printed_total !== denominator
+      || numberKey(candidate.number) !== parts[1] || numberKey(candidate.printed_number) !== printed) return false;
+  }
+  const names = [text(candidate.name)];
+  const subtypes = array(candidate.subtypes);
+  // Live Riftbound Legend records can split the character from its subtitle:
+  // name "Voidreaver", subtypes ["Kha'Zix"]. Use only one explicit character.
+  if (identity(candidate.type) === "legend" && subtypes.length === 1 && text(subtypes[0]) && text(candidate.name)) {
+    names.push(`${text(subtypes[0])}, ${text(candidate.name)}`);
+  }
+  return names.some(value => identity(value) === identity(overnumbered?.[1] ?? name))
+    && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+}
+
 function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   const name = productNameWithoutGame(product);
   const pokemonAliases = game === "pokemon" && identity(product.productType) === "single" ? pokemonNameAliases(product) : undefined;
@@ -229,6 +255,8 @@ function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: str
       && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
   }
   if (language === "English" && identity(candidateName(candidate, game, language)) === identity(name)) return true;
+  if (game === "riftbound" && language === "English" && identity(product.productType) === "single"
+    && verifiedRiftboundName(product, candidate)) return true;
   // TCGplayer can append an art label or Pokémon collector number absent from Scrydex's name.
   // Only the exact marketplace ID permits removing those verified annotations.
   return (pokemonAliases?.names ?? tcgplayerNameAliases(product, game)).some(alias => identity(alias) === identity(candidateName(candidate, game, language)))
