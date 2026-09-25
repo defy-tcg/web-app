@@ -26,7 +26,10 @@ products for a sale; it does not receive a delivery.
 5. Save once and wait for **Receipt saved**. If confirmation is interrupted,
    recover or retry that same receipt. Starting a new receipt for the same
    delivery would add the stock again.
-6. In DefyOS, open **Shopify stock & receiving**. Its inventory shows Shopify's
+6. Tap **Make available at checkout** to confirm a positive selling price and
+   enable the product in Shopify POS. Wait for **Ready for checkout**, then scan
+   the original package barcode in the cart after POS finishes syncing.
+7. In DefyOS, open **Shopify stock & receiving**. Its inventory shows Shopify's
    current counts at the configured location; receiving history shows the
    confirmed receipt quantity and costs. Refresh the view after saving a receipt.
 
@@ -47,8 +50,8 @@ custom single-card QR labels use DefyOS's separate SKU label workflow.
    Exclude units committed to orders or reserved; this updates Shopify's
    `available` quantity, not its separate `on_hand` quantity.
 4. Optionally enter your store price, then tap **Save stock count**. The count
-   records no acquisition cost and does not create a new purchase. New products
-   still need activation and POS availability review before selling.
+   records no acquisition cost and does not create a new purchase. Use
+   **Make available at checkout** for new products before selling.
 
 The displayed starting count, total, variant, and location are saved with the
 request. Shopify compares that starting count atomically when setting the total.
@@ -87,9 +90,9 @@ separate source. Do not add those quantities to Shopify quantities as if they
 were different physical stock. Use **Set current stock** to reconcile the actual
 available stock when moving an existing balance; there is no automatic migration.
 
-New receiving registrations remain drafts until their product details and Point
-of Sale availability have been reviewed. If no store price was entered, review
-the retail price as well. Recording a receipt does not publish a product.
+New receiving registrations start as drafts. Recording a receipt does not publish
+a product; the separate **Make available at checkout** action checks its price
+and Point of Sale availability before enabling it.
 The entered price is the Shopify variant price, not a permanent pricing override:
 a later applicable Scrydex price refresh or Defy Pricing action can replace it.
 
@@ -101,6 +104,33 @@ receipt stays pending for owner review; do not start a second receipt for the
 delivery. This avoids repeating a price write whose result is uncertain.
 After reviewing the pending receipt, the owner can set that exact variant's price
 to the saved store price in Shopify and retry the same receipt to finish receiving.
+
+## A received product does not scan at checkout
+
+Scan the original package barcode in **Receive sealed stock**, verify the matched
+product, and tap **Make available at checkout**. This also works immediately
+after saving a receipt. No quantity or acquisition cost is required for checkout
+setup, and it never receives or counts stock again.
+
+Enter a positive **Store price per selling unit**, or leave it blank to keep the
+current positive Shopify selling price. The action verifies that the scanned
+barcode belongs uniquely to the selected variant, activates an eligible product,
+and publishes its parent product and selected variant to **Point of Sale**. It
+reads those settings back before confirming **Ready for checkout**. The package
+barcode is preserved; the store SKU is not substituted for it.
+
+If setup is interrupted, use **Check / retry checkout setup** with the saved
+details. An explicit price is attempted once per setup request. A retry verifies
+that price rather than reapplying it over a later edit. Blank-price setup always
+uses the current Shopify price. Stock receipts and their historical draft status
+are unchanged by checkout setup.
+
+Archived products, ambiguous barcodes, unsafe draft activation, and publication
+changes that could expose other variants require Shopify admin review. The app
+does not silently activate a multi-variant draft or a draft linked to other sales
+channels. A zero-priced product requires a positive price before this action can
+enable checkout. Physical scanner behavior and POS device synchronization still
+need verification on the store's device.
 
 ## Unknown barcodes and Scrydex
 

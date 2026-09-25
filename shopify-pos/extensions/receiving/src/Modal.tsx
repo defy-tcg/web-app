@@ -6,12 +6,13 @@ import {findProduct, findCatalogProduct, searchProducts, saveReceipt, loadPendin
 import {subscribeToExternalScanner} from './scanner';
 import {CATALOG_GAMES, catalogIdentity, createSealedCatalogClient, type CatalogGame, type CatalogIdentity} from './catalog-client';
 import {createCatalogController, type CatalogState} from './catalog-controller';
+import {CheckoutSetup} from './CheckoutSetup';
 
 declare const shopify: Api;
 
 type Product = {
   sku: string; barcode: string; name: string; game: string; unit: string;
-  barcodeNeedsReview?: boolean; variantId?: string; price?: string;
+  barcodeNeedsReview?: boolean; variantId?: string; productId?: string; price?: string;
 };
 type ReceiptInput = {
   requestId: string; barcode: string; sku?: string; name: string; game: string;
@@ -22,7 +23,7 @@ type ReceiptInput = {
   catalog?: CatalogIdentity;
 };
 type Form = Omit<ReceiptInput, 'requestId' | 'quantity' | 'storePrice'> & {quantity: string; storePrice: string};
-type Phase = 'loading' | 'scan' | 'lookup' | 'search' | 'catalog' | 'ready' | 'unknown' | 'saving' | 'recovery' | 'success' | 'blocked';
+type Phase = 'loading' | 'scan' | 'lookup' | 'search' | 'catalog' | 'ready' | 'unknown' | 'saving' | 'recovery' | 'success' | 'blocked' | 'checkout';
 type Notice = {heading: string; text: string; tone: 'info' | 'success' | 'warning' | 'critical'};
 const UNITS = ['Booster pack', 'Booster box', 'Booster bundle', 'Collection box', 'Elite Trainer Box', 'Tin', 'Deck', 'Display', 'Case', 'Other sealed unit'];
 const isEditable = (phase: Phase) => ['scan', 'ready', 'unknown'].includes(phase);
@@ -79,6 +80,8 @@ export function ReceivingModal() {
   const scannerCleanup = useRef<(() => void) | undefined>();
   const [notice, setNotice] = useState<Notice>({heading: 'Opening receiving', text: 'Checking for an unfinished receipt…', tone: 'info'});
   const pendingRef = useRef<ReceiptInput | null>(null);
+  const checkoutReturn = useRef<'ready' | 'success'>('ready');
+  const checkoutPrice = useRef('');
   const mounted = useRef(true);
   const lookupRef = useRef<(barcode: string) => void>(() => {});
 
@@ -314,7 +317,7 @@ export function ReceivingModal() {
         pendingRef.current = null;
         transition('success');
         const price = receipt.storePrice !== undefined ? ` Store price saved: ${receipt.currencyCode} ${receipt.storePrice} per ${receipt.unit}.` : '';
-        const staged = result.staged ? ` Stock is recorded. This product still needs ${receipt.storePrice === undefined ? 'a retail price review, ' : ''}activation and availability in POS before it can be sold.` : '';
+        const staged = ' Stock is recorded. Use Make available at checkout below to check its selling price and POS availability.';
         const counting = receipt.inventoryMode === 'set';
         const summary = counting ? `Available total set to ${receipt.quantity} for ${savedProduct.name}` : `${receipt.quantity ?? request.quantity} × ${savedProduct.name}`;
         alert(result.duplicate ? 'Receipt already saved' : counting ? 'Stock count saved' : 'Receipt saved', `${summary} · SKU ${savedProduct.sku}. Receipt ${receipt.requestId || request.requestId}.${price}${staged}`, 'success');
@@ -348,6 +351,19 @@ export function ReceivingModal() {
   const total = !counting && /^\d+$/.test(form.quantity) && /^\d+(?:\.\d{1,2})?$/.test(form.unitCost)
     ? (Number(form.quantity) * Math.round(Number(form.unitCost) * 100) / 100).toFixed(2) : '';
   const currency = form.currencyCode || shopify.session?.currentSession?.currency || '';
+  if (phase === 'checkout' && product?.productId && product.variantId) return <s-page heading="Receive sealed stock">
+    <s-scroll-box><s-stack direction="block" gap="base" padding="base">
+      <CheckoutSetup product={{...product, productId: product.productId, variantId: product.variantId}} barcode={form.barcode} currency={currency}
+        initialPrice={checkoutPrice.current}
+        onReady={(saved) => {
+          assignProduct(saved);
+          // A later stock save must not replay the checkout price over an intervening edit.
+          updateForm({...formRef.current, storePrice: ''});
+          alert('Checkout setup confirmed', 'This product is active and available in Shopify POS. Stock was not changed.', 'success');
+        }}
+        onClose={() => { transition(checkoutReturn.current); if (checkoutReturn.current === 'ready') void refreshStock(); }} />
+    </s-stack></s-scroll-box>
+  </s-page>;
   return <s-page heading="Receive sealed stock">
     <s-scroll-box>
       <s-stack direction="block" gap="base" padding="base">
@@ -428,6 +444,17 @@ export function ReceivingModal() {
         {detailsVisible && <>
           <s-divider />
           {product && <s-text>Store SKU: {product.sku}</s-text>}
+          {['ready', 'success'].includes(phase) && product?.productId && product.variantId && !product.barcodeNeedsReview && <>
+            <s-text>Already received this product but cannot scan it in the cart? Set up checkout without entering another receipt or changing stock.</s-text>
+            <s-button onClick={() => {
+              if (!['ready', 'success'].includes(phaseRef.current)) return;
+              stockRead.current++; setStockLoading(false);
+              checkoutReturn.current = phaseRef.current as 'ready' | 'success';
+              checkoutPrice.current = phaseRef.current === 'ready' ? formRef.current.storePrice : '';
+              updateForm({...formRef.current, storePrice: ''});
+              transition('checkout');
+            }}>Make available at checkout</s-button>
+          </>}
           {form.catalog && <s-text>Verified Scrydex product: {form.catalog.name} · {form.catalog.setName || 'Set not listed'} · {form.catalog.language}. Enter your store price below. This draft still needs activation and POS availability before selling.</s-text>}
           <s-text-field label="Product name" value={form.name} required disabled={!editable || !!product || !!form.catalog} onInput={(event) => edit('name', (event.currentTarget.value ?? ''))} />
           <s-text-field label="Game" value={form.game} required disabled={!editable || !!product?.game || !!form.catalog} onInput={(event) => edit('game', (event.currentTarget.value ?? ''))} />
