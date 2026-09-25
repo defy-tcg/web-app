@@ -14,13 +14,22 @@ test("Riftbound single sell prices use a 6% markup with nearest-cent rounding", 
   assert.equal(scrydexSellPriceCents(100_000_000, riftboundSingle), 106_000_000);
 });
 
-test("game aliases and single casing are recognized without marking up other games or product types", () => {
+test("English and Japanese Pokémon singles add 1.5% to raw market with half-up cent rounding", () => {
+  for (const game of ["Pokémon", "Pokémon (Japanese)"]) {
+    for (const [market, expected] of [[1000, 1015], [999, 1014], [100, 102], [300, 305], [33, 33], [34, 35], [1, 1], [100_000_000, 101_500_000]]) {
+      assert.equal(scrydexSellPriceCents(market, { game, productType: "Single" }), expected, `${game}/${market}`);
+    }
+  }
+});
+
+test("game aliases and single casing select the matching policy while other games and products stay at market", () => {
   for (const game of TCG_GAME_REGISTRY) {
     for (const alias of [game.key, game.name, ...game.aliases]) {
       for (const productType of ["Single", " single ", "\tSINGLE\n", "\u00a0Single\ufeff"]) {
         const product = { game: ` ${alias.toUpperCase()} `, productType };
         assert.equal(isRiftboundSinglePricingProduct(product), game.key === "riftbound", `${alias}/${productType}`);
-        assert.equal(scrydexSellPriceCents(1000, product), game.key === "riftbound" ? 1060 : 1000, `${alias}/${productType}`);
+        const expected = game.key === "riftbound" ? 1060 : game.key === "pokemon" || game.key === "pokemon-japanese" ? 1015 : 1000;
+        assert.equal(scrydexSellPriceCents(1000, product), expected, `${alias}/${productType}`);
       }
       for (const productType of ["Sealed", " sealed ", "Accessory", "", "Singles"]) {
         const product = { game: alias, productType };
@@ -30,7 +39,7 @@ test("game aliases and single casing are recognized without marking up other gam
     }
   }
   assert.equal(scrydexSellPriceCents(1000, { game: "Ríftbound: League of Legends Trading Card Game", productType: "Single" }), 1060);
-  for (const game of ["Unknown", "Riftbound-like", "Riftbound singles", ""]) {
+  for (const game of ["Unknown", "Riftbound-like", "Riftbound singles", "Pokémon-like", "Pokémon singles", ""]) {
     assert.equal(scrydexSellPriceCents(1000, { game, productType: "Single" }), 1000);
   }
 });
@@ -52,16 +61,22 @@ test("spreadsheet or CSV prices cannot undo a verified Scrydex price or compound
   assert.equal(preserveScrydexPricing({ ...current, priceSource: "manual" }, incoming), incoming);
 });
 
-test("preservation uses the stored identity and removes legacy markup from other TCGs and sealed stock", () => {
-  for (const identity of [{ game: "Pokémon", productType: "Single" }, { game: "Riftbound", productType: "Sealed" }]) {
+test("preservation reapplies the stored game's rule without compounding or using an incoming identity", () => {
+  for (const [identity, expected] of [
+    [{ game: "Pokémon", productType: "Single" }, 1015],
+    [{ game: "Pokémon (Japanese)", productType: "Single" }, 1015],
+    [{ game: "One Piece", productType: "Single" }, 1000],
+    [{ game: "Pokémon", productType: "Sealed" }, 1000],
+    [{ game: "Riftbound", productType: "Sealed" }, 1000],
+  ] as const) {
     const current = { ...identity, marketPriceCents: 1000, listPriceCents: 1100, priceSource: "scrydex", priceUpdatedAt: "2026-09-18T00:00:00Z" };
     const incoming = { ...riftboundSingle, marketPriceCents: 700, listPriceCents: 770, priceSource: "master-sheet", priceUpdatedAt: null };
     const preserved = preserveScrydexPricing(current, incoming);
     assert.equal(preserved.marketPriceCents, 1000);
-    assert.equal(preserved.listPriceCents, 1000);
+    assert.equal(preserved.listPriceCents, expected);
     assert.equal(preserved.priceSource, "scrydex");
     assert.equal(preserved.priceUpdatedAt, current.priceUpdatedAt);
-    assert.equal(preserveScrydexPricing(current, preserved).listPriceCents, 1000);
+    assert.equal(preserveScrydexPricing({ ...current, ...preserved, ...identity }, preserved).listPriceCents, expected);
   }
 });
 

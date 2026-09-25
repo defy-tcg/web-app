@@ -217,8 +217,11 @@ test("pricing failures distinguish catalog, price, configuration, and service is
   }
 });
 test("manual complete cards use their saved positive sale price without market lookup", async () => {
-  const f = fixture({ priceError: true }); const result = await linkSkuLabelToShopify({ ...card, tcgplayerId: null, listPriceCents: 750 }, f.deps);
-  assert.equal(result.status, "ready"); assert.equal(result.priceCents, 750);
+  for (const game of ["Magic: The Gathering", "Riftbound", "Pokémon", "Pokémon (Japanese)"]) {
+    const f = fixture({ priceError: true }); const result = await linkSkuLabelToShopify({ ...card, game, tcgplayerId: null, listPriceCents: 750 }, f.deps);
+    assert.equal(result.status, "ready"); assert.equal(result.priceCents, 750);
+    assert.equal(f.product().variants.nodes[0].price, "7.50");
+  }
 });
 test("manual zero-price cards remain saved and blocked", async () => {
   const f = fixture(); assert.equal((await linkSkuLabelToShopify({ ...card, tcgplayerId: null }, f.deps)).status, "blocked"); assert.equal(f.product(), null);
@@ -245,7 +248,7 @@ test("lost stock response replays its identical idempotent receipt without doubl
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready"); assert.equal(f.quantityAdded(), 4);
   const calls = f.calls.filter(call => call.name === "QrLinkInitialStock"); assert.equal(calls.length, 2); assert.deepEqual(calls[0].variables, calls[1].variables);
 });
-test("Nidoking's actual Pokémon printing keeps its QR, exact market price, and one-time stock receipt", async () => {
+test("Nidoking's exact Pokémon quote adds 1.5% and keeps its QR and one-time stock receipt", async () => {
   const input: SkuLabelShopifyProduct = {
     ...card, id: 78, sku: "DEFY-3099353165", name: "Nidoking - 174/165", game: "Pokémon",
     setName: "SV: Scarlet & Violet 151", cardNumber: "174/165", condition: "Near Mint", finish: "Foil",
@@ -277,20 +280,20 @@ test("Nidoking's actual Pokémon printing keeps its QR, exact market price, and 
 
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending");
   const variant = structuredClone(f.product().variants.nodes[0]);
-  assert.equal(variant.price, "17.02", "Pokémon does not receive the Riftbound markup");
+  assert.equal(variant.price, "17.28", "Pokémon receives a 1.5% markup on the exact market quote");
   assert.equal(variant.barcode, input.sku);
   assert.equal(f.quantityAdded(), 1);
 
   const retried = await linkSkuLabelToShopify(input, f.deps);
   assert.equal(retried.status, "ready");
-  assert.equal(retried.priceCents, 1702);
+  assert.equal(retried.priceCents, 1728);
   assert.equal(retried.transferredQuantity, 1);
   assert.equal((await linkSkuLabelToShopify({ ...input, quantity: 0 }, f.deps)).status, "ready");
   assert.equal(f.product().variants.nodes.length, 1);
   assert.equal(f.product().variants.nodes[0].id, variant.id);
   assert.equal(f.product().variants.nodes[0].sku, variant.sku);
   assert.deepEqual(f.product().variants.nodes[0].barcodes.nodes, [{ value: input.sku, type: null }]);
-  assert.equal(f.product().variants.nodes[0].price, "17.02");
+  assert.equal(f.product().variants.nodes[0].price, "17.28");
   assert.equal(f.product().variants.nodes[0].inventoryQuantity, 1);
   assert.equal(f.quantityAdded(), 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
@@ -321,13 +324,13 @@ test("Mega Evolution resumes a price-blocked QR with its exact quote and one ori
   const result = await linkSkuLabelToShopify(input, f.deps);
   assert.equal(result.status, "ready");
   assert.equal(result.sku, input.sku);
-  assert.equal(result.priceCents, 7650);
+  assert.equal(result.priceCents, 7765);
   assert.equal(result.transferredQuantity, 1);
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
   const variants = f.product().variants.nodes;
   assert.equal(variants.length, 1);
   assert.equal(variants[0].barcode, input.sku);
-  assert.equal(variants[0].price, "76.50");
+  assert.equal(variants[0].price, "77.65");
   assert.equal(f.quantityAdded(), 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
@@ -350,13 +353,13 @@ test("Ancient Mew's verified unnumbered promo repairs the existing QR and transf
   }]);
   const result = await linkSkuLabelToShopify(input, f.deps);
   assert.equal(result.status, "ready");
-  assert.equal(result.priceCents, 11764, "Pokémon uses the unmarked exact market price");
+  assert.equal(result.priceCents, 11940, "Pokémon adds 1.5% to the exact market price");
   assert.equal(result.transferredQuantity, 1);
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
   const variants = f.product().variants.nodes;
   assert.equal(variants.length, 1);
   assert.equal(variants[0].barcode, input.sku);
-  assert.equal(variants[0].price, "117.64");
+  assert.equal(variants[0].price, "119.40");
   assert.equal(variants[0].pos, true);
   assert.equal(f.website.product, false, "Pokémon remains available in-store only");
   assert.equal(f.quantityAdded(), 1);
@@ -377,7 +380,7 @@ test("a price-blocked Japanese card corrects only its unused language identity a
   assert.equal(partial.adoptionPending, undefined);
   const ready = await linkSkuLabelToShopify(japaneseCard, f.deps);
   assert.equal(ready.status, "ready");
-  assert.equal(ready.priceCents, 4802, "Japanese Pokémon does not receive a Riftbound markup");
+  assert.equal(ready.priceCents, 4874, "Japanese Pokémon receives the same 1.5% markup as English Pokémon");
   assert.equal(ready.transferredQuantity, 1);
   const variant = f.product().variants.nodes[0];
   assert.equal(variant.sku, japaneseCard.sku);
@@ -499,7 +502,7 @@ test("English and Japanese Pokémon singles remove every non-POS catalog publica
     assert.equal(result.productId, starting.id); assert.equal(result.variantId, starting.variants.nodes[0].id);
     assert.equal(f.product().variants.nodes[0].sku, "EXISTING-STORE-SKU");
     assert.equal(f.product().pos, true); assert.equal(f.product().variants.nodes[0].pos, true);
-    assert.equal(f.product().variants.nodes[0].price, "48.02");
+    assert.equal(f.product().variants.nodes[0].price, "48.74");
     assert.equal(f.quantityAdded(), 1);
     const mutations = f.calls.filter(call => call.name === "QrLinkInStoreOnly");
     assert.equal(mutations.length, 1);

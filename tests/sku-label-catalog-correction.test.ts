@@ -162,6 +162,7 @@ test("preview and confirmation verify fresh catalog and price and bind the revie
     persist: f.persist, shopify: f.deps };
   const input = validateSkuLabelCatalogRequest({ action: "preview", sku: original.sku, url: catalog.productUrl, finish: "Foil" });
   const { review } = await reviewOrCorrectSkuLabelCatalog(input, deps); assert.ok(review); assert.equal(f.persistCount(), 0);
+  assert.equal(review.priceCents, 1253, "The corrected Pokémon quote previews the 1.5% selling-price markup");
   const apply = validateSkuLabelCatalogRequest({ ...input, action: "apply", confirmed: true, sourceVersion: review.sourceVersion, targetVersion: review.targetVersion });
   lookup = { ...catalog, setName: "Different reviewed printing" };
   await assert.rejects(reviewOrCorrectSkuLabelCatalog(apply, deps), /changed after review/); assert.equal(f.persistCount(), 0);

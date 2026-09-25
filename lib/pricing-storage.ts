@@ -1,11 +1,18 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { products } from "../db/schema";
-import { RIFTBOUND_SINGLE_MARKUP_PERCENT, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
-import { TCG_GAME_REGISTRY } from "./tcg-games";
+import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
+import { TCG_GAME_REGISTRY, type TcgGameKey } from "./tcg-games";
 
 // PostgreSQL btrim defaults to spaces; this is the whitespace set used by JS trim.
 const JS_TRIM_CHARACTERS = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+
+function normalizedGameAliases(keys: TcgGameKey[]) {
+  return [...new Set(TCG_GAME_REGISTRY.filter((game) => keys.includes(game.key))
+    .flatMap((game) => [game.key, game.name, game.label, ...game.aliases])
+    .map((alias) => alias.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()))];
+}
 
 /** Save a quote and its history together, including identity-edit re-quotes. */
 export async function saveScrydexQuote(current: typeof products.$inferSelect, marketCents: number, changes: Partial<typeof products.$inferInsert> = {}) {
@@ -68,14 +75,14 @@ export function protectedPricingColumns(incoming: StoredPricing) {
   // Match gameFromAlias's normalization against the identity stored at write time.
   // Imports may race a refresh and must not apply an incoming game's pricing rule.
   const gameKey = sql<string>`btrim(regexp_replace(replace(lower(regexp_replace(normalize(${products.game}, NFKD), '[\u0300-\u036f]', '', 'g')), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
-  const riftbound = TCG_GAME_REGISTRY.find((game) => game.key === "riftbound")!;
-  const eligible = and(
-    inArray(gameKey, [...new Set([riftbound.key, riftbound.name.toLowerCase(), ...riftbound.aliases])]),
-    sql`lower(btrim(${products.productType}, ${JS_TRIM_CHARACTERS})) = 'single'`,
-  );
+  const isSingle = sql`lower(btrim(${products.productType}, ${JS_TRIM_CHARACTERS})) = 'single'`;
+  const markupBasisPoints = sql<number>`CASE
+    WHEN ${inArray(gameKey, normalizedGameAliases(["riftbound"]))} THEN ${RIFTBOUND_SINGLE_MARKUP_PERCENT * 100}
+    WHEN ${inArray(gameKey, normalizedGameAliases(["pokemon", "pokemon-japanese"]))} THEN ${POKEMON_SINGLE_MARKUP_PERCENT * 100}
+    ELSE 0 END`;
   return {
     marketPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.marketPriceCents} ELSE ${incoming.marketPriceCents} END`,
-    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${eligible} THEN round(${products.marketPriceCents}::numeric * ${100 + RIFTBOUND_SINGLE_MARKUP_PERCENT} / 100)::integer ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
+    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${isSingle} THEN round(${products.marketPriceCents}::numeric * (10000 + ${markupBasisPoints}) / 10000)::integer ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
     priceSource: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceSource} ELSE ${incoming.priceSource} END`,
     priceUpdatedAt: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceUpdatedAt} ELSE ${incoming.priceUpdatedAt} END`,
   };

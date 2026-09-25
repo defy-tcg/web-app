@@ -2,23 +2,27 @@ import { gameFromAlias } from "./tcg-games.ts";
 
 export const SCRYDEX_PRICE_SOURCE = "scrydex";
 export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6;
+export const POKEMON_SINGLE_MARKUP_PERCENT = 1.5;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
 
-/** Only Riftbound singles receive the customer selling-price increase. */
+/** Identify singles eligible for the Riftbound selling-price rule. */
 export function isRiftboundSinglePricingProduct(product: PricingProduct): boolean {
   return gameFromAlias(product.game)?.key === "riftbound"
     && product.productType.trim().toLowerCase() === "single";
 }
 
-/** Eligible singles add 6%, rounded half-up; every other product stays at market. */
+/** Apply each game's singles markup to raw market cents, rounded half-up. */
 export function scrydexSellPriceCents(marketCents: number, product: PricingProduct): number {
   if (!Number.isSafeInteger(marketCents) || marketCents <= 0 || marketCents > 100_000_000) {
     throw new Error("Scrydex must provide a positive USD market price within the supported range.");
   }
-  return isRiftboundSinglePricingProduct(product)
-    ? Math.floor((marketCents * (100 + RIFTBOUND_SINGLE_MARKUP_PERCENT) + 50) / 100)
-    : marketCents;
+  if (product.productType.trim().toLowerCase() !== "single") return marketCents;
+  const game = gameFromAlias(product.game)?.key;
+  const markupPercent = game === "riftbound" ? RIFTBOUND_SINGLE_MARKUP_PERCENT
+    : game === "pokemon" || game === "pokemon-japanese" ? POKEMON_SINGLE_MARKUP_PERCENT : 0;
+  // Integer basis points keep fractional percentages and half-cent ties exact.
+  return Math.floor((marketCents * (10_000 + markupPercent * 100) + 5_000) / 10_000);
 }
 
 export type StoredPricing = {

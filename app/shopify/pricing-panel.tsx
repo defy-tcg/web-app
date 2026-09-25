@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RIFTBOUND_SINGLE_MARKUP_PERCENT } from "@/lib/pricing-policy";
+import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT } from "@/lib/pricing-policy";
 
 type PricingState = {
   runId: string; startedAt: string; finishedAt: string | null; checked: number;
@@ -80,7 +80,7 @@ export default function PricingPanel() {
           </button>}
       </div>
     </div>
-    <p className="pricing-policy">Riftbound singles: market + {RIFTBOUND_SINGLE_MARKUP_PERCENT}%. Other supported products, including sealed: market. Automatic refresh runs daily; Scrydex quotes can be cached for 24 hours.</p>
+    <p className="pricing-policy">Pokémon singles (English and Japanese): market + {POKEMON_SINGLE_MARKUP_PERCENT}%. Riftbound singles: market + {RIFTBOUND_SINGLE_MARKUP_PERCENT}%. Other supported products, including sealed: market. Automatic refresh runs daily; Scrydex quotes can be cached for 24 hours.</p>
     <p>Last completed: {state?.finishedAt ? new Date(state.finishedAt).toLocaleString() : "Not yet"}{status?.enabled === false ? " · Price sync is disabled" : ""}</p>
     {(message || state) && <p role="status" className="pricing-progress">{message || `${state!.checked} checked · ${state!.updated} updated · ${state!.unchanged} already current · ${state!.skipped} need review`}</p>}
     {(error || state?.lastError) && <p role="alert" className="pricing-error">{error || state?.lastError}</p>}

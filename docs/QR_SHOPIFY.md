@@ -101,8 +101,9 @@ review rather than a fresh mutation.
 
 TCGplayer links identify cards; their listed prices are not trusted selling
 prices. Linking requires an exact, positive Scrydex USD quote. The existing policy
-adds 6% for Riftbound singles and uses the raw market price for other supported
-games. Manual cards require a positive entered sale price. An unavailable,
+adds 1.5% for Pokémon singles (including Japanese), 6% for Riftbound singles,
+and uses the raw market price for other supported games. Prices round half-up
+to cents. Manual cards require a positive entered sale price. An unavailable,
 unsupported, ambiguous, or nonpositive price blocks readiness instead of
 publishing a free item. Entered acquisition cost remains separate from market
 price. Existing price-refresh and Defy Pricing behavior remain separate from

@@ -62,8 +62,9 @@ Development, and changes apply to subsequent deployments.
 
 The master spreadsheet ID/tab are in `lib/master-inventory-sheet.ts`; image
 matching and the bundled Riftbound catalog use public TCGCSV/TCGplayer resources.
-Price refreshes and singles intake use Scrydex's raw USD market prices. Only
-Riftbound singles receive a 6% customer selling-price markup; other games and
+Price refreshes and singles intake use Scrydex's raw USD market prices.
+Pokémon singles (including Japanese) receive a 1.5% customer selling-price markup,
+and Riftbound singles receive 6%, rounded half-up to cents. Other games and
 product types, including Riftbound sealed products, sell at the raw market price.
 Intake review shows unmarked market prices. Both Scrydex credentials are required;
 never expose them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price

@@ -68,13 +68,13 @@ test("POS scan updates only the exact Riftbound single price with 6%, never cost
   assert.equal(f.state.queries.filter(call => call.query.includes("query DefyPosVerify")).length, 1);
 });
 
-test("Japanese Pokémon POS pricing keeps its exact game and language without a markup", async () => {
+test("Japanese Pokémon POS pricing adds 1.5% while keeping its exact game and language", async () => {
   const item = japaneseVariant(); const f = fixture([item]); f.state.marketCents = 2773;
   const result = await refreshPosPrice(item.sku!, f.dependencies);
-  assert.equal(result.priceCents, 2773);
+  assert.equal(result.priceCents, 2815);
   assert.equal(f.state.quoted[0].game, "Pokémon (Japanese)");
   assert.equal(f.state.quoted[0].tcgplayerId, 566513);
-  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "27.73" }] }]);
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "28.15" }] }]);
   for (const change of [
     (v: Variant) => { v.selectedOptions[2].value = "English"; },
     (v: Variant) => { v.product.game = field("Pokémon"); v.product.productType = "Pokémon single"; },
@@ -118,21 +118,34 @@ test("secondary barcode duplicates, incomplete lists, and edits during pricing p
   assert.equal(edited.state.quoted.length, 1); assert.equal(edited.state.mutations.length, 0);
 });
 
-test("a complete other-game Shopify identity receives market price without markup or a Riftbound catalog lookup", async () => {
+test("English Pokémon POS pricing adds 1.5% with half-up cents without a Riftbound catalog lookup", async () => {
   const item = variant(); item.sku = "PKM-PIKACHU-NM";
   Object.assign(item.product, { cardName: field("Pikachu"), game: field("Pokémon"), productType: "Pokémon single", set: field("Base Set"), number: field("58/102"), catalogId: null, receivingId: null });
-  const f = fixture([item]); f.dependencies.readCatalog = async () => { throw new Error("must not load Riftbound catalog"); };
+  const f = fixture([item]); f.state.marketCents = 1100;
+  f.dependencies.readCatalog = async () => { throw new Error("must not load Riftbound catalog"); };
   const result = await refreshPosPrice(item.sku, f.dependencies);
-  assert.equal(result.priceCents, 1000); assert.equal(f.state.quoted[0].game, "Pokémon");
-  assert.equal((f.state.mutations[0].variants as { price: string }[])[0].price, "10.00");
+  assert.equal(result.priceCents, 1117); assert.equal(f.state.quoted[0].game, "Pokémon");
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "11.17" }] }]);
 });
 
-test("Riftbound sealed merchandise receives no markup", async () => {
-  const item = variant(); item.sku = "DEFY-RFB-T635368";
-  Object.assign(item.product, { cardName: field("Origins Booster Display"), productType: "Riftbound sealed", number: null, catalogId: null, receivingId: null });
-  item.selectedOptions = [{ name: "Condition", value: "Unopened" }, { name: "Language", value: "English" }];
-  const f = fixture([item]); const result = await refreshPosPrice(item.sku, f.dependencies);
-  assert.equal(result.priceCents, 1000); assert.equal(f.state.quoted[0].productType, "Sealed");
+test("other-game singles and sealed merchandise retain raw market prices", async () => {
+  for (const [game, productType, language] of [
+    ["Magic: The Gathering", "Single", "English"],
+    ["Riftbound", "Sealed", "English"],
+    ["Pokémon", "Sealed", "English"],
+    ["Pokémon (Japanese)", "Sealed", "Japanese"],
+  ]) {
+    const item = variant(); item.sku = "UNMARKED-PRODUCT";
+    Object.assign(item.product, { game: field(game), productType: `${game} ${productType.toLowerCase()}`, catalogId: null, receivingId: null });
+    if (productType === "Sealed") {
+      item.product.cardName = field("Booster Display");
+      item.selectedOptions = [{ name: "Condition", value: "Unopened" }, { name: "Language", value: language }];
+    }
+    const f = fixture([item]); const result = await refreshPosPrice(item.sku, f.dependencies);
+    assert.equal(result.priceCents, 1000, `${game} ${productType}`);
+    assert.equal(f.state.quoted[0].productType, productType);
+    assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "10.00" }] }]);
+  }
 });
 
 test("canonical SKU works without a barcode and recovers absent card metadata only from the exact catalog printing", async () => {
