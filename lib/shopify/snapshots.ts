@@ -5,11 +5,13 @@ interface PageInfo { hasNextPage: boolean; endCursor: string | null }
 interface Product { id: string; title: string; handle: string; status: string; updatedAt: string }
 interface Level { updatedAt: string; quantities: { name: string; quantity: number }[] }
 interface Variant { id: string; title: string; sku: string | null; barcode: string | null; price: string; updatedAt: string; product: Product; inventoryItem: { id: string; tracked: boolean; inventoryLevel: Level | null } }
+type InventoryItemSnapshot = Variant["inventoryItem"] & { variant: Omit<Variant, "inventoryItem"> | null };
 interface OrderLine { id: string; title: string; sku: string | null; quantity: number; currentQuantity: number; originalUnitPriceSet: { shopMoney: { amount: string; currencyCode: string } }; variant: Pick<Variant, "id"> | Variant | null }
 interface Order { id: string; name: string; createdAt: string; updatedAt: string; cancelledAt: string | null; displayFinancialStatus: string | null; displayFulfillmentStatus: string; currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }; lineItems: { nodes: OrderLine[]; pageInfo: PageInfo } }
 const PRODUCT_FIELDS = "id title handle status updatedAt";
 const LEVEL_FIELDS = `updatedAt quantities(names: ["available", "on_hand", "committed"]) { name quantity }`;
-const VARIANT_FIELDS = `id title sku barcode price updatedAt product { ${PRODUCT_FIELDS} } inventoryItem { id tracked inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }`;
+const VARIANT_IDENTITY_FIELDS = `id title sku barcode price updatedAt product { ${PRODUCT_FIELDS} }`;
+const VARIANT_FIELDS = `${VARIANT_IDENTITY_FIELDS} inventoryItem { id tracked inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }`;
 const ORDER_FIELDS = `id name createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus currentTotalPriceSet { shopMoney { amount currencyCode } }
   lineItems(first: 100) { nodes { id title sku quantity currentQuantity originalUnitPriceSet { shopMoney { amount currencyCode } } variant { id } } pageInfo { hasNextPage endCursor } }`;
 function empty(): SyncBatch { return { projections: [], replaceChildren: [] }; }
@@ -25,11 +27,11 @@ export function inventoryProjection(itemId: string, variantId: string | null, lo
   return projection("inventory", `${itemId}@${locationId}`, variantId, level?.updatedAt ?? missingAt, observedAt,
     { inventoryItemId: itemId, locationId, available: quantities.get("available") ?? 0, onHand: quantities.get("on_hand") ?? 0, committed: quantities.get("committed") ?? 0 }, !level);
 }
-function addVariant(batch: SyncBatch, variant: Variant, locationId: string, observedAt: string) {
+function addVariant(batch: SyncBatch, variant: Variant, locationId: string, observedAt: string, missingAt = observedAt) {
   const product = variant.product;
   batch.projections.push(projection("products", product.id, null, product.updatedAt, observedAt, { title: product.title, handle: product.handle, status: product.status }));
   batch.projections.push(projection("variants", variant.id, product.id, variant.updatedAt, observedAt, { title: variant.title, sku: variant.sku ?? "", barcode: variant.barcode ?? "", price: variant.price, inventoryItemId: variant.inventoryItem.id, tracked: variant.inventoryItem.tracked }));
-  batch.projections.push(inventoryProjection(variant.inventoryItem.id, variant.id, locationId, variant.inventoryItem.inventoryLevel, observedAt));
+  batch.projections.push(inventoryProjection(variant.inventoryItem.id, variant.id, locationId, variant.inventoryItem.inventoryLevel, observedAt, missingAt));
 }
 function addOrder(batch: SyncBatch, order: Order, locationId: string, observedAt: string) {
   if (order.lineItems.pageInfo.hasNextPage) throw new ShopifySyncError("ORDER_TOO_LARGE", "An order exceeds 100 lines. Its sync remains pending for owner review; no partial order was saved.");
@@ -78,12 +80,19 @@ export async function fetchDeliverySnapshot(graphql: ReadGraphQL, delivery: Deli
   const batch = empty();
   if (delivery.topic.startsWith("inventory_levels/")) {
     if (delivery.locationId !== locationId) return batch;
-    const data = await graphql<{ inventoryItem: { variant: { id: string } | null; inventoryLevel: Level | null } | null }>(`query DefySyncInventory($id: ID!, $locationId: ID!) {
-      inventoryItem(id: $id) { variant { id } inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }
+    const data = await graphql<{ inventoryItem: InventoryItemSnapshot | null }>(`query DefySyncInventory($id: ID!, $locationId: ID!) {
+      inventoryItem(id: $id) { id tracked variant { ${VARIANT_IDENTITY_FIELDS} } inventoryLevel(locationId: $locationId) { ${LEVEL_FIELDS} } }
     }`, { id: delivery.resourceId, locationId });
-    if (!data.inventoryItem?.inventoryLevel && delivery.topic !== "inventory_levels/disconnect") throw new ShopifySyncError("INVENTORY_UNAVAILABLE", "Shopify inventory is not readable yet. This event will retry.");
-    if (delivery.topic === "inventory_levels/disconnect" && data.inventoryItem?.inventoryLevel && Date.parse(data.inventoryItem.inventoryLevel.updatedAt) <= Date.parse(delivery.triggeredAt)) throw new ShopifySyncError("DISCONNECT_NOT_VISIBLE", "Shopify still returns the pre-disconnect inventory level. This event will retry.");
-    batch.projections.push(inventoryProjection(delivery.resourceId, data.inventoryItem?.variant?.id ?? null, locationId, data.inventoryItem?.inventoryLevel ?? null, observedAt, delivery.triggeredAt));
+    const item = data.inventoryItem;
+    if (item && item.id !== delivery.resourceId) throw new ShopifySyncError("INVALID_SNAPSHOT", "Shopify did not confirm this inventory item's identity.");
+    if (!item?.inventoryLevel && delivery.topic !== "inventory_levels/disconnect") throw new ShopifySyncError("INVENTORY_UNAVAILABLE", "Shopify inventory is not readable yet. This event will retry.");
+    if (delivery.topic === "inventory_levels/disconnect" && item?.inventoryLevel && Date.parse(item.inventoryLevel.updatedAt) <= Date.parse(delivery.triggeredAt)) throw new ShopifySyncError("DISCONNECT_NOT_VISIBLE", "Shopify still returns the pre-disconnect inventory level. This event will retry.");
+    if (item?.inventoryLevel && !item.variant) throw new ShopifySyncError("VARIANT_UNAVAILABLE", "Shopify's inventory variant is not readable yet. This event will retry.");
+    // An inventory event can arrive before its product event or the first catalog
+    // reconciliation. Save the exact parents too so its stock is visible immediately.
+    // This is one variant, never a complete sibling list for the product.
+    if (item?.variant) addVariant(batch, { ...item.variant, inventoryItem: item }, locationId, observedAt, delivery.triggeredAt);
+    else batch.projections.push(inventoryProjection(delivery.resourceId, null, locationId, item?.inventoryLevel ?? null, observedAt, delivery.triggeredAt));
   } else if (delivery.topic.startsWith("products/")) {
     const data = await graphql<{ product: (Product & { variants: { nodes: Variant[]; pageInfo: PageInfo } }) | null }>(`query DefySyncProduct($id: ID!, $locationId: ID!) {
       product(id: $id) { ${PRODUCT_FIELDS} variants(first: 100) { nodes { ${VARIANT_FIELDS} } pageInfo { hasNextPage endCursor } } }

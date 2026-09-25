@@ -12,6 +12,12 @@ into Shopify. Its confirmed receipt history is visible in the same DefyOS
 dashboard. See [SHOPIFY_POS_RECEIVING.md](SHOPIFY_POS_RECEIVING.md) for the staff
 workflow and the distinction between receipt costs and selling prices.
 
+Quantity edits in Shopify Admin or POS are delivered automatically to this
+dashboard. While it is visible, the dashboard refreshes its saved Shopify
+snapshot every 15 seconds and when the window regains focus. Delivery and
+processing can take additional time; the last-sync timestamp and any failures
+remain visible. The refresh only reads DefyOS data and never adjusts stock.
+
 The separate [Scrydex pricing refresh](SHOPIFY_PRICING.md) updates existing
 Shopify selling prices for POS and online use. It has its own daily schedule,
 manual refresh panel, and durable progress; stock/order projection stays read-only.
@@ -102,6 +108,12 @@ when versions tie. Product/order deletions retain tombstones, and complete
 product/order snapshots retire removed variants/lines. Unreadable non-delete
 objects remain pending, rather than being mistaken for deleted objects.
 
+An inventory delivery also reads and saves that item's exact variant and product
+details. It can therefore appear immediately even when its product webhook has
+not arrived or reconciliation has not imported it yet. This single-item read
+never retires sibling variants. Decreases and zero counts are saved as absolute
+Shopify quantities, with the same protection against stale deliveries.
+
 Orders store totals, status, timestamps, and line item identities/counts. Their
 stock is copied from the current inventory level, never calculated by subtracting
 order quantities. Paid, cancelled, refund-related order updates, and repeated
@@ -168,16 +180,29 @@ node --env-file=.env.local --experimental-strip-types scripts/setup-shopify-webh
 
 The default is read-only. It verifies the authenticated shop and required scopes,
 checks the exact HTTPS `SHOPIFY_SYNC_ORIGIN`, paginates existing subscriptions,
-and prints the missing topic/callback pairs. Before applying, check the Shopify
+and prints missing topic/callback pairs and existing payloads needing repair.
+Before applying, check the Shopify
 app configuration for app-scoped subscriptions too: Shopify's listing API exposes
 only this app's API-created shop-scoped subscriptions.
 
-Append `--apply` to that same command to create the missing pairs. It uses exactly
-`<SHOPIFY_SYNC_ORIGIN>/api/shopify/webhooks`, requests only `id` for product/order
-payloads and `inventory_item_id` plus `location_id` for inventory payloads, and
-never changes or deletes an existing subscription. Existing conflicting filters,
-formats, missing payload identifiers, or duplicate pairs stop setup for review.
-After an interrupted run, rerun the dry run; confirmed subscriptions are skipped.
+Append `--apply` to that same command to create missing pairs and repair compatible
+existing subscriptions at exactly `<SHOPIFY_SYNC_ORIGIN>/api/shopify/webhooks`.
+Product/order payloads include `id` and `updated_at`; inventory update/connect
+payloads include `inventory_item_id`, `location_id`, `updated_at`, and `available`.
+Delete/disconnect payloads retain their identity fields only.
+
+The changing fields matter: Shopify can suppress consecutive identical reduced
+payloads, so subscriptions containing only IDs can miss later stock changes.
+See [Shopify webhook debouncing](https://shopify.dev/docs/apps/build/webhooks/delivery-structure#debouncing).
+The receiver still persists only event metadata and reads current quantities
+from Shopify rather than trusting a possibly delayed webhook count.
+
+Repairs append missing change fields to the same subscription ID, preserving
+existing broader fields and all other settings. Full payload subscriptions need
+no repair. Conflicting filters, formats, missing payload identifiers, or duplicate
+pairs stop setup for review. Other callbacks and disabled order subscriptions
+are untouched; no subscription is deleted. After an interrupted run, rerun the
+dry run; confirmed creations and repairs are skipped.
 The handler's `SHOPIFY_WEBHOOK_SECRET` must equal this subscribing app's
 `SHOPIFY_CLIENT_SECRET`. No credentials are printed. Setup does not enable sync,
 change stock, reconcile orders, or verify webhook delivery by making test sales.

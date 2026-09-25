@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ThemeToggle from "../theme-toggle";
 import PricingPanel from "./pricing-panel";
 import ReceivingPanel from "./receiving-panel";
@@ -67,6 +67,7 @@ type Checkpoint = { cursor: string; processed: number };
 const MAX_PAGES_PER_RUN = 20;
 const MAX_VISIBLE_ROWS = 100;
 const MAX_VISIBLE_ORDERS = 50;
+const SNAPSHOT_REFRESH_INTERVAL_MS = 15_000;
 const count = new Intl.NumberFormat("en-US");
 const dateTime = (value: string | null) => {
   if (!value) return "Not yet synced";
@@ -135,75 +136,119 @@ export default function ShopifyClient() {
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const [storageWarning, setStorageWarning] = useState("");
   const [section, setSection] = useState<"inventory" | "orders">("inventory");
   const [query, setQuery] = useState("");
   const mounted = useRef(false);
   const syncing = useRef(false);
   const pauseRequested = useRef(false);
+  const snapshotRequest = useRef<AbortController | null>(null);
+
+  const refreshSnapshot = useCallback(
+    async (source: "initial" | "manual" | "automatic" | "sync") => {
+      if (!mounted.current || (syncing.current && source !== "sync")) return;
+      // Background reads never overlap; explicit reads replace an older request.
+      if (snapshotRequest.current) {
+        if (source === "automatic") return;
+        snapshotRequest.current.abort();
+      }
+      const controller = new AbortController();
+      snapshotRequest.current = controller;
+      const isCurrent = () =>
+        mounted.current &&
+        !controller.signal.aborted &&
+        snapshotRequest.current === controller;
+      try {
+        const data = await readSnapshot(controller.signal);
+        if (!isCurrent()) return;
+        setSnapshot(data);
+        setRefreshError("");
+        if (source === "initial") {
+          try {
+            const stored = sessionStorage.getItem(checkpointKey(data));
+            if (stored) {
+              const saved = JSON.parse(stored) as Checkpoint;
+              if (
+                typeof saved.cursor === "string" &&
+                saved.cursor.length > 0 &&
+                saved.cursor.length <= 4096 &&
+                Number.isSafeInteger(saved.processed) &&
+                saved.processed >= 0
+              ) {
+                setCheckpoint(saved);
+                setMessage(
+                  "A previous sync is paused. Resume when you’re ready.",
+                );
+              }
+            }
+          } catch {
+            setStorageWarning(
+              "This browser cannot save sync progress. Keep this page open to resume; starting again safely refreshes the same Shopify records.",
+            );
+          }
+        }
+      } catch (reason) {
+        if (!isCurrent()) return;
+        if (source === "automatic") {
+          setRefreshError(
+            "The latest Shopify stock could not be loaded. Automatic refresh will retry shortly.",
+          );
+        } else if (source === "sync") {
+          setError(
+            (previous) =>
+              previous ||
+              "The sync finished, but the dashboard could not refresh. Use Refresh view to load the latest results.",
+          );
+        } else {
+          setRefreshError(
+            errorMessage(reason, "Shopify sync details could not be loaded."),
+          );
+        }
+      } finally {
+        if (isCurrent()) {
+          snapshotRequest.current = null;
+          setLoading(false);
+          if (source === "manual") setRefreshing(false);
+        }
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     mounted.current = true;
-    const controller = new AbortController();
-    async function load() {
-      try {
-        const data = await readSnapshot(controller.signal);
-        if (!mounted.current) return;
-        setSnapshot(data);
-        try {
-          const stored = sessionStorage.getItem(checkpointKey(data));
-          if (stored) {
-            const saved = JSON.parse(stored) as Checkpoint;
-            if (
-              typeof saved.cursor === "string" &&
-              saved.cursor.length > 0 &&
-              saved.cursor.length <= 4096 &&
-              Number.isSafeInteger(saved.processed) &&
-              saved.processed >= 0
-            ) {
-              setCheckpoint(saved);
-              setMessage(
-                "A previous sync is paused. Resume when you’re ready.",
-              );
-            }
-          }
-        } catch {
-          setStorageWarning(
-            "This browser cannot save sync progress. Keep this page open to resume; starting again safely refreshes the same Shopify records.",
-          );
-        }
-      } catch (reason) {
-        if (!controller.signal.aborted && mounted.current)
-          setError(
-            errorMessage(reason, "Shopify sync details could not be loaded."),
-          );
-      } finally {
-        if (!controller.signal.aborted && mounted.current) setLoading(false);
-      }
-    }
-    void load();
+    const initialLoad = window.setTimeout(() => {
+      void refreshSnapshot("initial");
+    }, 0);
+    const refreshVisibleSnapshot = () => {
+      if (document.visibilityState === "visible")
+        void refreshSnapshot("automatic");
+    };
+    const interval = window.setInterval(
+      refreshVisibleSnapshot,
+      SNAPSHOT_REFRESH_INTERVAL_MS,
+    );
+    window.addEventListener("focus", refreshVisibleSnapshot);
+    document.addEventListener("visibilitychange", refreshVisibleSnapshot);
     return () => {
       mounted.current = false;
       pauseRequested.current = true;
-      controller.abort();
+      window.clearTimeout(initialLoad);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshVisibleSnapshot);
+      document.removeEventListener("visibilitychange", refreshVisibleSnapshot);
+      snapshotRequest.current?.abort();
+      snapshotRequest.current = null;
     };
-  }, []);
+  }, [refreshSnapshot]);
 
   async function refresh() {
-    if (syncing.current) return;
+    if (syncing.current || !mounted.current) return;
     setRefreshing(true);
     setError("");
-    try {
-      const data = await readSnapshot();
-      if (mounted.current) setSnapshot(data);
-    } catch (reason) {
-      if (mounted.current)
-        setError(
-          errorMessage(reason, "Shopify sync details could not be loaded."),
-        );
-    } finally {
-      if (mounted.current) setRefreshing(false);
-    }
+    setRefreshError("");
+    await refreshSnapshot("manual");
   }
 
   function saveCheckpoint(data: SyncSnapshot, next: Checkpoint | null) {
@@ -229,6 +274,9 @@ export default function ShopifyClient() {
     )
       return;
     syncing.current = true;
+    snapshotRequest.current?.abort();
+    snapshotRequest.current = null;
+    setRefreshing(false);
     pauseRequested.current = false;
     setRunning(true);
     setPausing(false);
@@ -301,17 +349,7 @@ export default function ShopifyClient() {
       }
     } finally {
       if (mounted.current) {
-        try {
-          const data = await readSnapshot();
-          if (mounted.current) setSnapshot(data);
-        } catch {
-          if (mounted.current)
-            setError(
-              (previous) =>
-                previous ||
-                "The sync finished, but the dashboard could not refresh. Use Refresh view to load the latest results.",
-            );
-        }
+        await refreshSnapshot("sync");
         if (mounted.current) {
           setRunning(false);
           setPausing(false);
@@ -412,6 +450,7 @@ export default function ShopifyClient() {
             <p>
               Last synced: {dateTime(snapshot?.summary.lastSyncedAt ?? null)}
             </p>
+            {ready && <p>Updates automatically while this page is open.</p>}
             {snapshot && !ordersEnabled && <p>Orders are not connected. Inventory and receiving remain available here.</p>}
             {snapshot?.status === "disabled" && (
               <p>
@@ -470,9 +509,9 @@ export default function ShopifyClient() {
         <div aria-live="polite" aria-atomic="true">
           {message && <p className="shopify-notice">{message}</p>}
         </div>
-        {error && (
+        {(error || refreshError) && (
           <p role="alert" className="shopify-alert">
-            {error}
+            {error || refreshError}
           </p>
         )}
         {storageWarning && <p className="shopify-notice">{storageWarning}</p>}

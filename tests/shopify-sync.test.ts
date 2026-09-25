@@ -10,6 +10,12 @@ const location = "gid://shopify/Location/1";
 const older = "2026-09-18T00:00:00.000Z";
 const newer = "2026-09-18T00:01:00.000Z";
 const delivery: Delivery = { id: "inventory_levels/update:event-one", topic: "inventory_levels/update", resourceId: "gid://shopify/InventoryItem/1", locationId: location, triggeredAt: newer };
+function inventoryItem(available: number, version = newer) {
+  return { id: delivery.resourceId, tracked: true,
+    variant: { id: "gid://shopify/ProductVariant/1", title: "Near Mint / Foil", sku: "DEFY-1", barcode: "DEFY-QR-1", price: "3.50", updatedAt: older,
+      product: { id: "gid://shopify/Product/1", title: "Defy", handle: "defy", status: "ACTIVE", updatedAt: older } },
+    inventoryLevel: { updatedAt: version, quantities: [{ name: "available", quantity: available }, { name: "on_hand", quantity: available + 2 }, { name: "committed", quantity: 2 }] } };
+}
 function stock(quantity: number, version = newer, observedAt = newer): Projection {
   return { kind: "inventory", id: "item@location", parentId: "variant", sourceUpdatedAt: version, observedAt, data: { available: quantity }, deleted: false };
 }
@@ -83,13 +89,62 @@ test("inventory webhook reads current upstream quantity and version instead of t
   const graphql: ReadGraphQL = async <T>(query: string) => {
     assert.match(query, /^query /);
     assert.doesNotMatch(query, /mutation/);
-    return { inventoryItem: { variant: { id: "gid://shopify/ProductVariant/1" }, inventoryLevel: { updatedAt: newer, quantities: [{ name: "available", quantity: 7 }, { name: "on_hand", quantity: 9 }, { name: "committed", quantity: 2 }] } } } as T;
+    return { inventoryItem: inventoryItem(7) } as T;
   };
   const batch = await fetchDeliverySnapshot(graphql, { ...delivery, triggeredAt: older }, location);
-  assert.equal(batch.projections[0].sourceUpdatedAt, newer);
-  assert.equal(batch.projections[0].data.available, 7);
-  assert.equal(batch.projections[0].data.onHand, 9);
+  const level = batch.projections.find(row => row.kind === "inventory")!;
+  assert.equal(level.sourceUpdatedAt, newer);
+  assert.equal(level.data.available, 7);
+  assert.equal(level.data.onHand, 9);
   assert.deepEqual(await fetchDeliverySnapshot(graphql, { ...delivery, locationId: "gid://shopify/Location/99" }, location), { projections: [], replaceChildren: [] });
+});
+test("inventory-only updates and connections hydrate their exact product and variant without a prior catalog import", async () => {
+  for (const topic of ["inventory_levels/update", "inventory_levels/connect"]) {
+    const item = inventoryItem(0);
+    let reads = 0;
+    const graphql: ReadGraphQL = async <T>(query: string, variables?: Record<string, unknown>) => {
+      reads++;
+      assert.deepEqual(variables, { id: item.id, locationId: location });
+      assert.match(query, /id tracked variant \{ id title sku barcode price updatedAt product/);
+      return { inventoryItem: item } as T;
+    };
+    const store = new MemoryStore();
+    let batch: SyncBatch | undefined;
+    await processDelivery(shop, { ...delivery, topic }, store, async () => batch = await fetchDeliverySnapshot(graphql, { ...delivery, topic }, location, false));
+    assert.equal(reads, 1);
+    assert.equal(store.rows.get(item.variant.product.id)?.data.title, "Defy");
+    const variant = store.rows.get(item.variant.id)!;
+    assert.equal(variant.parentId, item.variant.product.id);
+    assert.equal(variant.data.sku, "DEFY-1");
+    assert.equal(variant.data.barcode, "DEFY-QR-1");
+    assert.equal(variant.data.inventoryItemId, item.id);
+    assert.equal(variant.data.tracked, true);
+    const level = store.rows.get(`${item.id}@${location}`)!;
+    assert.equal(level.parentId, item.variant.id);
+    assert.equal(level.data.available, 0);
+    assert.equal(level.data.committed, 2);
+    assert.equal(level.deleted, false);
+    assert.deepEqual(batch?.replaceChildren, []);
+    assert.equal(store.legacyQuantity, 17);
+  }
+});
+test("repeated inventory snapshots preserve absolute zero and negative quantities and reject stale stock", async () => {
+  const store = new MemoryStore();
+  for (const [id, available, version] of [["first", 7, older], ["zero", 0, newer], ["stale", 12, older], ["negative", -1, "2026-09-18T00:02:00.000Z"]] as const) {
+    const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: inventoryItem(available, version) }) as T;
+    await processDelivery(shop, { ...delivery, id }, store, () => fetchDeliverySnapshot(graphql, delivery, location));
+    assert.equal(store.rows.get(`${delivery.resourceId}@${location}`)?.data.available, id === "stale" ? 0 : available);
+  }
+  assert.equal(store.legacyQuantity, 17);
+});
+test("unreadable inventory parents and mismatched item identities leave updates retryable", async () => {
+  for (const item of [{ ...inventoryItem(7), variant: null }, { ...inventoryItem(7), id: "gid://shopify/InventoryItem/99" }]) {
+    const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: item }) as T;
+    const store = new MemoryStore();
+    await assert.rejects(processDelivery(shop, delivery, store, () => fetchDeliverySnapshot(graphql, delivery, location)), /not readable|identity/);
+    assert.equal(await store.hasDelivery(shop, delivery.id), false);
+    assert.equal(store.rows.size, 0);
+  }
 });
 test("non-delete unavailable objects retry; confirmed deletion produces a tombstone", async () => {
   const graphql: ReadGraphQL = async <T>() => ({ product: null }) as T;
@@ -160,10 +215,32 @@ test("webhook delivery IDs take precedence and shared event IDs preserve distinc
   assert.equal(parseDelivery(headers, { inventory_item_id: 1, location_id: 1 }, shop)?.id, "webhook:delivery-123456");
 });
 test("temporarily missing inventory retries unless the event is a disconnect", async () => {
-  const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: { variant: { id: "variant1" }, inventoryLevel: null } }) as T;
+  const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: { ...inventoryItem(7), inventoryLevel: null } }) as T;
   await assert.rejects(fetchDeliverySnapshot(graphql, delivery, location), /not readable/);
   const batch = await fetchDeliverySnapshot(graphql, { ...delivery, topic: "inventory_levels/disconnect" }, location);
+  const level = batch.projections.find(row => row.kind === "inventory")!;
+  assert.equal(level.deleted, true);
+  assert.equal(level.sourceUpdatedAt, delivery.triggeredAt);
+  assert.equal(level.parentId, inventoryItem(7).variant.id);
+  assert.deepEqual(batch.replaceChildren, []);
+});
+test("disconnect snapshots retain event timestamps for missing items and preserve newer reconnections", async () => {
+  const event = { ...delivery, topic: "inventory_levels/disconnect" };
+  const missing: ReadGraphQL = async <T>() => ({ inventoryItem: null }) as T;
+  const batch = await fetchDeliverySnapshot(missing, event, location);
+  assert.equal(batch.projections.length, 1);
   assert.equal(batch.projections[0].deleted, true);
+  assert.equal(batch.projections[0].sourceUpdatedAt, event.triggeredAt);
+  assert.equal(batch.projections[0].parentId, null);
+  const stale: ReadGraphQL = async <T>() => ({ inventoryItem: inventoryItem(7) }) as T;
+  await assert.rejects(fetchDeliverySnapshot(stale, event, location), /pre-disconnect/);
+  const reconnectedAt = "2026-09-18T00:02:00.000Z";
+  const reconnected: ReadGraphQL = async <T>() => ({ inventoryItem: inventoryItem(3, reconnectedAt) }) as T;
+  const current = await fetchDeliverySnapshot(reconnected, event, location);
+  const level = current.projections.find(row => row.kind === "inventory")!;
+  assert.equal(level.deleted, false);
+  assert.equal(level.sourceUpdatedAt, reconnectedAt);
+  assert.equal(level.data.available, 3);
 });
 test("reconciliation identity audits recover missed product and variant deletions without trusting partial scans", async () => {
   const graphql: ReadGraphQL = async <T>() => ({ nodes: [null] }) as T;

@@ -3,10 +3,50 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { neon } from "@neondatabase/serverless";
 import { ShopifySyncRepository } from "../lib/shopify/repository.ts";
+import type { ReadGraphQL } from "../lib/shopify/read-client.ts";
+import { fetchDeliverySnapshot } from "../lib/shopify/snapshots.ts";
 import { encodeCursor, type Delivery, type Projection, type SyncBatch } from "../lib/shopify/sync-core.ts";
 
 // Explicit opt-in only; root supplies the URL of an isolated development Neon branch.
 const enabled = process.env.SHOPIFY_SYNC_INTEGRATION === "1" && Boolean(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL);
+test("real Postgres inventory webhooks make previously unknown stock visible and update its absolute balance", { skip: !enabled }, async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;
+  const sql = neon(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL!);
+  const store = new ShopifySyncRepository();
+  const shop = `inventory-webhook-${randomUUID()}.invalid`;
+  const locationId = "gid://shopify/Location/1";
+  const itemId = "gid://shopify/InventoryItem/1";
+  const variantId = "gid://shopify/ProductVariant/1";
+  const productId = "gid://shopify/Product/1";
+  const older = "2026-09-18T00:00:00.000Z";
+  const newer = "2026-09-18T00:01:00.000Z";
+  try {
+    assert.equal((await store.dashboard(shop, locationId, false)).inventory.length, 0);
+    for (const [id, available, updatedAt] of [["first", 6, older], ["zero", 0, newer], ["late", 9, older]] as const) {
+      const delivery: Delivery = { id, topic: "inventory_levels/update", resourceId: itemId, locationId, triggeredAt: updatedAt };
+      const graphql: ReadGraphQL = async <T>() => ({ inventoryItem: { id: itemId, tracked: true,
+        variant: { id: variantId, title: "Default Title", sku: "DEFY-1", barcode: "DEFY-QR-1", price: "3.50", updatedAt: older,
+          product: { id: productId, title: "New Shopify item", handle: "new-item", status: "ACTIVE", updatedAt: older } },
+        inventoryLevel: { updatedAt, quantities: [{ name: "available", quantity: available }, { name: "on_hand", quantity: available }, { name: "committed", quantity: 0 }] } } }) as T;
+      await store.enqueue(shop, delivery);
+      const lease = await store.acquire(shop, id, false);
+      assert.ok(lease);
+      const batch = await fetchDeliverySnapshot(graphql, delivery, locationId, false);
+      assert.equal(await store.apply(shop, delivery, batch, lease.leaseToken), true);
+      const dashboard = await store.dashboard(shop, locationId, false);
+      assert.equal(dashboard.inventory.length, 1);
+      assert.equal(dashboard.inventory[0].productId, productId);
+      assert.equal(dashboard.inventory[0].variantId, variantId);
+      assert.equal(dashboard.inventory[0].sku, "DEFY-1");
+      assert.equal(dashboard.inventory[0].barcode, "DEFY-QR-1");
+      assert.equal(dashboard.inventory[0].available, id === "late" ? 0 : available);
+    }
+  } finally {
+    for (const table of ["shopify_webhook_inbox", "shopify_inventory", "shopify_variants", "shopify_products"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
+    if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
+  }
+});
 test("real Postgres sync inbox, concurrent leases, atomic rollback, version ordering, and absolute quantities", { skip: !enabled }, async () => {
   const previous = process.env.DATABASE_URL;
   process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;

@@ -84,6 +84,11 @@ concurrent sales. These entries appear as stock counts without acquisition costs
 Inventory-only sync uses the app's existing product/inventory permissions, with
 `SHOPIFY_SYNC_ORDERS_ENABLED=false`; it does not import order history or combine
 Shopify quantities with the older spreadsheet inventory.
+Shopify Admin and POS stock edits arrive through inventory webhooks. The Shopify
+stock page refreshes automatically every 15 seconds while visible and on window
+focus. Existing ID-only webhook subscriptions require the payload repair in
+[SHOPIFY_SYNC.md](SHOPIFY_SYNC.md#release-webhook-setup) so repeated count changes
+are delivered. This keeps the original sheet inventory workflow separate.
 Authenticated app startup
 automatically triggers a sheet-sync write after 2.5 seconds and every five
 minutes. Use development data for local interaction tests; change the sheet

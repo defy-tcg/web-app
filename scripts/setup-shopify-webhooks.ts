@@ -6,8 +6,16 @@ import { syncOrdersEnabled, syncTopics } from "../lib/shopify/sync-core.ts";
 export const webhookTopics = (ordersEnabled = true) => syncTopics(ordersEnabled).map(topic => topic.replaceAll("/", "_").toUpperCase());
 export const WEBHOOK_TOPICS = webhookTopics();
 interface Subscription { id: string; topic: string; uri: string; format: string; includeFields: string[] | null; filter: string | null }
+interface SubscriptionRepair { id: string; topic: string; includeFields: string[]; addedFields: string[] }
 const FIELDS = "id topic uri format includeFields filter";
-const fieldsFor = (topic: string) => topic.startsWith("INVENTORY_LEVELS_") ? ["inventory_item_id", "location_id"] : ["id"];
+const identityFieldsFor = (topic: string) => topic.startsWith("INVENTORY_LEVELS_") ? ["inventory_item_id", "location_id"] : ["id"];
+function fieldsFor(topic: string): string[] {
+  const identity = identityFieldsFor(topic);
+  if (topic.endsWith("_DELETE") || topic === "INVENTORY_LEVELS_DISCONNECT") return identity;
+  // Shopify suppresses consecutive identical reduced payloads. Keep changes visible,
+  // including different inventory counts whose timestamps fall in the same second.
+  return [...identity, "updated_at", ...(topic.startsWith("INVENTORY_LEVELS_") ? ["available"] : [])];
+}
 
 export function webhookCallback(origin: string | undefined): string {
   let parsed: URL;
@@ -41,23 +49,25 @@ async function subscriptions(graphql: SinglesGraphQL): Promise<Subscription[]> {
   return subscriptions;
 }
 
-function verifyExisting(items: Subscription[], callback: string, topics: string[]): { existing: string[]; missing: string[]; warnings: string[] } {
-  const existing: string[] = [], missing: string[] = [], warnings: string[] = [];
+function verifyExisting(items: Subscription[], callback: string, topics: string[]): { existing: string[]; missing: string[]; repairs: SubscriptionRepair[]; warnings: string[] } {
+  const existing: string[] = [], missing: string[] = [], repairs: SubscriptionRepair[] = [], warnings: string[] = [];
   for (const topic of topics) {
     const matches = items.filter(item => item.topic === topic && item.uri === callback);
     if (matches.length > 1) throw new Error(`Multiple ${topic} subscriptions already target DefyOS. Review their IDs in Shopify; this script never deletes subscriptions.`);
     const item = matches[0];
     if (!item) { missing.push(topic); continue; }
-    if (item.format !== "JSON" || item.filter?.trim() || (item.includeFields?.length && fieldsFor(topic).some(field => !item.includeFields!.includes(field)))) {
+    if (item.format !== "JSON" || item.filter?.trim() || (item.includeFields?.length && identityFieldsFor(topic).some(field => !item.includeFields!.includes(field)))) {
       throw new Error(`Existing ${topic} subscription ${item.id} has an incompatible format, filter, or payload. Review it explicitly; this script will not change or duplicate it.`);
     }
     existing.push(topic);
-    if (!item.includeFields?.length || item.includeFields.length !== fieldsFor(topic).length) warnings.push(`${topic} already exists with a broader payload; it was left unchanged.`);
+    const addedFields = item.includeFields?.length ? fieldsFor(topic).filter(field => !item.includeFields!.includes(field)) : [];
+    if (addedFields.length) repairs.push({ id: item.id, topic, includeFields: [...item.includeFields!, ...addedFields], addedFields });
+    else if (!item.includeFields?.length || item.includeFields.length !== fieldsFor(topic).length) warnings.push(`${topic} already exists with a broader payload; it was left unchanged.`);
   }
-  return { existing, missing, warnings };
+  return { existing, missing, repairs, warnings };
 }
 
-/** Dry-run by default. The only mutation path creates a missing exact topic + URI pair. */
+/** Dry-run by default. Apply creates missing pairs or appends change fields to exact compatible subscriptions. */
 export async function setupShopifyWebhooks(graphql: SinglesGraphQL, options: { shop: string; origin: string; apply?: boolean; ordersEnabled?: boolean }) {
   const ordersEnabled = options.ordersEnabled !== false;
   const topics = webhookTopics(ordersEnabled);
@@ -72,11 +82,29 @@ export async function setupShopifyWebhooks(graphql: SinglesGraphQL, options: { s
   const missingScopes = required.filter(scope => !scopes.has(scope) && !scopes.has(scope.replace("read_", "write_")));
   if (missingScopes.length) throw new Error(`Shopify app needs ${missingScopes.join(", ")} before registering DefyOS sync webhooks. Grant/reinstall the app's approved scopes, then rerun the dry run.`);
   const plan = verifyExisting(await subscriptions(graphql), callback, topics);
-  const created: string[] = [];
+  const created: string[] = [], repaired: string[] = [];
   if (options.apply === true) {
-    for (const topic of plan.missing) {
-      // Re-read before every creation, including after a previous interrupted invocation.
-      if (verifyExisting(await subscriptions(graphql), callback, topics).existing.includes(topic)) continue;
+    for (const topic of topics.filter(topic => plan.missing.includes(topic) || plan.repairs.some(repair => repair.topic === topic))) {
+      // Re-read before every write, including after a previous interrupted invocation.
+      const currentItems = await subscriptions(graphql);
+      const current = verifyExisting(currentItems, callback, topics);
+      const repair = current.repairs.find(repair => repair.topic === topic);
+      if (repair) {
+        const original = currentItems.find(item => item.id === repair.id)!;
+        // Omitting the other inputs preserves the URI, format, filter and metadata.
+        const data = await graphql<{ webhookSubscriptionUpdate: { webhookSubscription: Subscription | null; userErrors: { message: string }[] } }>(`mutation DefySyncRepairWebhook($id: ID!, $webhookSubscription: WebhookSubscriptionInput!) {
+          webhookSubscriptionUpdate(id: $id, webhookSubscription: $webhookSubscription) { webhookSubscription { ${FIELDS} } userErrors { message } }
+        }`, { id: repair.id, webhookSubscription: { includeFields: repair.includeFields } });
+        const result = data.webhookSubscriptionUpdate;
+        if (!result || result.userErrors?.length) throw new Error(`Shopify did not accept the ${topic} payload repair: ${result?.userErrors?.map(error => error.message).join("; ") || "no confirmed response"}. Stop and rerun the dry run before retrying.`);
+        const item = result.webhookSubscription;
+        if (!item || item.id !== original.id || item.topic !== topic || item.uri !== original.uri || item.format !== original.format || item.filter !== original.filter || item.includeFields?.length !== repair.includeFields.length || repair.includeFields.some(field => !item.includeFields!.includes(field))) {
+          throw new Error(`Shopify did not confirm the exact ${topic} payload repair. Rerun the dry run to inspect its state before retrying.`);
+        }
+        repaired.push(topic);
+        continue;
+      }
+      if (current.existing.includes(topic)) continue;
       const input = { uri: callback, format: "JSON", includeFields: fieldsFor(topic) };
       const data = await graphql<{ webhookSubscriptionCreate: { webhookSubscription: Subscription | null; userErrors: { message: string }[] } }>(`mutation DefySyncCreateWebhook($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
         webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) { webhookSubscription { ${FIELDS} } userErrors { message } }
@@ -90,9 +118,10 @@ export async function setupShopifyWebhooks(graphql: SinglesGraphQL, options: { s
       created.push(topic);
     }
     const final = verifyExisting(await subscriptions(graphql), callback, topics);
-    if (final.missing.length) throw new Error(`Setup is incomplete for ${final.missing.join(", ")}. Rerun the dry run before retrying.`);
+    const incomplete = [...final.missing, ...final.repairs.map(repair => repair.topic)];
+    if (incomplete.length) throw new Error(`Setup is incomplete for ${incomplete.join(", ")}. Rerun the dry run before retrying.`);
   }
-  return { mode: options.apply === true ? "applied" : "dry-run", ordersEnabled, shop: options.shop, callback, existing: plan.existing, missing: plan.missing, created, warnings: plan.warnings,
+  return { mode: options.apply === true ? "applied" : "dry-run", ordersEnabled, shop: options.shop, callback, existing: plan.existing, missing: plan.missing, repairs: plan.repairs, created, repaired, warnings: plan.warnings,
     note: "Only this app's API-managed subscriptions are visible. Check app-configured subscriptions separately before applying; unrelated subscriptions are never changed." };
 }
 
