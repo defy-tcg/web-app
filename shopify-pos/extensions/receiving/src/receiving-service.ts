@@ -14,6 +14,7 @@ export type ReceiptInput = {
   requestId: string; barcode: string; sku?: string; name: string; game: string; unit: string;
   quantity: string | number; unitCost: string; storePrice?: string; supplier: string; notes: string; receivedDate: string;
   replaceInvalidBarcode?: boolean; locationId?: string | number; locationName?: string;
+  inventoryMode?: 'set'; expectedAvailableQuantity?: number;
   catalog?: ReceiptCatalog;
 };
 export type Request = Omit<ReceiptInput, 'quantity' | 'sku' | 'replaceInvalidBarcode' | 'locationId' | 'locationName'> & {
@@ -34,21 +35,25 @@ export type Plan = {
   version: 1; request: Request; fingerprint: string; startedAt: string;
   plannedSku: string; createdProduct: boolean; before: Product | null;
   locationName: string; currencyCode: string;
-  phase: 'planned' | 'product_ready' | 'price_pending' | 'price_applied' | 'inventory_pending' | 'inventory_applied';
+  phase: 'planned' | 'product_ready' | 'price_pending' | 'price_applied' | 'inventory_pending' | 'inventory_applied' | 'inventory_rejected';
   product?: Product; inventoryStartedAt?: string; adjustment?: Adjustment;
+  rejection?: {rejectedAt: string; error: {code: 'STOCK_CHANGED'; message: string}};
 };
 export type JournalState = {version: 1; nextSequence: number; pending: Plan | null};
 export type StateSnapshot = {shopId: string; currencyCode: string; digest: string | null; state: JournalState | null};
 export type Applied = {version: 1; fingerprint: string; product: Product; receipt: Receipt};
+export type Rejected = {version: 1; status: 'rejected'; fingerprint: string; request: Request; product: Product;
+  rejectedAt: string; error: {code: 'STOCK_CHANGED'; message: string}};
+export type TerminalRecord = Applied | Rejected;
 export type Success = {ok: true; duplicate: boolean; createdProduct: boolean; staged: boolean; product: Product; receipt: Receipt};
-export type Failure = {ok: false; error: {code: string; message: string; retryable: boolean; committedPossible: boolean; definitelyUncommitted?: boolean}; pendingRequest?: Request};
+export type Failure = {ok: false; error: {code: string; message: string; retryable: boolean; committedPossible: boolean; definitelyUncommitted?: boolean}; pendingRequest?: Request; stockRejected?: boolean};
 
 export interface ReceivingAdapter {
   serverNow(): Promise<number>;
   readState(): Promise<StateSnapshot>;
   compareAndSet(snapshot: StateSnapshot, state: JournalState): Promise<boolean>;
-  readRecord(kind: 'intent' | 'applied', requestId: string): Promise<Plan | Applied | null>;
-  createRecord(kind: 'intent' | 'applied', requestId: string, value: Plan | Applied): Promise<void>;
+  readRecord(kind: 'intent' | 'applied', requestId: string): Promise<Plan | TerminalRecord | null>;
+  createRecord(kind: 'intent' | 'applied', requestId: string, value: Plan | TerminalRecord): Promise<void>;
   location(id: string): Promise<{id: string; name: string; active: boolean}>;
   findByBarcode(barcode: string): Promise<Product[]>;
   findBySku(sku: string): Promise<Product[]>;
@@ -57,6 +62,7 @@ export interface ReceivingAdapter {
   resolveProduct(plan: Plan): Promise<Product>;
   applyStorePrice(product: Product, plan: Plan): Promise<Product>;
   confirmStorePrice(product: Product, plan: Plan): Promise<Product>;
+  readAvailable(product: Product, locationId: string): Promise<number>;
   ensureActive(product: Product, plan: Plan): Promise<void>;
   adjust(product: Product, plan: Plan): Promise<Adjustment>;
 }
@@ -75,16 +81,22 @@ export function normalizeRequest(input: ReceiptInput, locationId: unknown): Requ
   const game = text(input.game, 'Game', 80, true);
   const catalog = input.catalog === undefined ? undefined : normalizeReceiptCatalog(input.catalog, name, game);
   const storePrice = optionalStorePrice(input.storePrice);
+  if (input.inventoryMode !== undefined && input.inventoryMode !== 'set') validation('Choose receiving a delivery or setting the current stock total.');
+  const settingTotal = input.inventoryMode === 'set';
+  if (settingTotal ? !Number.isSafeInteger(input.expectedAvailableQuantity) || input.expectedAvailableQuantity! < -2147483648 || input.expectedAvailableQuantity! > 2147483647 : input.expectedAvailableQuantity !== undefined) {
+    validation('Refresh the current Shopify available count before setting its total.');
+  }
   return {
     requestId: id, barcode: scanBarcode(input.barcode), sku: text(input.sku, 'SKU', 80),
     name, game: catalog ? RECEIVING_CATALOG_GAMES[catalog.game] : game,
-    unit: text(input.unit, 'Package unit', 80, true), quantity: quantity(input.quantity), unitCost: money(input.unitCost),
+    unit: text(input.unit, 'Package unit', 80, true), quantity: quantity(input.quantity, settingTotal ? 0 : 1), unitCost: settingTotal ? '0.00' : money(input.unitCost),
     supplier: text(input.supplier, 'Supplier', 300), notes: text(input.notes, 'Notes', 1500),
     receivedDate: isoDate(input.receivedDate), replaceInvalidBarcode: input.replaceInvalidBarcode === true,
     locationId: gid(input.locationId || locationId, 'Location'),
     // Do not add an undefined key: historical receipt fingerprints must stay exact.
     ...(catalog ? {catalog} : {}),
     ...(storePrice !== undefined ? {storePrice} : {}),
+    ...(settingTotal ? {inventoryMode: 'set' as const, expectedAvailableQuantity: input.expectedAvailableQuantity} : {}),
   };
 }
 
@@ -95,13 +107,16 @@ export function assertState(snapshot: StateSnapshot): JournalState {
   if (state.pending) {
     const p = state.pending;
     if (p.version !== 1 || !p.request || p.fingerprint !== stableJson(p.request) || !p.plannedSku || !Number.isFinite(Date.parse(p.startedAt)) ||
-      !['planned', 'product_ready', 'price_pending', 'price_applied', 'inventory_pending', 'inventory_applied'].includes(p.phase)) conflict('The pending receipt needs owner review. Its original request ID is preserved.');
+      !['planned', 'product_ready', 'price_pending', 'price_applied', 'inventory_pending', 'inventory_applied', 'inventory_rejected'].includes(p.phase)) conflict('The pending receipt needs owner review. Its original request ID is preserved.');
+    if ((p.request.inventoryMode !== undefined && p.request.inventoryMode !== 'set') ||
+      (p.request.inventoryMode === 'set' ? !Number.isSafeInteger(p.request.expectedAvailableQuantity) || p.request.expectedAvailableQuantity! < -2147483648 || p.request.expectedAvailableQuantity! > 2147483647 || p.request.unitCost !== '0.00' || !Number.isSafeInteger(p.request.quantity) || p.request.quantity < 0 || p.request.quantity > 2147483647 : p.request.expectedAvailableQuantity !== undefined)) conflict('The saved stock comparison is invalid. Keep its original request ID for owner review.');
     if (p.phase !== 'planned' && !p.product) conflict('The pending receipt is missing its Shopify identity.');
     if ((p.phase === 'price_pending' || p.phase === 'price_applied') &&
       (typeof p.request.storePrice !== 'string' || !/^\d+\.\d{2}$/.test(p.request.storePrice) || typeof p.product?.price !== 'string')) conflict('The pending store price is incomplete. Keep the original receipt for owner review.');
     if (p.phase === 'price_applied' && p.product?.price !== p.request.storePrice) conflict('The pending receipt is missing its store price confirmation.');
     if ((p.phase === 'inventory_pending' || p.phase === 'inventory_applied') && !Number.isFinite(Date.parse(p.inventoryStartedAt || ''))) conflict('The pending inventory attempt is missing its original timestamp.');
     if (p.phase === 'inventory_applied' && !p.adjustment?.id) conflict('The pending receipt is missing its inventory confirmation.');
+    if (p.phase === 'inventory_rejected' && (p.request.inventoryMode !== 'set' || p.adjustment || p.rejection?.error?.code !== 'STOCK_CHANGED' || typeof p.rejection.error.message !== 'string' || !p.rejection.error.message || !Number.isFinite(Date.parse(p.rejection.rejectedAt)))) conflict('The rejected stock request needs owner review.');
   }
   return state;
 }
@@ -128,6 +143,16 @@ function completed(record: Applied, fingerprint: string, duplicate: boolean): Su
   return {ok: true, duplicate, createdProduct: record.receipt.createdProduct, staged: record.receipt.staged, product: record.product, receipt: record.receipt};
 }
 
+function isRejected(record: TerminalRecord): record is Rejected { return 'status' in record && record.status === 'rejected'; }
+function rejectedError(record: Rejected, fingerprint: string): ReceivingError {
+  if (record.version !== 1 || record.fingerprint !== fingerprint || stableJson(record.request) !== fingerprint || record.request.inventoryMode !== 'set' ||
+    'receipt' in record || 'adjustment' in record || !record.product?.variantId || record.error?.code !== 'STOCK_CHANGED' || typeof record.error.message !== 'string' || !record.error.message || !Number.isFinite(Date.parse(record.rejectedAt))) conflict('This rejected stock request has inconsistent saved details. Keep its original ID for review.', 'IDEMPOTENCY_CONFLICT');
+  const error = new ReceivingError(record.error.code, record.error.message);
+  error.stockRejected = true;
+  return error;
+}
+const staleStockMessage = (priceChanged = false) => `Shopify availability changed since it was shown. The stock total was not applied. Refresh the count and confirm a new total.${priceChanged ? ' The store price was already saved and remains in Shopify.' : ''}`;
+
 /**
  * One shop-wide nonexpiring transaction, advanced with compareDigest CAS.
  * No inventory delta is sent before its exact request + start time are durable.
@@ -150,25 +175,33 @@ export class ReceivingService {
     // A price mutation has no Shopify idempotency key. Only the device that
     // confirms this CAS may send it; every subsequent attempt is read-only.
     let priceWriteAuthorized = false;
+    // Only a known first attempt can prove a Shopify rejection made no change.
+    // Any recovery after an uncertain attempt keeps the original request pending.
+    let inventoryWriteAuthorized = false;
     try {
       for (let attempt = 0; attempt < 40; attempt++) {
-        const record = await this.adapter.readRecord('applied', request.requestId) as Applied | null;
+        const record = await this.adapter.readRecord('applied', request.requestId) as TerminalRecord | null;
         const snapshot = await this.adapter.readState();
         const state = assertState(snapshot);
         if (record) {
-          const result = completed(record, fingerprint, true);
+          const rejection = isRejected(record) ? rejectedError(record, fingerprint) : null;
+          const result = rejection ? null : completed(record as Applied, fingerprint, true);
           // Clearing a matching finished transaction is safe after durable confirmation.
           if (state.pending?.request.requestId === request.requestId) {
             if (state.pending.fingerprint !== fingerprint) conflict('The saved receipt and pending transaction disagree.');
             if (!await this.adapter.compareAndSet(snapshot, {...state, pending: null})) continue;
           }
-          return result;
+          if (rejection) throw rejection;
+          return result!;
         }
         let plan = state.pending;
         if (plan) {
           if (plan.request.requestId !== request.requestId) {
-            const finished = await this.adapter.readRecord('applied', request.requestId) as Applied | null;
-            if (finished) return completed(finished, fingerprint, true);
+            const finished = await this.adapter.readRecord('applied', request.requestId) as TerminalRecord | null;
+            if (finished) {
+              if (isRejected(finished)) throw rejectedError(finished, fingerprint);
+              return completed(finished, fingerprint, true);
+            }
             if (await this.adapter.readRecord('intent', request.requestId)) conflict('This receipt has an intent but another transaction replaced its pending state. Ask the owner to review it.');
             const busy = new ReceivingError('RECEIVING_BUSY', `This delivery was not started. Receipt ${plan.request.requestId} must finish first; then enter this delivery again.`, true, false, plan.request);
             busy.definitelyUncommitted = true;
@@ -181,8 +214,11 @@ export class ReceivingService {
           // A durable intent without its pending state/applied marker indicates tampering.
           if (await this.adapter.readRecord('intent', request.requestId)) {
             // Another device can finish between our applied-record and state reads.
-            const finished = await this.adapter.readRecord('applied', request.requestId) as Applied | null;
-            if (finished) return completed(finished, fingerprint, true);
+            const finished = await this.adapter.readRecord('applied', request.requestId) as TerminalRecord | null;
+            if (finished) {
+              if (isRejected(finished)) throw rejectedError(finished, fingerprint);
+              return completed(finished, fingerprint, true);
+            }
             conflict('This receipt has an intent but its transaction state is missing. Ask the owner to reconcile it.');
           }
           const location = await this.adapter.location(request.locationId);
@@ -196,6 +232,13 @@ export class ReceivingService {
           if (request.catalog && !byCatalog && (byBarcode || bySku)) validation('This barcode or SKU now belongs to an existing Shopify item. Select that item to preserve its permanent identity.');
           const before = byCatalog || bySku || byBarcode;
           if (before) validateExisting(before, request);
+          if (request.inventoryMode === 'set') {
+            // A new-product form pins zero. If another device registered it,
+            // require selecting that real product and reviewing its live count.
+            if (before && !request.sku) throw new ReceivingError('STOCK_CHANGED', 'This product was registered in Shopify while the form was open. Look it up again, refresh its count and confirm the total.');
+            const current = before ? await this.adapter.readAvailable(before, request.locationId) : 0;
+            if (current !== request.expectedAvailableQuantity) throw new ReceivingError('STOCK_CHANGED', staleStockMessage());
+          }
           let nextSequence = state.nextSequence;
           let plannedSku = before?.sku || '';
           if (!before) {
@@ -243,17 +286,37 @@ export class ReceivingService {
           // Timestamp is persisted before the first possible stock adjustment.
           const next = {...plan, phase: 'inventory_pending' as const, inventoryStartedAt: new Date(await this.adapter.serverNow()).toISOString()};
           if (!await this.adapter.compareAndSet(snapshot, {...state, pending: next})) continue;
+          inventoryWriteAuthorized = true;
           continue;
         }
         if (plan.phase === 'inventory_pending') {
           const age = await this.adapter.serverNow() - Date.parse(plan.inventoryStartedAt!);
           if (age < -5 * 60 * 1000 || age >= RECEIVING.retryWindowMs) conflict('The inventory result is uncertain and its safe retry window has ended. Ask the owner to reconcile Shopify inventory history using this request ID. Do not submit a new receipt.', 'RETRY_WINDOW_EXPIRED');
-          const adjustment = await this.adapter.adjust(plan.product!, plan);
+          const firstAttempt = inventoryWriteAuthorized;
+          inventoryWriteAuthorized = false;
+          let adjustment: Adjustment;
+          try {
+            adjustment = await this.adapter.adjust(plan.product!, plan);
+          } catch (error) {
+            if (firstAttempt && request.inventoryMode === 'set' && error instanceof ReceivingError && error.code === 'STOCK_CHANGED' && !error.committedPossible) {
+              const rejection = {rejectedAt: new Date(await this.adapter.serverNow()).toISOString(),
+                error: {code: 'STOCK_CHANGED' as const, message: staleStockMessage(request.storePrice !== undefined)}};
+              if (!await this.adapter.compareAndSet(snapshot, {...state, pending: {...plan, phase: 'inventory_rejected', rejection}})) continue;
+              continue;
+            }
+            throw error;
+          }
           if (!adjustment?.id) conflict('Shopify did not provide an inventory confirmation. Keep this receipt pending.');
           if (!await this.adapter.compareAndSet(snapshot, {...state, pending: {...plan, phase: 'inventory_applied', adjustment}})) continue;
           continue;
         }
         const product = plan.product!;
+        if (plan.phase === 'inventory_rejected') {
+          const rejected: Rejected = {version: 1, status: 'rejected', fingerprint, request, product, ...plan.rejection!};
+          await this.adapter.createRecord('applied', request.requestId, rejected);
+          if (!await this.adapter.compareAndSet(snapshot, {...state, pending: null})) continue;
+          throw rejectedError(rejected, fingerprint);
+        }
         const applied: Applied = {version: 1, fingerprint, product, receipt: {
           ...request, sku: product.sku, name: product.name, game: product.game || request.game, unit: product.unit,
           productId: product.productId, variantId: product.variantId, inventoryItemId: product.inventoryItemId,
@@ -268,6 +331,7 @@ export class ReceivingService {
       throw new ReceivingError('RETRY_LATER', 'Receiving changed on another device. Retry this same receipt.', true, true);
     } catch (error) {
       if (error instanceof ReceivingError) {
+        if (error.stockRejected) throw error;
         // Validation after acquiring a durable plan must NEVER release the request ID.
         if (owned && !error.committedPossible) throw new ReceivingError(error.code === 'VALIDATION' ? 'MANUAL_REVIEW' : error.code, error.message, error.retryable, true);
         throw error;
@@ -287,7 +351,8 @@ function runtime(): PosRuntime {
 function storageKey(pos: PosRuntime): string { return `defy-receiving-pending-v1-${pos.session.currentSession.shopId}`; }
 function failure(error: unknown): Failure {
   if (error instanceof ReceivingError) return {ok: false, error: {code: error.code, message: error.message, retryable: error.retryable, committedPossible: error.committedPossible,
-    definitelyUncommitted: error.definitelyUncommitted}, ...(error.definitelyUncommitted && error.pending ? {pendingRequest: error.pending as Request} : {})};
+    definitelyUncommitted: error.definitelyUncommitted}, ...(error.definitelyUncommitted && error.pending ? {pendingRequest: error.pending as Request} : {}),
+    ...(error.stockRejected ? {stockRejected: true} : {})};
   return {ok: false, error: {code: 'CONNECTION_UNCERTAIN', message: 'Could not confirm the result. Keep the same receipt and retry after checking the connection.', retryable: true, committedPossible: true}};
 }
 const production = () => new ReceivingService(new ShopifyReceivingAdapter());
@@ -316,6 +381,20 @@ export async function findCatalogProduct(input: CatalogReference) {
   } catch (error) { return failure(error); }
 }
 
+/** Read-only baseline for the selected variant at this POS device's location. */
+export async function readStock(input: {variantId: string}) {
+  try {
+    const pos = runtime();
+    const locationId = gid(pos.session.currentSession.locationId, 'Location');
+    const adapter = new ShopifyReceivingAdapter();
+    const location = await adapter.location(locationId);
+    if (!location.active || location.id !== locationId) validation('Select an active Shopify POS location before counting stock.');
+    const product = await adapter.stockProduct(gid(input?.variantId, 'ProductVariant'));
+    if (!product.tracked || product.status === 'ARCHIVED') validation('Select a tracked, non-archived Shopify product before counting stock.');
+    return {ok: true as const, availableQuantity: await adapter.readAvailable(product, locationId), locationId, locationName: location.name};
+  } catch (error) { return failure(error); }
+}
+
 export async function loadPendingReceipt() {
   try {
     const pos = runtime();
@@ -323,8 +402,11 @@ export async function loadPendingReceipt() {
     const service = production();
     const remote = await service.pending();
     if (local && remote && local.requestId !== remote.requestId) {
-      const saved = await service.adapter.readRecord('applied', local.requestId) as Applied | null;
-      if (saved) completed(saved, stableJson(local), true);
+      const saved = await service.adapter.readRecord('applied', local.requestId) as TerminalRecord | null;
+      if (saved) {
+        if (isRejected(saved)) rejectedError(saved, stableJson(local));
+        else completed(saved, stableJson(local), true);
+      }
       else if (await service.adapter.readRecord('intent', local.requestId)) conflict('The local receipt has an intent but another transaction owns the journal. Ask the owner to review it.');
       // Local-only draft A never acquired the journal while durable B owns it.
       // Reopen must expose B instead of trapping this device on A forever.
@@ -353,9 +435,10 @@ export async function saveReceipt(input: ReceiptInput): Promise<Success | Failur
     let local = await pos.storage.get(key) as Request | null;
     if (local && local.requestId !== input?.requestId) {
       // A prior success whose local cleanup failed can be safely acknowledged here.
-      const saved = await production().adapter.readRecord('applied', local.requestId) as Applied | null;
+      const saved = await production().adapter.readRecord('applied', local.requestId) as TerminalRecord | null;
       if (!saved) throw new ReceivingError('LOCAL_PENDING', 'Finish the saved receipt before starting a new receipt.', true, true);
-      completed(saved, stableJson(local), true);
+      if (isRejected(saved)) rejectedError(saved, stableJson(local));
+      else completed(saved, stableJson(local), true);
       await pos.storage.delete(key);
       local = null;
     }
@@ -384,7 +467,7 @@ export async function saveReceipt(input: ReceiptInput): Promise<Success | Failur
         result.error.message = 'Another receipt must finish first, but the iPad could not save its recovery details. Reopen receiving after checking the device.';
       }
     }
-    if (result.error.code === 'VALIDATION' && !result.error.retryable && !result.error.committedPossible && pos && request) {
+    if ((result.stockRejected || result.error.code === 'VALIDATION' || result.error.code === 'STOCK_CHANGED') && !result.error.retryable && !result.error.committedPossible && pos && request) {
       try { await pos.storage.delete(storageKey(pos)); } catch { result.error.retryable = true; }
     }
     return result;

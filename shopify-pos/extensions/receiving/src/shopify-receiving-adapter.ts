@@ -1,4 +1,4 @@
-import {RECEIVING, type Adjustment, type Applied, type JournalState, type Plan, type Product, type ReceivingAdapter, type StateSnapshot, validateExisting} from './receiving-service.ts';
+import {RECEIVING, type Adjustment, type TerminalRecord, type JournalState, type Plan, type Product, type ReceivingAdapter, type StateSnapshot, validateExisting} from './receiving-service.ts';
 import {barcodeAliases, barcodeKey, money, ReceivingError, stableJson, validBarcode} from './receiving-validation.ts';
 import {receivingCardMetadata, receivingCatalogKey, RECEIVING_CATALOG_GAMES, type CatalogReference} from './receiving-catalog.ts';
 
@@ -91,7 +91,7 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
     return time;
   }
 
-  async readRecord(kind: 'intent' | 'applied', requestId: string): Promise<Plan | Applied | null> {
+  async readRecord(kind: 'intent' | 'applied', requestId: string): Promise<Plan | TerminalRecord | null> {
     const type = kind === 'intent' ? RECEIVING.intentType : RECEIVING.appliedType;
     const data = await this.graphql(`query ReceivingRecord($handle: MetaobjectHandleInput!) {
       metaobjectByHandle(handle: $handle) { id field(key: "payload") { value } }
@@ -104,7 +104,7 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
     } catch { throw new ReceivingError('RECEIPT_INVALID', 'The saved receipt record is incomplete or damaged. Keep its request ID for owner review.', false, true); }
   }
 
-  async createRecord(kind: 'intent' | 'applied', requestId: string, value: Plan | Applied): Promise<void> {
+  async createRecord(kind: 'intent' | 'applied', requestId: string, value: Plan | TerminalRecord): Promise<void> {
     const existing = await this.readRecord(kind, requestId);
     if (existing) {
       if (stableJson(existing) !== stableJson(value)) throw new ReceivingError('RECEIPT_CONFLICT', 'The immutable receipt record differs from this transaction. Keep the request ID for review.', false, true);
@@ -166,6 +166,23 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
     const data = await this.graphql(`query ReceivingVariant($id: ID!) { productVariant(id: $id) { ${variantFields()} } }`, {id});
     if (!data.productVariant) throw new ReceivingError('PRODUCT_MISSING', 'The reserved Shopify variant was removed. Ask the owner to review the pending receipt.', false, true);
     return {product: product(data.productVariant), node: data.productVariant};
+  }
+
+  async stockProduct(variantId: string): Promise<Product> { return (await this.variant(variantId)).product; }
+
+  async readAvailable(item: Product, locationId: string): Promise<number> {
+    const data = await this.graphql(`query ReceivingAvailable($id: ID!, $locationId: ID!) {
+      inventoryItem(id: $id) { id tracked inventoryLevel(locationId: $locationId) { id quantities(names: ["available"]) { name quantity } } }
+    }`, {id: item.inventoryItemId, locationId});
+    const current = data.inventoryItem;
+    if (!current || current.id !== item.inventoryItemId || current.tracked !== true || !Object.hasOwn(current, 'inventoryLevel')) throw new ReceivingError('STOCK_UNAVAILABLE', 'Shopify could not confirm this product’s tracked inventory. Refresh its stock before saving.');
+    // An existing tracked item not yet stocked at this location starts at zero.
+    // A missing item, missing field, or malformed quantity must never become zero.
+    if (current.inventoryLevel === null) return 0;
+    const level = current.inventoryLevel;
+    const values = level?.quantities;
+    if (!level?.id || !Array.isArray(values) || values.length !== 1 || values[0]?.name !== 'available' || !Number.isSafeInteger(values[0].quantity) || values[0].quantity < -2147483648 || values[0].quantity > 2147483647) throw new ReceivingError('STOCK_UNAVAILABLE', 'Shopify did not return a valid available count. Refresh its stock before saving.');
+    return values[0].quantity;
   }
 
   async findByCatalog(catalog: CatalogReference): Promise<Product | null> {
@@ -352,6 +369,21 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
 
   async adjust(item: Product, plan: Plan): Promise<Adjustment> {
     const referenceDocumentUri = `gid://defy-receiving/Receipt/${plan.request.requestId}`;
+    if (plan.request.inventoryMode === 'set') {
+      const input = {name: 'available', reason: 'correction', referenceDocumentUri,
+        quantities: [{inventoryItemId: item.inventoryItemId, locationId: plan.request.locationId, quantity: plan.request.quantity, changeFromQuantity: plan.request.expectedAvailableQuantity}]};
+      const data = await this.graphql(`mutation SetReceivingInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+        inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+          inventoryAdjustmentGroup { id createdAt referenceDocumentUri } userErrors { code field message }
+        }
+      }`, {input, idempotencyKey: `set-stock-${plan.request.requestId}`});
+      const payload = data.inventorySetQuantities;
+      // A stale CAS on a known first attempt is a definite no-write. The service
+      // persists that rejection before unlocking; on retries it stays uncertain.
+      if (!payload?.inventoryAdjustmentGroup && payload?.userErrors?.length && payload.userErrors.every((error: Json) => error.code === 'CHANGE_FROM_QUANTITY_STALE')) throw new ReceivingError('STOCK_CHANGED', 'Shopify availability changed before the stock total was saved.');
+      userErrors(payload, 'Setting the available stock total');
+      return payload.inventoryAdjustmentGroup;
+    }
     const input = {name: 'available', reason: 'received', referenceDocumentUri,
       // This is a delivery delta, not a stock snapshot. Concurrent POS sales must
       // remain intact. Native idempotency protects the exact one-time increment.

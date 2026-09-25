@@ -14,12 +14,15 @@ products for a sale; it does not receive a delivery.
    Select the exact English package, review any existing store matches, and
    confirm the physical selling unit before registering a new product. Existing
    products keep their SKU; new registrations reserve a new store SKU.
-4. Enter the quantity being added and cost **per selling unit**, plus the
-   supplier, received date, and notes as needed. For example, receiving six boxes
+4. Choose **Receive delivery** for new shipments. Enter the quantity being added
+   and cost **per selling unit**, plus the supplier, received date, and notes as
+   needed. For example, receiving six boxes
    at $120 each means quantity 6 and unit cost 120.00. Enter **Store price per
    selling unit** to set the Shopify selling price, for example 149.99 per box.
    This optional field is separate from acquisition cost; leaving it blank keeps
    the current price. Existing products show their current Shopify price.
+   To enter stock already on hand, choose **Set current stock** instead and enter
+   the full total available to sell at this location. See the stock-count steps below.
 5. Save once and wait for **Receipt saved**. If confirmation is interrupted,
    recover or retry that same receipt. Starting a new receipt for the same
    delivery would add the stock again.
@@ -27,16 +30,44 @@ products for a sale; it does not receive a delivery.
    current counts at the configured location; receiving history shows the
    confirmed receipt quantity and costs. Refresh the view after saving a receipt.
 
-The quantity field adds units; it is not an absolute stock count. Enter only stock
-not already included in Shopify. A pack barcode and a box barcode identify
+**Receive delivery** adds units. Enter only stock not already included in Shopify.
+**Set current stock** replaces the available total after comparing Shopify's count.
+A pack barcode and a box barcode identify
 different selling units. The current receiving tile requires a manufacturer GTIN;
 custom single-card QR labels use DefyOS's separate SKU label workflow.
+
+## Enter stock already on hand
+
+1. Scan the product and verify its selling unit, then choose **Set current stock**.
+2. Check **Currently available in Shopify**. Use **Refresh Shopify count** when
+   needed. A new product starts from a count of zero.
+3. Enter **Total units currently available**: the full total available to sell,
+   including units already recorded in Shopify. For example, if Shopify shows 4
+   and you have 12 available, enter 12. Enter 0 to clear the available stock.
+   Exclude units committed to orders or reserved; this updates Shopify's
+   `available` quantity, not its separate `on_hand` quantity.
+4. Optionally enter your store price, then tap **Save stock count**. The count
+   records no acquisition cost and does not create a new purchase. New products
+   still need activation and POS availability review before selling.
+
+The displayed starting count, total, variant, and location are saved with the
+request. Shopify compares that starting count atomically when setting the total.
+If a sale or another stock update changes it, a confirmed rejection leaves stock
+unchanged and asks you to refresh and recount. Any store price already confirmed
+is retained. An interrupted response keeps the original request and comparison
+count until its outcome is confirmed; retry the same receipt rather than entering
+the count again under a new request.
+
+DefyOS history labels these entries **Stock count**, displays **Set to** with the
+saved total, and leaves acquisition costs blank. Rejected counts are not shown as
+completed stock changes. Older delivery receipts keep their original quantities
+and costs.
 
 ## What each system records
 
 Shopify is the source for the stock shown in this view. DefyOS stores a read-only
 inventory projection and updates it from product/inventory webhooks. Receiving
-adds stock once in Shopify; synchronization copies the resulting absolute count
+adds stock once in Shopify; a stock count sets its available total. Synchronization copies the resulting absolute count
 instead of adding the receipt quantity a second time. Later Shopify sales change
 that same inventory count.
 
@@ -45,7 +76,7 @@ metaobjects through an authenticated server endpoint. Costs are acquisition cost
 from each receipt, not retail prices or a calculated average inventory cost.
 The receiving app does not change Shopify's `inventoryItem.unitCost`.
 An entered store price updates only the selected variant's Shopify selling price
-before stock is added. It uses the shop currency, accepts up to two decimal places,
+before stock is added or counted. It uses the shop currency, accepts up to two decimal places,
 and is preserved in the immutable receipt. Enter 0 only for a free selling price.
 The cost totals and DefyOS receiving-history cost columns remain acquisition costs.
 History is paginated in batches of 25 source records and filtered to the configured
@@ -53,8 +84,8 @@ location. It is read-only and does not replay receipts or create expenses.
 
 The older DefyOS inventory, spreadsheet balances, and sales ledger remain a
 separate source. Do not add those quantities to Shopify quantities as if they
-were different physical stock. Moving an existing balance to Shopify requires an
-explicit count reconciliation; this receiving connection does not migrate it.
+were different physical stock. Use **Set current stock** to reconcile the actual
+available stock when moving an existing balance; there is no automatic migration.
 
 New receiving registrations remain drafts until their product details and Point
 of Sale availability have been reviewed. If no store price was entered, review

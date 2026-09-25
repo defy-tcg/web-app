@@ -78,6 +78,9 @@ The existing **Receive sealed stock** tile records quantity and acquisition cost
 in Shopify and optionally sets the variant's selling price from a manually entered
 store price. DefyOS shows its stock and immutable receipt history in **Shopify
 stock & receiving**; see [SHOPIFY_POS_RECEIVING.md](SHOPIFY_POS_RECEIVING.md).
+The tile's **Set current stock** action records existing stock as an absolute
+available total, with a comparison against the displayed Shopify count to protect
+concurrent sales. These entries appear as stock counts without acquisition costs.
 Inventory-only sync uses the app's existing product/inventory permissions, with
 `SHOPIFY_SYNC_ORDERS_ENABLED=false`; it does not import order history or combine
 Shopify quantities with the older spreadsheet inventory.

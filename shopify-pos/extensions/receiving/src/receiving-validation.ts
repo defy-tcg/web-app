@@ -5,6 +5,7 @@ export class ReceivingError extends Error {
   committedPossible: boolean;
   pending?: unknown;
   definitelyUncommitted = false;
+  stockRejected = false;
   constructor(
     code: string,
     message: string,
@@ -59,10 +60,11 @@ export function barcodeAliases(barcode: string): string[] {
   return [barcode];
 }
 
-export function quantity(value: unknown): number {
-  if ((typeof value !== 'string' && typeof value !== 'number') || !/^\d+$/.test(String(value).trim())) validation('Quantity must be a positive whole number.');
+export function quantity(value: unknown, minimum = 1): number {
+  const description = minimum === 0 ? 'a whole number of zero or more' : 'a positive whole number';
+  if ((typeof value !== 'string' && typeof value !== 'number') || !/^\d+$/.test(String(value).trim())) validation(`Quantity must be ${description}.`);
   const result = Number(value);
-  if (!Number.isSafeInteger(result) || result <= 0 || result > 2147483647) validation('Quantity must be a positive whole number within Shopify’s supported range.');
+  if (!Number.isSafeInteger(result) || result < minimum || result > 2147483647) validation(`Quantity must be ${description} within Shopify’s supported range.`);
   return result;
 }
 

@@ -79,6 +79,7 @@ class MemoryAdapter implements ReceivingAdapter {
   async applyStorePrice(product: Product, plan: Plan) { return this.priceAdapter.applyStorePrice(product, plan); }
   async confirmStorePrice(product: Product, plan: Plan) { return this.priceAdapter.confirmStorePrice(product, plan); }
   async ensureActive() {}
+  async readAvailable(): Promise<number> { throw new Error('Delivery receipts must not read a stock baseline'); }
   async adjust(_product: Product, p: Plan) {
     if (p.request.storePrice !== undefined) assert.equal(p.product?.price, p.request.storePrice, 'inventory requires durable price confirmation');
     let adjustment = this.adjustments.get(p.request.requestId);

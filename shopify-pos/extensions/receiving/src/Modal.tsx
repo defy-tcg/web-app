@@ -2,7 +2,7 @@ import {render} from 'preact';
 import {useEffect, useRef, useState} from 'preact/hooks';
 import '@shopify/ui-extensions/preact';
 import type {Api} from '@shopify/ui-extensions/pos.home.modal.render';
-import {findProduct, findCatalogProduct, searchProducts, saveReceipt, loadPendingReceipt} from './receiving-service';
+import {findProduct, findCatalogProduct, searchProducts, saveReceipt, loadPendingReceipt, readStock} from './receiving-service';
 import {subscribeToExternalScanner} from './scanner';
 import {CATALOG_GAMES, catalogIdentity, createSealedCatalogClient, type CatalogGame, type CatalogIdentity} from './catalog-client';
 import {createCatalogController, type CatalogState} from './catalog-controller';
@@ -18,6 +18,7 @@ type ReceiptInput = {
   unit: string; quantity: string | number; unitCost: string; storePrice?: string; supplier: string;
   notes: string; receivedDate: string; replaceInvalidBarcode: boolean;
   locationId?: string; locationName?: string; currencyCode?: string;
+  inventoryMode?: 'set'; expectedAvailableQuantity?: number;
   catalog?: CatalogIdentity;
 };
 type Form = Omit<ReceiptInput, 'requestId' | 'quantity' | 'storePrice'> & {quantity: string; storePrice: string};
@@ -36,9 +37,11 @@ const validation = (form: Form, product: Product | null, registering: boolean) =
   if (!form.barcode.trim()) return 'Scan the manufacturer barcode first.';
   if (!form.name.trim() || !form.game.trim()) return 'Enter the product name and game.';
   if (!form.unit) return 'Choose the selling unit that matches the scanned package.';
-  if (!/^\d+$/.test(form.quantity) || !Number.isSafeInteger(Number(form.quantity)) || Number(form.quantity) < 1) return 'Enter a whole quantity of at least 1.';
-  if (!/^\d+(?:\.\d{1,2})?$/.test(form.unitCost)) return 'Enter the cost per unit with up to two decimals. Use 0 only for a zero-cost acquisition.';
-  if (Number(form.unitCost) > 1000000) return 'Cost per unit must be no more than 1,000,000.';
+  const counting = form.inventoryMode === 'set';
+  if (!/^\d+$/.test(form.quantity) || !Number.isSafeInteger(Number(form.quantity)) || Number(form.quantity) < (counting ? 0 : 1) || Number(form.quantity) > 2147483647) return counting ? 'Enter the total available units as a whole number, including 0 for no stock.' : 'Enter a whole quantity of at least 1 within Shopify’s supported range.';
+  if (counting && !Number.isSafeInteger(form.expectedAvailableQuantity)) return 'Refresh the Shopify count before saving your stock total.';
+  if (!counting && !/^\d+(?:\.\d{1,2})?$/.test(form.unitCost)) return 'Enter the cost per unit with up to two decimals. Use 0 only for a zero-cost acquisition.';
+  if (!counting && Number(form.unitCost) > 1000000) return 'Cost per unit must be no more than 1,000,000.';
   if (form.storePrice.trim() && !/^\d+(?:\.\d{1,2})?$/.test(form.storePrice.trim())) return 'Enter a store price of 0 or more with up to two decimals, or leave it blank to keep the current price.';
   if (Number(form.storePrice) > 1000000) return 'Store price must be no more than 1,000,000.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form.receivedDate)) return 'Enter the received date as YYYY-MM-DD.';
@@ -70,6 +73,9 @@ export function ReceivingModal() {
   const [scannerSources, setScannerSources] = useState<string[]>([]);
   const [lastScanSource, setLastScanSource] = useState('');
   const [scannerError, setScannerError] = useState('');
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState('');
+  const stockRead = useRef(0);
   const scannerCleanup = useRef<(() => void) | undefined>();
   const [notice, setNotice] = useState<Notice>({heading: 'Opening receiving', text: 'Checking for an unfinished receipt…', tone: 'info'});
   const pendingRef = useRef<ReceiptInput | null>(null);
@@ -91,10 +97,12 @@ export function ReceivingModal() {
     setCatalogGame(''); setCatalogQuery(''); setPackageConfirmed(false);
   };
   const clearIdentity = (barcode: string) => {
+    stockRead.current++; setStockLoading(false); setStockError('');
     resetCatalog();
     assignProduct(null); setRegistration(false); setResults([]); setSearched(false); setQuery('');
     const next = {...formRef.current, barcode, sku: '', name: '', game: '', unit: '', quantity: '', unitCost: '', storePrice: '', notes: '', replaceInvalidBarcode: false};
     delete next.catalog;
+    delete next.inventoryMode; delete next.expectedAvailableQuantity;
     updateForm(next);
   };
   const changeBarcode = (value: string) => {
@@ -108,11 +116,39 @@ export function ReceivingModal() {
     assignProduct(next); setRegistration(false); setResults([]);
     const selected = {...formRef.current, sku: next.sku, name: next.name, game: next.game, unit: next.unit || '', quantity: '', unitCost: '', storePrice: '', replaceInvalidBarcode: false};
     delete selected.catalog;
+    delete selected.expectedAvailableQuantity;
     updateForm(selected);
     transition('ready');
-    alert('Check the package', 'Confirm the selling unit, quantity received, and cost per unit. Enter your store price to update the Shopify selling price when you save.', 'info');
+    alert('Check the package', 'Confirm the selling unit, then choose Receive delivery or Set current stock. Enter your store price to update the Shopify selling price when you save.', 'info');
+    void refreshStock(next);
+  };
+  async function refreshStock(selected = productRef.current) {
+    if (!isEditable(phaseRef.current) || !selected?.variantId) return;
+    const read = ++stockRead.current;
+    setStockLoading(true); setStockError('');
+    updateForm({...formRef.current, expectedAvailableQuantity: undefined});
+    try {
+      const result = await readStock({variantId: selected.variantId});
+      if (!mounted.current || read !== stockRead.current || productRef.current?.variantId !== selected.variantId || !isEditable(phaseRef.current)) return;
+      if (!result.ok) { setStockError(result.error.message); return; }
+      updateForm({...formRef.current, expectedAvailableQuantity: result.availableQuantity, locationId: result.locationId, locationName: result.locationName});
+    } catch {
+      if (mounted.current && read === stockRead.current) setStockError('Could not read the Shopify count. Refresh it before setting current stock.');
+    } finally {
+      if (mounted.current && read === stockRead.current) setStockLoading(false);
+    }
+  }
+  const changeInventoryMode = (mode: string) => {
+    if (!isEditable(phaseRef.current) || !['receive', 'set'].includes(mode)) return;
+    updateForm({...formRef.current, inventoryMode: mode === 'set' ? 'set' : undefined, quantity: '',
+      ...(!productRef.current && registeringRef.current ? {expectedAvailableQuantity: 0} : {})});
+    alert(mode === 'set' ? 'Count existing stock' : 'Receive a delivery', mode === 'set'
+      ? 'Enter the full total currently available to sell. This sets the Shopify count and records no new acquisition cost.'
+      : 'Enter only the new units being added and their acquisition cost per selling unit.', 'info');
+    if (mode === 'set' && productRef.current && !stockLoading) void refreshStock();
   };
   const restoreRequest = (request: ReceiptInput) => {
+    stockRead.current++; setStockLoading(false); setStockError('');
     resetCatalog();
     pendingRef.current = request;
     updateForm({...request, quantity: String(request.quantity), storePrice: request.storePrice ?? ''});
@@ -174,10 +210,11 @@ export function ReceivingModal() {
     return () => { mounted.current = false; scannerCleanup.current?.(); catalogController.current?.dispose(); };
   }, []);
 
-  async function lookup(raw: string) {
+  async function lookup(raw: string, inventoryMode?: 'set', followup?: Notice) {
     if (!isEditable(phaseRef.current)) return;
     const barcode = raw.trim();
     clearIdentity(barcode);
+    if (inventoryMode) updateForm({...formRef.current, inventoryMode});
     if (!barcode) { transition('scan'); alert('Barcode required', 'Scan or enter the manufacturer barcode.'); return; }
     transition('lookup');
     alert('Finding product', 'Looking up the scanned barcode…', 'info');
@@ -189,9 +226,10 @@ export function ReceivingModal() {
       }
       if (result.found && result.product) {
         transition('ready'); selectProduct(result.product);
+        if (followup) setNotice(followup);
       } else if (result.found === false) {
         transition('unknown');
-        alert('Barcode not mapped', 'Search your existing catalog before registering a new sealed product.', 'warning');
+        alert('Barcode not mapped', `${followup ? `${followup.text} ` : ''}Search your existing catalog before registering a new sealed product.`, 'warning');
       } else {
         transition('scan'); alert('Lookup failed', 'The catalog returned an incomplete result. Try again.');
       }
@@ -240,10 +278,11 @@ export function ReceivingModal() {
     if (phaseRef.current !== 'unknown' || catalogState.kind !== 'selected' || !catalogState.canRegister || !packageConfirmed) return;
     const selected = catalogState.product;
     assignProduct(null); setRegistration(true); setResults([]); setSearched(false);
-    updateForm({...formRef.current, sku: '', name: selected.name, game: CATALOG_GAMES[selected.game], unit: '', quantity: '', unitCost: '', storePrice: '',
+    stockRead.current++; setStockLoading(false); setStockError('');
+    updateForm({...formRef.current, sku: '', name: selected.name, game: CATALOG_GAMES[selected.game], unit: '', quantity: '', unitCost: '', storePrice: '', expectedAvailableQuantity: 0,
       replaceInvalidBarcode: false, catalog: catalogIdentity(selected)});
     transition('ready');
-    alert('Confirm the selling unit', 'Catalog name and game are locked. Choose the actual package unit, then enter quantity, acquisition cost, and your store price. Saving creates a draft; review its details and POS availability before selling.', 'info');
+    alert('Confirm the selling unit', 'Catalog name and game are locked. Choose the actual package unit and stock action, then enter your quantity and store price. Saving creates a draft; review its details and POS availability before selling.', 'info');
   }
 
   async function submit() {
@@ -254,8 +293,11 @@ export function ReceivingModal() {
       const error = validation(formRef.current, productRef.current, registeringRef.current);
       if (error) { alert('Check receipt details', error); return; }
       request = {...formRef.current, requestId: createRequestId(), barcode: formRef.current.barcode.trim(), name: formRef.current.name.trim(), game: formRef.current.game.trim()};
+      if (request.inventoryMode === 'set') { request.unitCost = '0.00'; request.supplier = ''; }
+      else { delete request.inventoryMode; delete request.expectedAvailableQuantity; }
       pendingRef.current = request;
     }
+    stockRead.current++; setStockLoading(false);
     transition('saving');
     alert(recovery ? 'Checking receipt' : 'Saving receipt', 'Wait for confirmation before entering the next product.', 'info');
     try {
@@ -273,7 +315,16 @@ export function ReceivingModal() {
         transition('success');
         const price = receipt.storePrice !== undefined ? ` Store price saved: ${receipt.currencyCode} ${receipt.storePrice} per ${receipt.unit}.` : '';
         const staged = result.staged ? ` Stock is recorded. This product still needs ${receipt.storePrice === undefined ? 'a retail price review, ' : ''}activation and availability in POS before it can be sold.` : '';
-        alert(result.duplicate ? 'Receipt already saved' : 'Receipt saved', `${receipt.quantity ?? request.quantity} × ${savedProduct.name} · SKU ${savedProduct.sku}. Receipt ${receipt.requestId || request.requestId}.${price}${staged}`, 'success');
+        const counting = receipt.inventoryMode === 'set';
+        const summary = counting ? `Available total set to ${receipt.quantity} for ${savedProduct.name}` : `${receipt.quantity ?? request.quantity} × ${savedProduct.name}`;
+        alert(result.duplicate ? 'Receipt already saved' : counting ? 'Stock count saved' : 'Receipt saved', `${summary} · SKU ${savedProduct.sku}. Receipt ${receipt.requestId || request.requestId}.${price}${staged}`, 'success');
+      } else if (result?.stockRejected || (result?.error?.code === 'STOCK_CHANGED' && !result.error.committedPossible)) {
+        pendingRef.current = null;
+        updateForm({...formRef.current, quantity: '', expectedAvailableQuantity: undefined});
+        transition('ready');
+        const followup: Notice = {heading: 'Recount the available stock', text: result.error.message, tone: 'warning'};
+        setNotice(followup);
+        void lookup(formRef.current.barcode, 'set', followup);
       } else if (result?.error?.code === 'RECEIVING_BUSY' && result.error.definitelyUncommitted === true && result.pendingRequest) {
         restoreRequest(result.pendingRequest as ReceiptInput);
         alert('Finish the saved receipt first', 'This delivery was not started. Finish the saved receipt below, then enter this delivery again.', 'warning');
@@ -292,8 +343,9 @@ export function ReceivingModal() {
   }
 
   const editable = isEditable(phase);
+  const counting = form.inventoryMode === 'set';
   const detailsVisible = !!product || registering || ['recovery', 'success', 'saving'].includes(phase);
-  const total = /^\d+$/.test(form.quantity) && /^\d+(?:\.\d{1,2})?$/.test(form.unitCost)
+  const total = !counting && /^\d+$/.test(form.quantity) && /^\d+(?:\.\d{1,2})?$/.test(form.unitCost)
     ? (Number(form.quantity) * Math.round(Number(form.unitCost) * 100) / 100).toFixed(2) : '';
   const currency = form.currencyCode || shopify.session?.currentSession?.currency || '';
   return <s-page heading="Receive sealed stock">
@@ -368,6 +420,7 @@ export function ReceivingModal() {
             if (!isEditable(phaseRef.current)) return;
             resetCatalog();
             setRegistration(true); transition('ready');
+            updateForm({...formRef.current, expectedAvailableQuantity: 0});
             alert('Register new sealed product', 'Enter the exact product and selling unit. A permanent store SKU is assigned when the receipt saves.', 'info');
           }}>Register new sealed product</s-button>}
         </>}
@@ -385,19 +438,31 @@ export function ReceivingModal() {
           {product?.barcodeNeedsReview && <s-choice-list multiple values={form.replaceInvalidBarcode ? ['replace'] : []} onChange={(event) => edit('replaceInvalidBarcode', event.currentTarget.values?.includes('replace') ?? false)}>
             <s-choice value="replace" disabled={!editable}>This physical scan replaces the invalid historical barcode {product.barcode}.</s-choice>
           </s-choice-list>}
-          <s-number-field label="Quantity received" value={form.quantity} controls="none" inputMode="numeric" required disabled={!editable} onInput={(event) => edit('quantity', (event.currentTarget.value ?? ''))} />
-          <s-number-field label={`Cost per selling unit (${currency})`} value={form.unitCost} controls="none" inputMode="decimal" required disabled={!editable}
-            details="Enter acquisition cost. Enter 0 only when this stock cost nothing." onInput={(event) => edit('unitCost', (event.currentTarget.value ?? ''))} />
+          <s-text>Stock action</s-text>
+          <s-choice-list values={[counting ? 'set' : 'receive']} onChange={(event) => changeInventoryMode(event.currentTarget.values?.[0] || '')}>
+            <s-choice value="receive" disabled={!editable}>Receive delivery</s-choice>
+            <s-choice value="set" disabled={!editable}>Set current stock</s-choice>
+          </s-choice-list>
+          {editable && product && <>
+            <s-text>{stockLoading ? 'Reading Shopify stock…' : form.expectedAvailableQuantity !== undefined ? `Currently available in Shopify: ${form.expectedAvailableQuantity}` : 'Current Shopify count unavailable.'}</s-text>
+            {stockError && <s-text>{stockError}</s-text>}
+            <s-button disabled={stockLoading} onClick={() => void refreshStock()}>Refresh Shopify count</s-button>
+          </>}
+          {counting && <s-text>Enter the full total available to sell at this location, including units already recorded in Shopify. Exclude units committed to orders or reserved. This records a stock count without a new purchase cost.</s-text>}
+          {counting && !editable && <s-text>Shopify count when entered: {form.expectedAvailableQuantity}</s-text>}
+          <s-number-field label={counting ? 'Total units currently available' : 'Quantity received'} value={form.quantity} controls="none" inputMode="numeric" min={counting ? 0 : 1} required disabled={!editable} onInput={(event) => edit('quantity', (event.currentTarget.value ?? ''))} />
+          {!counting && <s-number-field label={`Cost per selling unit (${currency})`} value={form.unitCost} controls="none" inputMode="decimal" required disabled={!editable}
+            details="Enter acquisition cost. Enter 0 only when this stock cost nothing." onInput={(event) => edit('unitCost', (event.currentTarget.value ?? ''))} />}
           {total && <s-text>Total receipt cost: {currency} {total}</s-text>}
           {editable && product?.price !== undefined && <s-text>Current Shopify price: {currency} {product.price} per {form.unit || 'selling unit'}</s-text>}
           <s-number-field label={`Store price per selling unit (${currency})`} value={form.storePrice} controls="none" inputMode="decimal" min={0} max={1000000} disabled={!editable}
             details="Optional. Sets this product's Shopify selling price when you save. Leave blank to keep the current price. Enter 0 only to sell it for free."
             onInput={(event) => edit('storePrice', (event.currentTarget.value ?? ''))} />
-          <s-date-field label="Received date" value={form.receivedDate} disabled={!editable} onInput={(event) => edit('receivedDate', (event.currentTarget.value ?? ''))} />
-          <s-text-field label="Supplier / invoice (optional)" value={form.supplier} disabled={!editable} onInput={(event) => edit('supplier', (event.currentTarget.value ?? ''))} />
+          <s-date-field label={counting ? 'Count date' : 'Received date'} value={form.receivedDate} disabled={!editable} onInput={(event) => edit('receivedDate', (event.currentTarget.value ?? ''))} />
+          {!counting && <s-text-field label="Supplier / invoice (optional)" value={form.supplier} disabled={!editable} onInput={(event) => edit('supplier', (event.currentTarget.value ?? ''))} />}
           <s-text-area label="Notes (optional)" value={form.notes} disabled={!editable} onInput={(event) => edit('notes', (event.currentTarget.value ?? ''))} />
         </>}
-        {phase === 'ready' && <s-button variant="primary" onClick={() => void submit()}>Save receipt</s-button>}
+        {phase === 'ready' && <s-button variant="primary" disabled={counting && (stockLoading || !Number.isSafeInteger(form.expectedAvailableQuantity))} onClick={() => void submit()}>{counting ? 'Save stock count' : 'Save receipt'}</s-button>}
         {phase === 'saving' && <s-button variant="primary" loading>Saving receipt</s-button>}
         {phase === 'recovery' && <>
           <s-text>Receipt ID: {pendingRef.current?.requestId}</s-text>

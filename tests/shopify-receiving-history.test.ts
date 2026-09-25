@@ -16,6 +16,26 @@ function savedRecord() {
 function node(record = savedRecord(), id = "gid://shopify/Metaobject/6") {
   return { id, handle: record.receipt.requestId, payload: { value: JSON.stringify(record) } };
 }
+function stockRecord() {
+  const record = savedRecord();
+  return { ...record, receipt: { ...record.receipt, inventoryMode: "set", expectedAvailableQuantity: 12, quantity: 4, unitCost: "0.00", storePrice: "24.99" } };
+}
+function rejectedRecord() {
+  const { product } = savedRecord();
+  const request = { requestId, barcode: "0196214150478", sku: product.sku, name: product.name, game: product.game,
+    unit: product.unit, quantity: 4, inventoryMode: "set", expectedAvailableQuantity: 12, unitCost: "0.00", storePrice: "24.99",
+    supplier: "", notes: "Shelf count", receivedDate: "2026-09-18", replaceInvalidBarcode: false, locationId };
+  return { version: 1, status: "rejected", fingerprint: JSON.stringify(request, Object.keys(request).sort()), request,
+    product: { ...product, tracked: true, barcodeNeedsReview: false, price: "24.99" }, rejectedAt: "2026-09-19T10:00:01.000Z",
+    error: { code: "STOCK_CHANGED", message: "Shopify stock changed. Refresh before saving a new current-stock count." } };
+}
+function rejectionNode(record = rejectedRecord(), id = "gid://shopify/Metaobject/7") {
+  return { id, handle: record.request.requestId, payload: { value: JSON.stringify(record) } };
+}
+function refreshFingerprint(record: ReturnType<typeof rejectedRecord>) {
+  record.fingerprint = JSON.stringify(record.request, Object.keys(record.request).sort());
+  return record;
+}
 function harness(nodes: unknown[] = [node()], hasNextPage = false, endCursor: string | null = null) {
   const calls: { query: string; variables: Record<string, unknown> }[] = [];
   const response = { shop: { myshopifyDomain: shop }, location: { id: locationId }, metaobjects: { nodes, pageInfo: { hasNextPage, endCursor } } };
@@ -41,8 +61,52 @@ test("completed receipts preserve stable Shopify identities, exact cents, barcod
   assert.equal(parsed.createdProduct, false);
   assert.equal("fingerprint" in parsed, false);
   assert.equal("product" in parsed, false);
+  assert.equal("inventoryMode" in parsed, false);
+  assert.equal("expectedAvailableQuantity" in parsed, false);
+  assert.equal("storePriceCents" in parsed, false);
   const free = savedRecord(); free.receipt.unitCost = "0.00";
   assert.equal(parseReceivingHistoryReceipt(node(free)).totalCostCents, 0);
+});
+
+test("stock counts preserve absolute totals including zero, signed baselines, and separate saved store prices", () => {
+  const record = stockRecord();
+  const parsed = parseReceivingHistoryReceipt(node(record));
+  assert.equal(parsed.inventoryMode, "set");
+  assert.equal(parsed.quantity, 4);
+  assert.equal(parsed.expectedAvailableQuantity, 12);
+  assert.equal(parsed.unitCostCents, 0);
+  assert.equal(parsed.totalCostCents, 0);
+  assert.equal(parsed.storePriceCents, 2499);
+  record.receipt.quantity = 0;
+  record.receipt.expectedAvailableQuantity = -2_147_483_648;
+  record.receipt.storePrice = "0.00";
+  const empty = parseReceivingHistoryReceipt(node(record));
+  assert.equal(empty.quantity, 0);
+  assert.equal(empty.expectedAvailableQuantity, -2_147_483_648);
+  assert.equal(empty.storePriceCents, 0);
+  const delivery = savedRecord();
+  Object.assign(delivery.receipt, { storePrice: "1000000.00" });
+  assert.equal(parseReceivingHistoryReceipt(node(delivery)).storePriceCents, 100_000_000);
+  assert.equal(parseReceivingHistoryReceipt(node(delivery)).totalCostCents, 7404);
+});
+
+test("stock counts reject malformed modes, totals, baselines, acquisition costs, and manual prices", () => {
+  for (const [key, values] of Object.entries({
+    inventoryMode: [null, "receive", "SET", false],
+    quantity: ["4", -1, 0.5, 2_147_483_648, null],
+    expectedAvailableQuantity: [undefined, "12", null, 0.5, -2_147_483_649, 2_147_483_648],
+    unitCost: ["1.00", "00.00", "0", 0],
+    storePrice: [null, 24.99, "", "-1.00", "1.001", "1000000.01"],
+  })) {
+    for (const value of values) {
+      const record = stockRecord();
+      (record.receipt as Record<string, unknown>)[key] = value;
+      assert.throws(() => parseReceivingHistoryReceipt(node(record)), { code: "INCOMPLETE_HISTORY" });
+    }
+  }
+  const delivery = savedRecord();
+  Object.assign(delivery.receipt, { expectedAvailableQuantity: 12 });
+  assert.throws(() => parseReceivingHistoryReceipt(node(delivery)), { code: "INCOMPLETE_HISTORY" });
 });
 
 test("receipt ordering respects Shopify's timestamp precision without accepting earlier seconds", () => {
@@ -83,6 +147,89 @@ test("other-location receipts are excluded without hiding continuation, includin
   assert.equal(page.hasMore, true); assert.equal(page.nextCursor, "older-page");
   const empty = await getReceivingHistory(undefined, harness([]).dependencies);
   assert.equal(empty.hasMore, false); assert.equal(empty.nextCursor, null); assert.equal(empty.scannedCount, 0);
+});
+
+test("validated stock rejections are skipped without changing pagination or other-location receipt counts", async () => {
+  const rejected = rejectedRecord(); rejected.request.requestId = "receipt-2026-09-19-000002";
+  rejected.request.locationId = "gid://shopify/Location/99";
+  refreshFingerprint(rejected);
+  const other = savedRecord(); other.receipt.requestId = "receipt-2026-09-19-000003"; other.receipt.locationId = "gid://shopify/Location/99";
+  const f = harness([node(), rejectionNode(rejected), node(other, "gid://shopify/Metaobject/8")], true, "older-page");
+  const page = await getReceivingHistory(null, f.dependencies);
+  assert.equal(page.receipts.length, 1);
+  assert.equal(page.receipts[0].requestId, requestId);
+  assert.equal(page.scannedCount, 3);
+  assert.equal(page.otherLocationCount, 1);
+  assert.equal(page.hasMore, true);
+  assert.equal(page.nextCursor, "older-page");
+  const rejectedOnly = await getReceivingHistory(null, harness([rejectionNode()], true, "next-page").dependencies);
+  assert.deepEqual(rejectedOnly.receipts, []);
+  assert.equal(rejectedOnly.scannedCount, 1);
+  assert.equal(rejectedOnly.otherLocationCount, 0);
+  assert.equal(rejectedOnly.hasMore, true);
+  assert.equal(rejectedOnly.nextCursor, "next-page");
+  const finalPage = await getReceivingHistory(null, harness([rejectionNode()]).dependencies);
+  assert.equal(finalPage.hasMore, false);
+  assert.equal(finalPage.nextCursor, null);
+  assert.throws(() => parseReceivingHistoryReceipt(rejectionNode()), { code: "INCOMPLETE_HISTORY" });
+});
+
+test("rejections must have a complete canonical set request, verified product and terminal error", async () => {
+  const mutations: ((record: ReturnType<typeof rejectedRecord>) => void)[] = [
+    record => { record.fingerprint = "changed"; },
+    record => { record.status = "pending"; },
+    record => { record.error.code = "NETWORK_TIMEOUT"; },
+    record => { record.error.message = ""; },
+    record => { record.rejectedAt = "2026-02-30T10:00:01Z"; },
+    record => { record.request.inventoryMode = "receive"; refreshFingerprint(record); },
+    record => { record.request.quantity = -1; refreshFingerprint(record); },
+    record => { record.request.expectedAvailableQuantity = 1.5; refreshFingerprint(record); },
+    record => { record.request.unitCost = "1.00"; refreshFingerprint(record); },
+    record => { record.request.locationId = "Location/1"; refreshFingerprint(record); },
+    record => { record.request.receivedDate = "2026-02-30"; refreshFingerprint(record); },
+    record => { record.product.sku = "another-sku"; },
+    record => { record.product.unit = "Booster box"; },
+    record => { record.product.barcode = "0196214150479"; },
+    record => { record.product.inventoryItemId = "InventoryItem/4"; },
+    record => { record.product.tracked = false; },
+    record => { record.product.barcodeNeedsReview = true; },
+    record => { Object.assign(record, { receipt: savedRecord().receipt }); },
+  ];
+  for (const mutate of mutations) {
+    const rejected = rejectedRecord(); mutate(rejected);
+    await assert.rejects(getReceivingHistory(undefined, harness([rejectionNode(rejected)]).dependencies), { code: "INCOMPLETE_HISTORY" });
+  }
+  for (const key of ["request", "product", "fingerprint", "rejectedAt", "error"]) {
+    const rejected = rejectionNode();
+    const payload = JSON.parse(rejected.payload.value); delete payload[key]; rejected.payload.value = JSON.stringify(payload);
+    await assert.rejects(getReceivingHistory(undefined, harness([rejected]).dependencies), { code: "INCOMPLETE_HISTORY" });
+  }
+  const unknown = node();
+  unknown.payload.value = JSON.stringify({ ...savedRecord(), status: "unknown" });
+  await assert.rejects(getReceivingHistory(undefined, harness([unknown]).dependencies), { code: "INCOMPLETE_HISTORY" });
+});
+
+test("rejection filtering cannot conceal duplicate IDs or request IDs", async () => {
+  for (const nodes of [
+    [node(), rejectionNode()],
+    [rejectionNode(), rejectionNode()],
+  ]) {
+    await assert.rejects(getReceivingHistory(undefined, harness(nodes).dependencies), { code: "INCOMPLETE_HISTORY" });
+  }
+  const rejected = rejectedRecord(); rejected.request.requestId = "receipt-2026-09-19-000002"; refreshFingerprint(rejected);
+  await assert.rejects(getReceivingHistory(undefined, harness([node(), rejectionNode(rejected, "gid://shopify/Metaobject/6")]).dependencies), { code: "INCOMPLETE_HISTORY" });
+});
+
+test("rejections allow new-product requests and zero counts against negative stock", async () => {
+  const record = rejectedRecord();
+  record.request.sku = "";
+  record.request.quantity = 0;
+  record.request.expectedAvailableQuantity = -1;
+  record.product.status = "UNLISTED";
+  refreshFingerprint(record);
+  const page = await getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies);
+  assert.equal(page.scannedCount, 1);
+  assert.deepEqual(page.receipts, []);
 });
 
 test("invalid cursors and unapproved configuration cannot issue a query", async () => {
