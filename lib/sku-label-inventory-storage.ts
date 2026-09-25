@@ -241,7 +241,7 @@ export async function loadSkuLabelProducts(options: { skus?: readonly string[]; 
   const limit = options.limit ?? 100;
   if (!Number.isSafeInteger(afterId) || afterId < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid saved QR page.");
   const sql = neon(process.env.DATABASE_URL);
-  const rows = await sql.query(`SELECT p.*, coalesce((
+  const rows = await sql.query(`SELECT p.*, p.updated_at::text AS updated_at_exact, coalesce((
     SELECT m.delta FROM inventory_movements m WHERE m.product_id = p.id
       AND m.reason = 'received' AND m.note = 'Initial quantity from QR SKU labels'
     ORDER BY m.id LIMIT 1
@@ -250,9 +250,52 @@ export async function loadSkuLabelProducts(options: { skus?: readonly string[]; 
     AND ($1::text[] IS NULL OR p.sku = ANY($1::text[])) AND p.id > $2
   ORDER BY p.id LIMIT $3`, [skus, afterId, limit]);
   return rows.map(row => {
-    const { initial_quantity, ...product } = row;
+    const { initial_quantity, updated_at_exact, ...product } = row;
     const initialQuantity = Number(initial_quantity);
     if (!Number.isSafeInteger(initialQuantity) || initialQuantity < 0 || initialQuantity > 100_000) throw new Error("The initial card receipt needs review.");
-    return { ...productRecord(product), initialQuantity };
+    return { ...productRecord({ ...product, updated_at: updated_at_exact }), initialQuantity };
   });
+}
+
+/** Identity-only correction under the same product lock used for SKU reservation. */
+export async function persistSkuLabelCatalogCorrection(before: ShopifyLinkableSkuProduct, target: ShopifyLinkableSkuProduct): Promise<ShopifyLinkableSkuProduct> {
+  if (!process.env.DATABASE_URL) throw new Error("Inventory database is unavailable.");
+  const sql = neon(process.env.DATABASE_URL);
+  const expected = { id: before.id, sku: before.sku, barcode: before.barcode, product_type: before.productType,
+    name: before.name, game: before.game, set_name: before.setName, card_number: before.cardNumber,
+    condition: before.condition, finish: before.finish, tcgplayer_id: before.tcgplayerId, tcgplayer_url: before.tcgplayerUrl,
+    quantity: before.quantity, cost_cents: before.costCents, list_price_cents: before.listPriceCents, location: before.location };
+  const incoming = { id: target.id, sku: target.sku, name: target.name, game: target.game, setName: target.setName,
+    cardNumber: target.cardNumber, finish: target.finish, tcgplayerId: target.tcgplayerId, tcgplayerUrl: target.tcgplayerUrl,
+    variantKey: JSON.parse(inventoryLabelVariantKey(target)) };
+  const query = `WITH incoming AS MATERIALIZED (
+    SELECT * FROM jsonb_to_record($2::jsonb) AS i(id integer, sku text, name text, game text, "setName" text,
+      "cardNumber" text, finish text, "tcgplayerId" integer, "tcgplayerUrl" text, "variantKey" jsonb)
+  ), conflict AS MATERIALIZED (
+    SELECT p.sku FROM products p CROSS JOIN incoming i
+    WHERE p.id <> i.id AND (upper(trim(p.sku)) = i.sku OR upper(trim(p.barcode)) = i.sku OR
+      (p.product_type = 'Single' AND (${variantSql} = i."variantKey" OR
+        (p.tcgplayer_id = i."tcgplayerId" AND ${identitySql("p.condition")} = i."variantKey"->>4 AND ${finishSql} = i."variantKey"->>5))))
+    ORDER BY p.id LIMIT 1
+  ), corrected AS (
+    UPDATE products p SET name = i.name, game = i.game, set_name = i."setName", card_number = i."cardNumber",
+      finish = i.finish, tcgplayer_id = i."tcgplayerId", tcgplayer_url = i."tcgplayerUrl"
+    FROM incoming i WHERE p.id = i.id AND to_jsonb(p) @> $1::jsonb
+      AND p.updated_at = $3::timestamptz AND NOT EXISTS (SELECT 1 FROM conflict)
+      AND coalesce((SELECT m.delta FROM inventory_movements m WHERE m.product_id = p.id
+        AND m.reason = 'received' AND m.note = 'Initial quantity from QR SKU labels' ORDER BY m.id LIMIT 1), 0) = $4
+    RETURNING p.*
+  ) SELECT (SELECT sku FROM conflict) AS conflict, (SELECT to_jsonb(c) FROM corrected c) AS product`;
+  const results = await sql.transaction([
+    sql.query("SET LOCAL lock_timeout = '5s'"), sql.query("SET LOCAL statement_timeout = '15s'"),
+    sql.query("LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE"),
+    sql.query("LOCK TABLE inventory_movements IN SHARE ROW EXCLUSIVE MODE"),
+    sql.query(query, [JSON.stringify(expected), JSON.stringify(incoming), before.updatedAt, before.initialQuantity]),
+  ], { isolationLevel: "ReadCommitted" });
+  const result = results[4][0] as { conflict: string | null; product: Record<string, unknown> | null } | undefined;
+  if (!result) throw new Error("Catalog correction returned no confirmed result.");
+  if (result.conflict) throw new SkuLabelInventoryError(409, `That exact card variant is already saved as ${result.conflict}. Review both cards before changing this QR.`, result.conflict);
+  if (!result.product) throw new SkuLabelInventoryError(409, "The saved card or its stock changed during review. Reload its details and review the correction again.");
+  // Keep timestamps, all stock/price facts, and original movement rows unchanged.
+  return { ...productRecord(result.product), initialQuantity: before.initialQuantity };
 }

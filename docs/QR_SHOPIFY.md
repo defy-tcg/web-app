@@ -172,11 +172,28 @@ calls the finish Foil. The exact TCGplayer ID must belong to Scrydex's
 `pokemonCenterStamp` variant, with the same name, set, collector number,
 language, and condition. For example, Eevee #173, TCGplayer **610757**, uses
 its stamped quote; the regular holofoil version **610758** cannot supply its price.
+**Mew ex - 205/165 (151 Metal Card)**, TCGplayer **519481**, similarly requires
+Scrydex's exact `sv3pt5-205` metal variant. TCGplayer's Normal finish for this
+metal card does not select the regular holofoil printing. Base Set cards saved
+as Normal can select Scrydex's `unlimited` variant only with the exact variant's
+TCGplayer ID and verified Base expansion metadata; First Edition and Shadowless
+remain separate. Verified set aliases also cover Mega Evolution promos,
+McDonald's 2023 promos, and Wizards Black Star Promos without dropping the
+edition or year from their identity checks.
 These name/set aliases require the exact TCGplayer ID on the selected Scrydex
 variant. Plain Foil/Holofoil and Reverse Holo/Reverse Holofoil are equivalent;
 named editions remain distinct. Verified language, collector number, condition,
 and a positive USD market quote still have to match. A failed link keeps the
 original QR and starting receipt for a safe retry after matching is corrected.
+
+If the wrong catalog card was saved, load its blocked label and use **Correct
+catalog details**. Review the replacement TCGplayer card, finish, and verified
+price before confirming. This correction is available only before Shopify
+product creation or stock transfer has begun. The server keeps the original QR,
+condition, quantity, cost, location, and initial receipt, rejects duplicate saved
+variants, and retains a recoverable correction intent across interrupted requests.
+After correction, retry the Shopify link using the same QR. An existing or
+uncertain Shopify product cannot be relabeled through this flow.
 
 Gundam imports recognize trailing **C**, **U**, **R**, and **LR** rarity labels,
 with or without **+**, only when Scrydex confirms the base rarity and exact
@@ -194,7 +211,8 @@ Pokémon Japan (TCGplayer category 85) is saved as **Pokémon (Japanese)**,
 separately from English Pokémon. Japanese pricing requires the exact marketplace
 ID, Japanese provider metadata, verified English name translation, printing,
 finish, condition, and a native USD quote. Yen prices are never converted or used
-as USD. The verified Japanese 151 set label is supported. Shopify receives an
+as USD. Verified Japanese 151 and SV9 Battle Partners set labels are supported,
+with both native and translated set names checked. Shopify receives an
 explicit **Japanese** language option, which status, stock, and price refreshes
 must continue to match.
 

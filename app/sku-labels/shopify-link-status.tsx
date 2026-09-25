@@ -8,7 +8,7 @@ export type ShopifyLabelLink = {
   variantId?: string;
   adminUrl?: string;
   priceCents?: number;
-  availableQuantity?: number;
+  availableQuantity?: number; catalogCorrectionPending?: boolean;
 };
 
 export function isShopifyLabelLink(value: unknown): value is ShopifyLabelLink {

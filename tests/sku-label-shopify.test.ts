@@ -797,3 +797,19 @@ test("manual create response lost before mapping is recovered before adopting TC
   const result = await linkSkuLabelToShopify({ ...manual, tcgplayerId: card.tcgplayerId }, f.deps);
   assert.equal(result.status, "ready"); assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1); assert.equal(f.quantityAdded(), 3);
 });
+
+
+test("normal linking cannot overwrite or bypass an unfinished explicit catalog correction", async () => {
+  const f = fixture({ priceError: true });
+  assert.equal((await linkSkuLabelToShopify(card, f.deps)).status, "blocked");
+  const key = qrJournalKey(card.sku), before = JSON.parse(f.journals.get(key)!.value);
+  const intent = { version: 1, sourceVersion: "reviewed-source", targetVersion: "reviewed-target", sourceIdentity: before.identity, targetIdentity: "corrected-identity" };
+  f.journals.set(key, { value: JSON.stringify({ ...before, catalogCorrectionIntent: intent }), compareDigest: "correction-pending" });
+  f.deps.resolvePrice = quoteFixture;
+  const callCount = f.calls.length;
+  const result = await linkSkuLabelToShopify(card, f.deps);
+  assert.equal(result.status, "pending"); assert.match(result.message, /Finish the reviewed catalog correction/);
+  assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  assert.deepEqual(JSON.parse(f.journals.get(key)!.value).catalogCorrectionIntent, intent);
+  assert.ok(!f.calls.slice(callCount).some(call => ["QrLinkCreate", "QrLinkInitialStock", "QrLinkPublish", "QrLinkVariant"].includes(call.name)));
+});

@@ -5,6 +5,7 @@ import { LABEL_CONDITIONS, LABEL_FINISHES, validateInventoryLabels } from "@/lib
 import { isGeneratedSku } from "@/lib/sku-labels";
 import { TCG_GAME_OPTIONS } from "@/lib/tcg-games";
 import { EMPTY_SKU_INVENTORY_DRAFT as emptyDraft, type SkuInventoryDraft as Draft, type SkuDraftLabel as Label } from "@/lib/sku-label-draft";
+import SkuCatalogCorrection from "./sku-catalog-correction";
 import ShopifyLinkStatus, { isShopifyLabelLink, pendingShopifyLink, type ShopifyLabelLink } from "./shopify-link-status";
 
 export type SavedSkuProduct = Label & {
@@ -172,6 +173,9 @@ export default function SkuInventoryPanel({ labels, products, disabled, canPrint
             {field("tcgplayerId", "TCGplayer ID (optional)", { type: "number", min: 1, max: 2147483647, step: "1" })}
           </fieldset>
           {product && <p className="sku-print-help">Use <a href="#sku-stock-entry">Change inventory</a> above to add copies or set the total available. These saved details show the original Defy record; Shopify supplies the current available count. Reprinting keeps the original SKU and adds no stock.</p>}
+          {product && (shopifyLinks[label.sku]?.status === "blocked" || shopifyLinks[label.sku]?.catalogCorrectionPending) &&
+            <SkuCatalogCorrection product={product} disabled={disabled || saving || linkingSkus.includes(label.sku)} onBusy={onSavingChange}
+              onCorrected={corrected => onInventoryLoaded(products.map(saved => saved.sku === corrected.sku ? corrected : saved))} />}
           <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} saved={Boolean(product)} busy={saving || linkingSkus.includes(label.sku)} disabled={disabled || saving} onRetry={onRetryShopify} />
         </details>;
       })}</div>

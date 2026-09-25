@@ -1,6 +1,7 @@
 // Server-only Shopify registration of the permanent QR identity saved in Defy.
 import { randomUUID } from "node:crypto";
-import { canonicalInventoryLabelFinish, inventoryLabelIdentityText } from "./sku-label-inventory.ts";
+import type { SkuLabelCatalogDetails } from "./sku-label-catalog-types.ts";
+import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, SkuLabelInventoryError } from "./sku-label-inventory.ts";
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
 import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode, type ScrydexPrice, type ScrydexProduct } from "./scrydex.ts";
@@ -16,7 +17,7 @@ export interface SkuLabelShopifyProduct {
 }
 export interface SkuLabelShopifyStatus {
   sku: string; status: "ready" | "pending" | "blocked"; message: string;
-  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number;
+  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean;
 }
 export interface SkuLabelShopifyDependencies {
   graphql: SinglesGraphQL;
@@ -40,11 +41,17 @@ interface Product {
   id: string; status: string; pos: boolean; catalogId: Field | null; sourceId: Field | null; manualOrigin?: Field | null;
   options: { name: string }[]; variants: { nodes: Variant[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
 }
+export type SkuLabelCatalogProduct = SkuLabelShopifyProduct & { productType: string; location: string; barcode: string | null; updatedAt: string };
+interface CatalogCorrectionIntent {
+  version: 1; sourceVersion: string; targetVersion: string; sourceIdentity: string; targetIdentity: string;
+  source: SkuLabelCatalogDetails; target: SkuLabelCatalogDetails;
+}
 interface Journal {
   version: 1; identity: string; sku: string; owner: string | null; expiresAt: number;
   productId?: string; variantId?: string; shopifySku?: string; status?: SkuLabelShopifyStatus;
   initialQuantity?: number; adjustmentStartedAt?: number; adjustmentId?: string; publicationId?: string;
   previousIdentity?: string; adoptionPending?: boolean; creationStartedAt?: number; stockRequestKey?: string; stockInventoryItemId?: string; stockLocationId?: string;
+  catalogCorrectionIntent?: CatalogCorrectionIntent; catalogCorrectionReceipt?: CatalogCorrectionIntent;
 }
 interface Payload { userErrors?: { code?: string; message: string }[] }
 const NAMESPACE = "$app:singles";
@@ -102,7 +109,7 @@ function exactOptions(variant: Variant, identity: ReturnType<typeof identityFor>
   }));
 }
 function canCorrectPrecreationLanguage(record: Journal | null, product: SkuLabelShopifyProduct, identity: ReturnType<typeof identityFor>) {
-  if (!record || identity.language !== "Japanese" || !identity.source || record.version !== 1 || record.sku !== product.sku ||
+  if (!record || record.catalogCorrectionIntent || identity.language !== "Japanese" || !identity.source || record.version !== 1 || record.sku !== product.sku ||
     record.identity !== JSON.stringify([identity.printing, identity.condition, textKey(identity.finish), "English"]) ||
     record.initialQuantity !== product.initialQuantity || record.owner !== null || record.expiresAt !== 0 ||
     record.status?.status !== "blocked" || record.status.sku !== product.sku ||
@@ -224,7 +231,7 @@ export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, d
   const identity = identityFor(product);
   const adapter = new ShopifySinglesAdapter(deps.graphql, deps.settings, deps.clock);
   const { value: record } = await adapter.read<Journal>(journalKey(product.sku));
-  if (record?.version !== 1 || record.sku !== product.sku || record.identity !== identity.identity || record.initialQuantity !== product.initialQuantity || record.status?.status !== "ready" || record.status.sku !== product.sku || !record.productId || !record.variantId || !record.publicationId || record.shopifySku === undefined || (record.initialQuantity !== 0 && !record.adjustmentId) || record.adoptionPending) {
+  if (record?.catalogCorrectionIntent || record?.version !== 1 || record.sku !== product.sku || record.identity !== identity.identity || record.initialQuantity !== product.initialQuantity || record.status?.status !== "ready" || record.status.sku !== product.sku || !record.productId || !record.variantId || !record.publicationId || record.shopifySku === undefined || (record.initialQuantity !== 0 && !record.adjustmentId) || record.adoptionPending) {
     fail("Finish linking this saved QR to Shopify POS before adding stock.");
   }
   const saved = record!;
@@ -256,6 +263,160 @@ export async function readSkuLabelStockTarget(product: SkuLabelShopifyProduct, d
   if (candidates.pageInfo.hasNextPage || candidates.nodes.some(item => item.barcodes.pageInfo.hasNextPage) || exact.length !== 1 || exact[0].id !== saved.variantId) fail("This QR does not uniquely identify one Shopify card. Review its barcode mapping before adding stock.");
   return { identity: saved.identity, productId: saved.productId!, variantId: saved.variantId!, inventoryItemId: verified.inventoryItem.id,
     locationId: deps.settings.locationId, shopifySku: saved.shopifySku!, publicationId: saved.publicationId!, availableQuantity: availableQuantity! };
+}
+
+export function skuLabelCatalogDetails(product: SkuLabelShopifyProduct): SkuLabelCatalogDetails {
+  return { name: product.name, game: product.game, setName: product.setName, cardNumber: product.cardNumber,
+    finish: product.finish, tcgplayerId: product.tcgplayerId ?? null, tcgplayerUrl: product.tcgplayerUrl ?? null };
+}
+
+/** Fingerprints the reviewed row, including stock facts that a correction must preserve. */
+export function skuLabelCatalogVersion(product: SkuLabelCatalogProduct): string {
+  return digest(JSON.stringify([product.id, product.sku, product.productType, skuLabelCatalogDetails(product),
+    product.condition, product.quantity, product.initialQuantity, product.costCents, product.listPriceCents,
+    product.location, product.barcode, Number.isFinite(Date.parse(product.updatedAt)) ? new Date(product.updatedAt).toISOString() : product.updatedAt]));
+}
+
+function correctionUntouched(record: Journal | null, product: SkuLabelCatalogProduct, resume = false): record is Journal {
+  if (!record || record.version !== 1 || record.sku !== product.sku || record.initialQuantity !== product.initialQuantity ||
+    record.owner !== null || record.expiresAt !== 0 || record.status?.sku !== product.sku ||
+    (!resume && record.status.status !== "blocked") || (resume && !["blocked", "pending"].includes(record.status.status))) return false;
+  if (record.stockRequestKey !== undefined && (typeof record.stockRequestKey !== "string" || !record.stockRequestKey.trim())) return false;
+  // Even a lost creation/stock response is evidence that the identity cannot be rewritten.
+  return [record.productId, record.variantId, record.shopifySku, record.publicationId, record.creationStartedAt,
+    record.stockInventoryItemId, record.stockLocationId, record.adjustmentStartedAt, record.adjustmentId,
+    record.previousIdentity, record.adoptionPending, record.status.productId, record.status.variantId,
+    record.status.adminUrl, record.status.priceCents, record.status.checkedAt, record.status.transferredQuantity,
+    record.status.availableQuantity].every(value => value === undefined);
+}
+const correctionBlocked = () => new SkuLabelInventoryError(409,
+  "This QR cannot be corrected automatically because Shopify linking or stock may already exist. Review its existing mapping; no card or stock was changed.");
+
+/** Preview is read-only, and only an untouched blocked journal or its own interrupted correction is eligible. */
+export async function readSkuLabelCatalogCorrection(product: SkuLabelCatalogProduct, dependencies?: SkuLabelShopifyDependencies) {
+  if (product.productType !== "Single" || !isGeneratedSku(product.sku)) throw correctionBlocked();
+  const deps = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
+  const adapter = new ShopifySinglesAdapter(deps.graphql, deps.settings, deps.clock);
+  const { value: record } = await adapter.read<Journal>(journalKey(product.sku));
+  const intent = record?.catalogCorrectionIntent;
+  if (!correctionUntouched(record, product, Boolean(intent))) throw correctionBlocked();
+  const version = skuLabelCatalogVersion(product);
+  if (intent) {
+    if (intent.version !== 1 || record.identity !== intent.sourceIdentity ||
+      ![intent.sourceVersion, intent.targetVersion].includes(version)) throw correctionBlocked();
+    return { sourceVersion: intent.sourceVersion, source: intent.source, target: intent.target };
+  }
+  if (record.identity !== identityFor(product).identity) throw correctionBlocked();
+  return { sourceVersion: version, source: skuLabelCatalogDetails(product), target: null };
+}
+
+/**
+ * Explicit catalog correction, before any Shopify creation or stock intent.
+ * The durable intent prevents normal linking between the DB update and journal finalization.
+ * An interrupted request can only resume the same reviewed source and target.
+ */
+export async function correctSkuLabelCatalog<T extends SkuLabelCatalogProduct>(product: T, target: T, sourceVersion: string,
+  persist: (before: T, after: T) => Promise<T>, dependencies?: SkuLabelShopifyDependencies): Promise<T> {
+  if (!/^[a-f0-9]{64}$/.test(sourceVersion) || product.productType !== "Single" ||
+    skuLabelCatalogVersion({ ...target, ...skuLabelCatalogDetails(product) }) !== skuLabelCatalogVersion(product)) throw correctionBlocked();
+  const targetIdentity = identityFor(target);
+  const targetVersion = skuLabelCatalogVersion(target);
+  const deps = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
+  const adapter = new ShopifySinglesAdapter(deps.graphql, deps.settings, deps.clock);
+  const owner = randomUUID();
+  const held: string[] = [];
+  const acquire = async (name: string, identity: string) => {
+    const current = await adapter.read<Journal>(name);
+    if (current.value?.owner && current.value.expiresAt > deps.clock()) {
+      throw new SkuLabelInventoryError(409, "This card is being linked or corrected by another request. Wait, then retry the same reviewed correction.");
+    }
+    if (!await adapter.cas(name, current, { version: 1, identity, sku: product.sku, owner, expiresAt: deps.clock() + LEASE_MS })) {
+      throw new SkuLabelInventoryError(409, "This saved QR changed during the correction. Reload its details and retry.");
+    }
+    held.push(name);
+  };
+  const verifyLeases = async () => {
+    for (const name of held) {
+      const current = await adapter.read<Journal>(name);
+      if (current.value?.owner !== owner || current.value.expiresAt <= deps.clock()) {
+        throw new SkuLabelInventoryError(409, "The catalog correction reservation expired. Retry the same reviewed correction.");
+      }
+    }
+  };
+  try {
+    await acquire(lockKey(`sku:${product.sku}`), product.sku);
+    let saved = await adapter.read<Journal>(journalKey(product.sku));
+    const record = saved.value;
+    const previous = record?.catalogCorrectionReceipt;
+    if (previous?.sourceVersion === sourceVersion && previous.targetVersion === targetVersion &&
+      record?.identity === targetIdentity.identity && skuLabelCatalogVersion(product) === targetVersion) return product;
+    const resumed = record?.catalogCorrectionIntent;
+    if (!correctionUntouched(record, product, Boolean(resumed))) throw correctionBlocked();
+    const currentVersion = skuLabelCatalogVersion(product);
+    const intent: CatalogCorrectionIntent = resumed ?? {
+      version: 1, sourceVersion, targetVersion, sourceIdentity: identityFor(product).identity,
+      targetIdentity: targetIdentity.identity, source: skuLabelCatalogDetails(product), target: skuLabelCatalogDetails(target),
+    };
+    if (intent.version !== 1 || intent.sourceVersion !== sourceVersion || intent.targetVersion !== targetVersion ||
+      intent.targetIdentity !== targetIdentity.identity || record.identity !== intent.sourceIdentity ||
+      ![intent.sourceVersion, intent.targetVersion].includes(currentVersion) ||
+      (!resumed && (currentVersion !== sourceVersion || currentVersion === targetVersion))) throw correctionBlocked();
+    let sourcePrinting: unknown;
+    try { sourcePrinting = (JSON.parse(intent.sourceIdentity) as unknown[])[0]; } catch { throw correctionBlocked(); }
+    if (typeof sourcePrinting !== "string" || !sourcePrinting.startsWith("single:")) throw correctionBlocked();
+    for (const printing of [...new Set([sourcePrinting, targetIdentity.printing])].sort()) await acquire(lockKey(printing), printing);
+    await verifyLeases();
+    const codes = await deps.graphql<{ productVariants: { nodes: { sku: string | null; barcodes: { nodes: { value: string }[]; pageInfo: { hasNextPage: boolean } } }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrCatalogCorrectionCodes($query: String!) {
+      productVariants(first: 2, query: $query) { nodes { sku barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } } pageInfo { hasNextPage } }
+    }`, { query: `sku:"${product.sku}" OR barcode:"${product.sku}"` });
+    if (codes.productVariants.pageInfo.hasNextPage || codes.productVariants.nodes.some(variant =>
+      variant.barcodes.pageInfo.hasNextPage || variant.sku === product.sku || variant.barcodes.nodes.some(code => code.value === product.sku))) throw correctionBlocked();
+    // Re-read after acquiring all normal linking leases; stale snapshots cannot authorize a correction.
+    const locked = await adapter.read<Journal>(journalKey(product.sku));
+    if (locked.digest !== saved.digest) throw correctionBlocked();
+    if (!resumed) {
+      if (!await adapter.cas(journalKey(product.sku), saved, { ...record, catalogCorrectionIntent: intent,
+        status: { sku: product.sku, status: "pending", message: "Finishing the reviewed catalog correction. Keep this QR." } })) throw correctionBlocked();
+      saved = await adapter.read<Journal>(journalKey(product.sku));
+    }
+    await verifyLeases();
+    let corrected: T;
+    try {
+      corrected = currentVersion === targetVersion ? product : await persist(product, target);
+    } catch (error) {
+      // A first-attempt transactional conflict made no DB change; release its intent for a fresh review.
+      // A resumed attempt may lose a DB race to the original worker, so its intent must remain.
+      // Network/unknown failures retain the intent because the DB commit could have succeeded.
+      if (!resumed && error instanceof SkuLabelInventoryError) {
+        try {
+          await verifyLeases();
+          const current = await adapter.read<Journal>(journalKey(product.sku));
+          if (current.value?.catalogCorrectionIntent?.sourceVersion === sourceVersion && current.value.catalogCorrectionIntent.targetVersion === targetVersion) {
+            await adapter.cas(journalKey(product.sku), current, { ...record, catalogCorrectionIntent: undefined });
+          }
+        } catch { /* An unchanged intent can still be resumed explicitly. */ }
+      }
+      throw error;
+    }
+    if (skuLabelCatalogVersion(corrected) !== targetVersion) throw correctionBlocked();
+    await verifyLeases();
+    const current = await adapter.read<Journal>(journalKey(product.sku));
+    if (current.value?.catalogCorrectionIntent?.sourceVersion !== sourceVersion || current.value.catalogCorrectionIntent.targetVersion !== targetVersion ||
+      !correctionUntouched(current.value, product, true)) throw correctionBlocked();
+    if (!await adapter.cas(journalKey(product.sku), current, { ...current.value, identity: targetIdentity.identity,
+      catalogCorrectionIntent: undefined, catalogCorrectionReceipt: intent,
+      status: { sku: product.sku, status: "blocked", message: "Catalog details corrected. Retry Shopify linking with this same QR; the original starting quantity is retained." } })) {
+      throw new SkuLabelInventoryError(409, "The corrected card is saved. Retry this same reviewed correction to finish its Shopify journal.");
+    }
+    return corrected;
+  } finally {
+    for (const name of held.reverse()) {
+      try {
+        const current = await adapter.read<Journal>(name);
+        if (current.value?.owner === owner) await adapter.cas(name, current, { ...current.value, owner: null, expiresAt: 0 });
+      } catch { /* Existing lease expiry permits a later explicit retry. */ }
+    }
+  }
 }
 
 /** Read-only status: persisted progress plus live barcode, POS, price, and location stock verification. */
@@ -292,7 +453,10 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
         const identity = identityFor(product).identity;
         const valid = stored?.version === 1 && stored.sku === product.sku && stored.identity === identity && stored.initialQuantity === product.initialQuantity && stored.status?.sku === product.sku;
         results.push(valid && stored?.status ? unverified(stored.status) : { sku: product.sku, status: "pending", message: "Shopify POS has not confirmed this saved QR yet." });
-        if (valid && stored && stored.status?.status === "ready") {
+        if (stored?.catalogCorrectionIntent && stored.sku === product.sku) {
+          results[results.length - 1] = { sku: product.sku, status: "pending", catalogCorrectionPending: true,
+            message: "Finish the reviewed catalog correction before linking this saved QR to Shopify POS." };
+        } else if (valid && stored && stored.status?.status === "ready") {
           // A saved ready status is only a candidate until every live check succeeds.
           results[results.length - 1] = unverified({ ...stored.status, ...unavailable(product.sku) });
           if (stored.variantId && stored.productId && stored.publicationId && (stored.initialQuantity === 0 || stored.adjustmentId)) ready.push({ index: results.length - 1, record: stored, product });
@@ -401,6 +565,7 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
       if (!await adapter.cas(name, lease, lock)) pending("Another employee is linking this card. Retry shortly to use the existing link.");
     }
     const saved = await adapter.read<Journal>(journalKey(product.sku));
+    if (saved.value?.catalogCorrectionIntent) pending("Finish the reviewed catalog correction before linking this saved QR to Shopify POS.");
     const manualIdentity = identityFor({ ...product, tcgplayerId: null, tcgplayerUrl: null });
     const canAdoptManual = Boolean(identity.source && saved.value?.identity === manualIdentity.identity && !saved.value.previousIdentity);
     const canCorrectLanguage = canCorrectPrecreationLanguage(saved.value, product, identity);

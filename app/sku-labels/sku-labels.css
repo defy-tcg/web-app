@@ -227,3 +227,7 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-import-add { width: 100%; }
   .sku-import-existing { flex-direction: column; align-items: flex-start; }
 }
+
+.sku-catalog-correction { margin: 1rem 0; }
+.sku-catalog-correction .sku-catalog-confirmation { display: flex; align-items: flex-start; gap: .6rem; }
+.sku-catalog-correction .sku-catalog-confirmation input { width: auto; margin: .2rem 0 0; flex-shrink: 0; }
