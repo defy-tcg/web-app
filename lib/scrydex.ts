@@ -168,6 +168,7 @@ function pokemonNameAliases(product: ScrydexProduct) {
   const names = new Set([name]);
   const rarities = new Set<"secret" | "rainbow">();
   let pokemonCenterStamp = false;
+  let metalCard151 = false;
   const printedNumber = numberKey(product.cardNumber);
   // Visit newly added aliases too: TCGplayer can put the art description before
   // or after rarity and collector number. Each removal strictly shortens the
@@ -191,9 +192,14 @@ function pokemonNameAliases(product: ScrydexProduct) {
       pokemonCenterStamp = true;
       aliases.push(value.slice(0, center.index));
     }
+    const metal = /\s*\(151 Metal Card\)\s*$/i.exec(value);
+    if (metal && metal.index > 0) {
+      metalCard151 = true;
+      aliases.push(value.slice(0, metal.index));
+    }
     for (const alias of aliases) if (alias && alias.length < value.length) names.add(alias);
   }
-  return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp };
+  return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp, metalCard151 };
 }
 
 function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow">, candidate: ObjectValue) {
@@ -253,6 +259,12 @@ function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: str
   if (pokemonAliases?.pokemonCenterStamp && (!Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
     || !array(candidate.variants).map(object).some(variant => finishKey(variant.name) === "pokemoncenterstamp"
       && marketplaceId(variant, product.tcgplayerId!)))) return false;
+  // This catalog annotation identifies the physical metal UPC promo, not the
+  // same-numbered regular gold card. Pin both providers and the metal variant.
+  if (pokemonAliases?.metalCard151 && (product.tcgplayerId !== 519481 || text(candidate.id) !== "sv3pt5-205"
+    || identity(object(candidate.expansion).id) !== "sv3pt5"
+    || !array(candidate.variants).map(object).some(variant => finishKey(variant.name) === "metal"
+      && marketplaceId(variant, 519481)))) return false;
   if (pokemonAliases?.rarities.length && (!verifiedPokemonRarities(pokemonAliases.rarities, candidate)
     || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
     || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)))) return false;
@@ -280,10 +292,19 @@ function exactSetName(product: ScrydexProduct, candidate: ObjectValue) {
   return [expansion.name, expansion.code, expansion.id].some(value => identity(value) === identity(product.setName));
 }
 
-const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: string; code: string }> = {
+const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: string; code: string | null }> = {
+  "base set": { id: "base1", name: "base", series: "base", code: "bs" },
+  "wotc promo": { id: "basep", name: "wizards black star promos", series: "base", code: "pr" },
+  "mcdonald's promos 2023": { id: "mcd23", name: "mcdonald's collection 2023", series: "other", code: null },
   "sv: scarlet & violet 151": { id: "sv3pt5", name: "151", series: "scarlet & violet", code: "mew" },
   "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
+  "me: mega evolution promo": { id: "mep", name: "mega evolution black star promos", series: "mega evolution", code: "mep" },
   "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
+};
+
+const POKEMON_JAPANESE_SET_ALIASES: Record<string, { id: string; name: string; translatedName: string; series: string; code: string }> = {
+  "sv2a: pokemon card 151": { id: "sv2a_ja", name: "ポケモンカード151", translatedName: "pokémon card 151", series: "scarlet & violet", code: "sv2a" },
+  "sv9: battle partners": { id: "sv9_ja", name: "バトルパートナーズ", translatedName: "battle partners", series: "scarlet & violet", code: "sv9" },
 };
 
 // TCGplayer assigns some unnumbered promos a catalog number. Each exception
@@ -347,11 +368,12 @@ function verifiedPokemonSetLabel(product: ScrydexProduct, expansion: ObjectValue
 function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
   if (language === "Japanese") {
     const expansion = object(candidate.expansion);
-    // This alias is verified against the Japanese category, native set, and English translation.
-    return identity(product.setName) === "sv2a: pokemon card 151"
-      && identity(expansion.id) === "sv2a_ja" && identity(expansion.code) === "sv2a"
-      && identity(expansion.name) === "ポケモンカード151" && identity(expansion.series) === "scarlet & violet"
-      && identity(translatedName(expansion)) === "pokémon card 151"
+    const alias = POKEMON_JAPANESE_SET_ALIASES[identity(product.setName)];
+    // Every Japanese alias requires its native set, translated title, category,
+    // and selected card's marketplace identity. English reprints stay distinct.
+    return Boolean(alias) && identity(expansion.id) === alias.id && identity(expansion.code) === alias.code
+      && identity(expansion.name) === alias.name && identity(expansion.series) === alias.series
+      && identity(translatedName(expansion)) === alias.translatedName
       && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
   }
   if (exactSetName(product, candidate)) return true;
@@ -362,7 +384,7 @@ function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: 
   // Exceptional provider labels retain their complete verified identity. A
   // failed known alias must not fall through to the generic series-label path.
   if (alias) return identity(expansion.id) === alias.id && identity(expansion.name) === alias.name
-    && identity(expansion.series) === alias.series && identity(expansion.code) === alias.code;
+    && identity(expansion.series) === alias.series && (alias.code === null ? expansion.code === null : identity(expansion.code) === alias.code);
   return verifiedPokemonSetLabel(product, expansion);
 }
 
@@ -426,10 +448,26 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const gundamRarity = gundamRarityAnnotation(product, spec.game);
   const pokemonRarity = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).rarities.length > 0;
   const pokemonCenterStamp = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).pokemonCenterStamp;
+  const metalCard151 = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).metalCard151;
   const variants = array(candidate.variants).map(object).filter((variant) => {
+    if (metalCard151) {
+      // TCGplayer catalogs the metal card as Normal. Keep that label confined
+      // to this verified metal printing; never take its regular holofoil price.
+      return ["normal", "metal"].includes(spec.finish) && finishKey(variant.name) === "metal"
+        && marketplaceId(variant, product.tcgplayerId!);
+    }
     if (pokemonCenterStamp) {
       // TCGplayer calls the stamped promo Foil; never take the regular ETB's holofoil price.
       return ["foil", "pokemoncenterstamp"].includes(spec.finish) && finishKey(variant.name) === "pokemoncenterstamp"
+        && marketplaceId(variant, product.tcgplayerId!);
+    }
+    if (spec.game === "pokemon" && !spec.sealed && spec.finish === "normal" && finishKey(variant.name) === "unlimited") {
+      // TCGplayer's Normal Base Set printing is Scrydex's Unlimited edition.
+      // First Edition, Shadowless, and Fourth Print remain separate variants.
+      const expansion = object(candidate.expansion);
+      return identity(expansion.id) === "base1" && identity(expansion.name) === "base"
+        && identity(expansion.series) === "base" && identity(expansion.code) === "bs"
+        && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
         && marketplaceId(variant, product.tcgplayerId!);
     }
     if (gundamRarity) {
