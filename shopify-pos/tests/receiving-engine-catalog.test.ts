@@ -72,6 +72,8 @@ class MemoryAdapter implements ReceivingAdapter {
     this.products.push(product); return product;
   }
   async ensureActive() {}
+  async applyStorePrice(): Promise<Product> { throw new Error('Legacy receipt must not update price'); }
+  async confirmStorePrice(): Promise<Product> { throw new Error('Legacy receipt must not recover a price update'); }
   async adjust(_product: Product, p: Plan) {
     let adjustment = this.adjustments.get(p.request.requestId);
     if (!adjustment) {

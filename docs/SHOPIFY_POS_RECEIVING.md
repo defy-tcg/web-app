@@ -16,7 +16,10 @@ products for a sale; it does not receive a delivery.
    products keep their SKU; new registrations reserve a new store SKU.
 4. Enter the quantity being added and cost **per selling unit**, plus the
    supplier, received date, and notes as needed. For example, receiving six boxes
-   at $120 each means quantity 6 and unit cost 120.00.
+   at $120 each means quantity 6 and unit cost 120.00. Enter **Store price per
+   selling unit** to set the Shopify selling price, for example 149.99 per box.
+   This optional field is separate from acquisition cost; leaving it blank keeps
+   the current price. Existing products show their current Shopify price.
 5. Save once and wait for **Receipt saved**. If confirmation is interrupted,
    recover or retry that same receipt. Starting a new receipt for the same
    delivery would add the stock again.
@@ -40,7 +43,11 @@ that same inventory count.
 Receipt history reads this app's immutable `$app:receiving_applied` Shopify
 metaobjects through an authenticated server endpoint. Costs are acquisition costs
 from each receipt, not retail prices or a calculated average inventory cost.
-The existing receiving app does not change Shopify's `inventoryItem.unitCost`.
+The receiving app does not change Shopify's `inventoryItem.unitCost`.
+An entered store price updates only the selected variant's Shopify selling price
+before stock is added. It uses the shop currency, accepts up to two decimal places,
+and is preserved in the immutable receipt. Enter 0 only for a free selling price.
+The cost totals and DefyOS receiving-history cost columns remain acquisition costs.
 History is paginated in batches of 25 source records and filtered to the configured
 location. It is read-only and does not replay receipts or create expenses.
 
@@ -49,9 +56,20 @@ separate source. Do not add those quantities to Shopify quantities as if they
 were different physical stock. Moving an existing balance to Shopify requires an
 explicit count reconciliation; this receiving connection does not migrate it.
 
-New receiving registrations remain drafts until their retail price, product
-details, and Point of Sale availability have been reviewed. Scrydex pricing and
-checkout are separate steps. Recording a receipt does not publish a product.
+New receiving registrations remain drafts until their product details and Point
+of Sale availability have been reviewed. If no store price was entered, review
+the retail price as well. Recording a receipt does not publish a product.
+The entered price is the Shopify variant price, not a permanent pricing override:
+a later applicable Scrydex price refresh or Defy Pricing action can replace it.
+
+The chosen store price is frozen with the receipt before any Shopify write. A
+confirmed price is not applied again during inventory recovery or completed
+receipt replay. If a price update is interrupted, recovery checks Shopify for the
+requested price before continuing. When that price cannot be confirmed, the
+receipt stays pending for owner review; do not start a second receipt for the
+delivery. This avoids repeating a price write whose result is uncertain.
+After reviewing the pending receipt, the owner can set that exact variant's price
+to the saved store price in Shopify and retry the same receipt to finish receiving.
 
 ## Unknown barcodes and Scrydex
 
@@ -87,8 +105,9 @@ An interrupted draft creation or metadata save resumes the same receipt.
 
 Scrydex market prices shown in the search are USD reference values, may be cached
 for 24 hours, and may be unavailable. They do not populate acquisition cost or
-set a Shopify selling price. Enter actual cost per selling unit. Newly registered
-products remain drafts and still require retail-price and POS availability review.
+the store-price field. Enter actual cost per selling unit and your chosen store
+price separately. Newly registered products remain drafts and still require
+activation and POS availability review.
 
 `POST /api/shopify/pos/sealed-catalog` accepts either `{game, query}` or
 `{game, id}` with a signed Shopify POS session token. It is a read-only server

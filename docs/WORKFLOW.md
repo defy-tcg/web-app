@@ -75,7 +75,8 @@ existing Defy Receiving app credentials. Its authenticated backend updates
 Shopify variant prices; the separate Shopify extension release and device setup
 are documented in [SHOPIFY_POS_PRICING.md](SHOPIFY_POS_PRICING.md).
 The existing **Receive sealed stock** tile records quantity and acquisition cost
-in Shopify. DefyOS shows its stock and immutable receipt history in **Shopify
+in Shopify and optionally sets the variant's selling price from a manually entered
+store price. DefyOS shows its stock and immutable receipt history in **Shopify
 stock & receiving**; see [SHOPIFY_POS_RECEIVING.md](SHOPIFY_POS_RECEIVING.md).
 Inventory-only sync uses the app's existing product/inventory permissions, with
 `SHOPIFY_SYNC_ORDERS_ENABLED=false`; it does not import order history or combine

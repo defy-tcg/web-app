@@ -1,5 +1,5 @@
 import {RECEIVING, type Adjustment, type Applied, type JournalState, type Plan, type Product, type ReceivingAdapter, type StateSnapshot, validateExisting} from './receiving-service.ts';
-import {barcodeAliases, barcodeKey, ReceivingError, stableJson, validBarcode} from './receiving-validation.ts';
+import {barcodeAliases, barcodeKey, money, ReceivingError, stableJson, validBarcode} from './receiving-validation.ts';
 import {receivingCardMetadata, receivingCatalogKey, RECEIVING_CATALOG_GAMES, type CatalogReference} from './receiving-catalog.ts';
 
 type Json = Record<string, any>;
@@ -21,7 +21,7 @@ export const directGraphQL: GraphQL = async <T = Json>(query: string, variables:
 };
 
 const variantFields = () => `
-  id sku barcode title
+  id sku barcode title price
   inventoryItem { id tracked }
   unit: metafield(namespace: "${RECEIVING.namespace}", key: "${RECEIVING.unitKey}") { value compareDigest }
   game: metafield(namespace: "${RECEIVING.namespace}", key: "${RECEIVING.gameKey}") { value compareDigest }
@@ -38,6 +38,7 @@ function product(node: Json): Product {
     game: node.game?.value || '', unit: node.unit?.value || '', tracked: node.inventoryItem.tracked,
     status: node.product.status, catalogId: node.product.catalogId?.value || '', barcodeId: node.barcodeId?.value || '',
     barcodeNeedsReview: Boolean(barcode && !validBarcode(barcode)),
+    ...(typeof node.price === 'string' ? {price: money(node.price, 'Store price')} : {}),
   };
 }
 
@@ -293,6 +294,42 @@ export class ShopifyReceivingAdapter implements ReceivingAdapter {
       throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The created Shopify draft does not match its reserved identity. Keep this receipt pending for review.', false, true);
     }
     return created;
+  }
+
+  private async priceProduct(item: Product, plan: Plan): Promise<Product> {
+    const current = (await this.variant(item.variantId)).product;
+    if (current.productId !== item.productId || current.inventoryItemId !== item.inventoryItemId || current.sku !== plan.plannedSku ||
+      current.unit !== plan.request.unit || !validBarcode(current.barcode) || barcodeKey(current.barcode) !== barcodeKey(plan.request.barcode) ||
+      (plan.request.catalog && current.catalogId !== receivingCatalogKey(plan.request.catalog))) {
+      throw new ReceivingError('PRODUCT_IDENTITY_CONFLICT', 'The reserved Shopify variant changed before its store price was confirmed. Keep this receipt pending.', false, true);
+    }
+    validateExisting(current, plan.request);
+    if (current.price === undefined || plan.request.storePrice === undefined) throw new ReceivingError('STORE_PRICE_UNAVAILABLE', 'The current store price could not be verified. Keep this receipt pending.', false, true);
+    return current;
+  }
+
+  async applyStorePrice(item: Product, plan: Plan): Promise<Product> {
+    const current = await this.priceProduct(item, plan);
+    const price = plan.request.storePrice!;
+    if (current.price === price) return current;
+    if (item.price === undefined || current.price !== item.price) throw new ReceivingError('STORE_PRICE_CHANGED', 'The Shopify store price changed while receiving. Ask the owner to review this receipt before continuing.', false, true);
+    // Send only the absolute selling price. Costs, compare-at prices, inventory,
+    // product status, and publication settings are outside this mutation.
+    const data = await this.graphql(`mutation SetReceivingStorePrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id price } userErrors { code field message } }
+    }`, {productId: current.productId, variants: [{id: current.variantId, price}]});
+    userErrors(data.productVariantsBulkUpdate, 'Saving the store price');
+    const updated = data.productVariantsBulkUpdate.productVariants?.find((variant: Json) => variant.id === current.variantId);
+    if (typeof updated?.price !== 'string' || money(updated.price, 'Store price') !== price) throw new ReceivingError('STORE_PRICE_UNCERTAIN', 'The store price result could not be confirmed. Retry the same receipt to check Shopify.', true, true);
+    return this.confirmStorePrice(item, plan);
+  }
+
+  async confirmStorePrice(item: Product, plan: Plan): Promise<Product> {
+    const current = await this.priceProduct(item, plan);
+    // A timeout may have occurred after Shopify committed, followed by an owner
+    // edit. Never repeat the mutation, even if the price equals its old value.
+    if (current.price !== plan.request.storePrice) throw new ReceivingError('STORE_PRICE_UNCERTAIN', 'An earlier store price update may have completed, but Shopify now shows a different price. Ask the owner to review this receipt; retrying will not overwrite the current price.', false, true);
+    return current;
   }
 
   async ensureActive(item: Product, plan: Plan): Promise<void> {

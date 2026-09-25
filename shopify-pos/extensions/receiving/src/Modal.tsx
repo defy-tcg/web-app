@@ -11,16 +11,16 @@ declare const shopify: Api;
 
 type Product = {
   sku: string; barcode: string; name: string; game: string; unit: string;
-  barcodeNeedsReview?: boolean; variantId?: string;
+  barcodeNeedsReview?: boolean; variantId?: string; price?: string;
 };
 type ReceiptInput = {
   requestId: string; barcode: string; sku?: string; name: string; game: string;
-  unit: string; quantity: string | number; unitCost: string; supplier: string;
+  unit: string; quantity: string | number; unitCost: string; storePrice?: string; supplier: string;
   notes: string; receivedDate: string; replaceInvalidBarcode: boolean;
   locationId?: string; locationName?: string; currencyCode?: string;
   catalog?: CatalogIdentity;
 };
-type Form = Omit<ReceiptInput, 'requestId' | 'quantity'> & {quantity: string};
+type Form = Omit<ReceiptInput, 'requestId' | 'quantity' | 'storePrice'> & {quantity: string; storePrice: string};
 type Phase = 'loading' | 'scan' | 'lookup' | 'search' | 'catalog' | 'ready' | 'unknown' | 'saving' | 'recovery' | 'success' | 'blocked';
 type Notice = {heading: string; text: string; tone: 'info' | 'success' | 'warning' | 'critical'};
 const UNITS = ['Booster pack', 'Booster box', 'Booster bundle', 'Collection box', 'Elite Trainer Box', 'Tin', 'Deck', 'Display', 'Case', 'Other sealed unit'];
@@ -29,7 +29,7 @@ const localDate = () => {
   const today = new Date();
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 };
-const emptyForm = (): Form => ({barcode: '', sku: '', name: '', game: '', unit: '', quantity: '', unitCost: '', supplier: '', notes: '', receivedDate: localDate(), replaceInvalidBarcode: false});
+const emptyForm = (): Form => ({barcode: '', sku: '', name: '', game: '', unit: '', quantity: '', unitCost: '', storePrice: '', supplier: '', notes: '', receivedDate: localDate(), replaceInvalidBarcode: false});
 const createRequestId = () => globalThis.crypto?.randomUUID?.() || `pos-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 const validation = (form: Form, product: Product | null, registering: boolean) => {
   if (!product && !registering) return 'Find an existing product or choose Register new sealed product.';
@@ -39,6 +39,8 @@ const validation = (form: Form, product: Product | null, registering: boolean) =
   if (!/^\d+$/.test(form.quantity) || !Number.isSafeInteger(Number(form.quantity)) || Number(form.quantity) < 1) return 'Enter a whole quantity of at least 1.';
   if (!/^\d+(?:\.\d{1,2})?$/.test(form.unitCost)) return 'Enter the cost per unit with up to two decimals. Use 0 only for a zero-cost acquisition.';
   if (Number(form.unitCost) > 1000000) return 'Cost per unit must be no more than 1,000,000.';
+  if (form.storePrice.trim() && !/^\d+(?:\.\d{1,2})?$/.test(form.storePrice.trim())) return 'Enter a store price of 0 or more with up to two decimals, or leave it blank to keep the current price.';
+  if (Number(form.storePrice) > 1000000) return 'Store price must be no more than 1,000,000.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form.receivedDate)) return 'Enter the received date as YYYY-MM-DD.';
   const date = new Date(`${form.receivedDate}T00:00:00Z`);
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== form.receivedDate) return 'Enter a valid received date.';
@@ -91,7 +93,7 @@ export function ReceivingModal() {
   const clearIdentity = (barcode: string) => {
     resetCatalog();
     assignProduct(null); setRegistration(false); setResults([]); setSearched(false); setQuery('');
-    const next = {...formRef.current, barcode, sku: '', name: '', game: '', unit: '', quantity: '', unitCost: '', notes: '', replaceInvalidBarcode: false};
+    const next = {...formRef.current, barcode, sku: '', name: '', game: '', unit: '', quantity: '', unitCost: '', storePrice: '', notes: '', replaceInvalidBarcode: false};
     delete next.catalog;
     updateForm(next);
   };
@@ -104,16 +106,16 @@ export function ReceivingModal() {
     if (!isEditable(phaseRef.current)) return;
     resetCatalog();
     assignProduct(next); setRegistration(false); setResults([]);
-    const selected = {...formRef.current, sku: next.sku, name: next.name, game: next.game, unit: next.unit || '', quantity: '', unitCost: '', replaceInvalidBarcode: false};
+    const selected = {...formRef.current, sku: next.sku, name: next.name, game: next.game, unit: next.unit || '', quantity: '', unitCost: '', storePrice: '', replaceInvalidBarcode: false};
     delete selected.catalog;
     updateForm(selected);
     transition('ready');
-    alert('Check the package', 'Confirm the selling unit, quantity received, and cost per unit.', 'info');
+    alert('Check the package', 'Confirm the selling unit, quantity received, and cost per unit. Enter your store price to update the Shopify selling price when you save.', 'info');
   };
   const restoreRequest = (request: ReceiptInput) => {
     resetCatalog();
     pendingRef.current = request;
-    updateForm({...request, quantity: String(request.quantity)});
+    updateForm({...request, quantity: String(request.quantity), storePrice: request.storePrice ?? ''});
     assignProduct(request.sku ? {sku: request.sku, barcode: request.barcode, name: request.name, game: request.game, unit: request.unit} : null);
     setRegistration(!request.sku);
     setResults([]); setSearched(false); setQuery('');
@@ -238,10 +240,10 @@ export function ReceivingModal() {
     if (phaseRef.current !== 'unknown' || catalogState.kind !== 'selected' || !catalogState.canRegister || !packageConfirmed) return;
     const selected = catalogState.product;
     assignProduct(null); setRegistration(true); setResults([]); setSearched(false);
-    updateForm({...formRef.current, sku: '', name: selected.name, game: CATALOG_GAMES[selected.game], unit: '', quantity: '', unitCost: '',
+    updateForm({...formRef.current, sku: '', name: selected.name, game: CATALOG_GAMES[selected.game], unit: '', quantity: '', unitCost: '', storePrice: '',
       replaceInvalidBarcode: false, catalog: catalogIdentity(selected)});
     transition('ready');
-    alert('Confirm the selling unit', 'Catalog name and game are locked. Choose the actual package unit, then enter quantity and your acquisition cost. Saving creates a draft; review its retail price and POS availability before selling.', 'info');
+    alert('Confirm the selling unit', 'Catalog name and game are locked. Choose the actual package unit, then enter quantity, acquisition cost, and your store price. Saving creates a draft; review its details and POS availability before selling.', 'info');
   }
 
   async function submit() {
@@ -266,11 +268,12 @@ export function ReceivingModal() {
         if (!savedProduct?.sku || !receipt) throw new Error('Incomplete receipt confirmation');
         assignProduct(savedProduct);
         updateForm({...formRef.current, sku: savedProduct.sku, name: savedProduct.name, game: savedProduct.game, unit: savedProduct.unit || request.unit,
-          locationId: receipt.locationId, locationName: receipt.locationName, currencyCode: receipt.currencyCode});
+          storePrice: receipt.storePrice ?? '', locationId: receipt.locationId, locationName: receipt.locationName, currencyCode: receipt.currencyCode});
         pendingRef.current = null;
         transition('success');
-        const staged = result.staged ? ' Stock is recorded. This product still needs a retail price, activation, and availability in POS before it can be sold.' : '';
-        alert(result.duplicate ? 'Receipt already saved' : 'Receipt saved', `${receipt.quantity ?? request.quantity} × ${savedProduct.name} · SKU ${savedProduct.sku}. Receipt ${receipt.requestId || request.requestId}.${staged}`, 'success');
+        const price = receipt.storePrice !== undefined ? ` Store price saved: ${receipt.currencyCode} ${receipt.storePrice} per ${receipt.unit}.` : '';
+        const staged = result.staged ? ` Stock is recorded. This product still needs ${receipt.storePrice === undefined ? 'a retail price review, ' : ''}activation and availability in POS before it can be sold.` : '';
+        alert(result.duplicate ? 'Receipt already saved' : 'Receipt saved', `${receipt.quantity ?? request.quantity} × ${savedProduct.name} · SKU ${savedProduct.sku}. Receipt ${receipt.requestId || request.requestId}.${price}${staged}`, 'success');
       } else if (result?.error?.code === 'RECEIVING_BUSY' && result.error.definitelyUncommitted === true && result.pendingRequest) {
         restoreRequest(result.pendingRequest as ReceiptInput);
         alert('Finish the saved receipt first', 'This delivery was not started. Finish the saved receipt below, then enter this delivery again.', 'warning');
@@ -372,7 +375,7 @@ export function ReceivingModal() {
         {detailsVisible && <>
           <s-divider />
           {product && <s-text>Store SKU: {product.sku}</s-text>}
-          {form.catalog && <s-text>Verified Scrydex product: {form.catalog.name} · {form.catalog.setName || 'Set not listed'} · {form.catalog.language}. Retail price and POS availability need review after this draft is saved.</s-text>}
+          {form.catalog && <s-text>Verified Scrydex product: {form.catalog.name} · {form.catalog.setName || 'Set not listed'} · {form.catalog.language}. Enter your store price below. This draft still needs activation and POS availability before selling.</s-text>}
           <s-text-field label="Product name" value={form.name} required disabled={!editable || !!product || !!form.catalog} onInput={(event) => edit('name', (event.currentTarget.value ?? ''))} />
           <s-text-field label="Game" value={form.game} required disabled={!editable || !!product?.game || !!form.catalog} onInput={(event) => edit('game', (event.currentTarget.value ?? ''))} />
           <s-text>Selling unit</s-text>
@@ -386,6 +389,10 @@ export function ReceivingModal() {
           <s-number-field label={`Cost per selling unit (${currency})`} value={form.unitCost} controls="none" inputMode="decimal" required disabled={!editable}
             details="Enter acquisition cost. Enter 0 only when this stock cost nothing." onInput={(event) => edit('unitCost', (event.currentTarget.value ?? ''))} />
           {total && <s-text>Total receipt cost: {currency} {total}</s-text>}
+          {editable && product?.price !== undefined && <s-text>Current Shopify price: {currency} {product.price} per {form.unit || 'selling unit'}</s-text>}
+          <s-number-field label={`Store price per selling unit (${currency})`} value={form.storePrice} controls="none" inputMode="decimal" min={0} max={1000000} disabled={!editable}
+            details="Optional. Sets this product's Shopify selling price when you save. Leave blank to keep the current price. Enter 0 only to sell it for free."
+            onInput={(event) => edit('storePrice', (event.currentTarget.value ?? ''))} />
           <s-date-field label="Received date" value={form.receivedDate} disabled={!editable} onInput={(event) => edit('receivedDate', (event.currentTarget.value ?? ''))} />
           <s-text-field label="Supplier / invoice (optional)" value={form.supplier} disabled={!editable} onInput={(event) => edit('supplier', (event.currentTarget.value ?? ''))} />
           <s-text-area label="Notes (optional)" value={form.notes} disabled={!editable} onInput={(event) => edit('notes', (event.currentTarget.value ?? ''))} />

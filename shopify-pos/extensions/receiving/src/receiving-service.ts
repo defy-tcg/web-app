@@ -1,5 +1,5 @@
 import {ShopifyReceivingAdapter} from './shopify-receiving-adapter.ts';
-import {barcodeKey, gid, isoDate, money, quantity, ReceivingError, scanBarcode, stableJson, text, validBarcode, validation} from './receiving-validation.ts';
+import {barcodeKey, gid, isoDate, money, optionalStorePrice, quantity, ReceivingError, scanBarcode, stableJson, text, validBarcode, validation} from './receiving-validation.ts';
 import {normalizeCatalogReference, normalizeReceiptCatalog, RECEIVING_CATALOG_GAMES, type CatalogReference, type ReceiptCatalog} from './receiving-catalog.ts';
 
 export {ReceivingError} from './receiving-validation.ts';
@@ -12,7 +12,7 @@ export const RECEIVING = Object.freeze({
 
 export type ReceiptInput = {
   requestId: string; barcode: string; sku?: string; name: string; game: string; unit: string;
-  quantity: string | number; unitCost: string; supplier: string; notes: string; receivedDate: string;
+  quantity: string | number; unitCost: string; storePrice?: string; supplier: string; notes: string; receivedDate: string;
   replaceInvalidBarcode?: boolean; locationId?: string | number; locationName?: string;
   catalog?: ReceiptCatalog;
 };
@@ -22,7 +22,7 @@ export type Request = Omit<ReceiptInput, 'quantity' | 'sku' | 'replaceInvalidBar
 export type Product = {
   sku: string; barcode: string; name: string; game: string; unit: string;
   variantId: string; productId: string; inventoryItemId: string;
-  barcodeNeedsReview: boolean; tracked: boolean; status: string; catalogId?: string; barcodeId?: string;
+  barcodeNeedsReview: boolean; tracked: boolean; status: string; catalogId?: string; barcodeId?: string; price?: string;
 };
 export type Adjustment = {id: string; createdAt: string; referenceDocumentUri: string};
 export type Receipt = Request & {
@@ -34,7 +34,7 @@ export type Plan = {
   version: 1; request: Request; fingerprint: string; startedAt: string;
   plannedSku: string; createdProduct: boolean; before: Product | null;
   locationName: string; currencyCode: string;
-  phase: 'planned' | 'product_ready' | 'inventory_pending' | 'inventory_applied';
+  phase: 'planned' | 'product_ready' | 'price_pending' | 'price_applied' | 'inventory_pending' | 'inventory_applied';
   product?: Product; inventoryStartedAt?: string; adjustment?: Adjustment;
 };
 export type JournalState = {version: 1; nextSequence: number; pending: Plan | null};
@@ -55,6 +55,8 @@ export interface ReceivingAdapter {
   findByCatalog(catalog: CatalogReference): Promise<Product | null>;
   search(query: string): Promise<{products: Product[]; hasMore: boolean}>;
   resolveProduct(plan: Plan): Promise<Product>;
+  applyStorePrice(product: Product, plan: Plan): Promise<Product>;
+  confirmStorePrice(product: Product, plan: Plan): Promise<Product>;
   ensureActive(product: Product, plan: Plan): Promise<void>;
   adjust(product: Product, plan: Plan): Promise<Adjustment>;
 }
@@ -72,6 +74,7 @@ export function normalizeRequest(input: ReceiptInput, locationId: unknown): Requ
   const name = text(input.name, 'Product name', 300, true);
   const game = text(input.game, 'Game', 80, true);
   const catalog = input.catalog === undefined ? undefined : normalizeReceiptCatalog(input.catalog, name, game);
+  const storePrice = optionalStorePrice(input.storePrice);
   return {
     requestId: id, barcode: scanBarcode(input.barcode), sku: text(input.sku, 'SKU', 80),
     name, game: catalog ? RECEIVING_CATALOG_GAMES[catalog.game] : game,
@@ -81,6 +84,7 @@ export function normalizeRequest(input: ReceiptInput, locationId: unknown): Requ
     locationId: gid(input.locationId || locationId, 'Location'),
     // Do not add an undefined key: historical receipt fingerprints must stay exact.
     ...(catalog ? {catalog} : {}),
+    ...(storePrice !== undefined ? {storePrice} : {}),
   };
 }
 
@@ -91,8 +95,11 @@ export function assertState(snapshot: StateSnapshot): JournalState {
   if (state.pending) {
     const p = state.pending;
     if (p.version !== 1 || !p.request || p.fingerprint !== stableJson(p.request) || !p.plannedSku || !Number.isFinite(Date.parse(p.startedAt)) ||
-      !['planned', 'product_ready', 'inventory_pending', 'inventory_applied'].includes(p.phase)) conflict('The pending receipt needs owner review. Its original request ID is preserved.');
+      !['planned', 'product_ready', 'price_pending', 'price_applied', 'inventory_pending', 'inventory_applied'].includes(p.phase)) conflict('The pending receipt needs owner review. Its original request ID is preserved.');
     if (p.phase !== 'planned' && !p.product) conflict('The pending receipt is missing its Shopify identity.');
+    if ((p.phase === 'price_pending' || p.phase === 'price_applied') &&
+      (typeof p.request.storePrice !== 'string' || !/^\d+\.\d{2}$/.test(p.request.storePrice) || typeof p.product?.price !== 'string')) conflict('The pending store price is incomplete. Keep the original receipt for owner review.');
+    if (p.phase === 'price_applied' && p.product?.price !== p.request.storePrice) conflict('The pending receipt is missing its store price confirmation.');
     if ((p.phase === 'inventory_pending' || p.phase === 'inventory_applied') && !Number.isFinite(Date.parse(p.inventoryStartedAt || ''))) conflict('The pending inventory attempt is missing its original timestamp.');
     if (p.phase === 'inventory_applied' && !p.adjustment?.id) conflict('The pending receipt is missing its inventory confirmation.');
   }
@@ -140,6 +147,9 @@ export class ReceivingService {
     let owned = false;
     let duplicate = false;
     let acquiredNew = false;
+    // A price mutation has no Shopify idempotency key. Only the device that
+    // confirms this CAS may send it; every subsequent attempt is read-only.
+    let priceWriteAuthorized = false;
     try {
       for (let attempt = 0; attempt < 40; attempt++) {
         const record = await this.adapter.readRecord('applied', request.requestId) as Applied | null;
@@ -214,7 +224,21 @@ export class ReceivingService {
           if (!await this.adapter.compareAndSet(snapshot, {...state, pending: {...plan, product, phase: 'product_ready'}})) continue;
           continue;
         }
-        if (plan.phase === 'product_ready') {
+        if (plan.phase === 'product_ready' && request.storePrice !== undefined) {
+          if (plan.product!.price === undefined) conflict('Shopify did not return the current store price. Keep this receipt for owner review.', 'STORE_PRICE_UNAVAILABLE');
+          if (!await this.adapter.compareAndSet(snapshot, {...state, pending: {...plan, phase: 'price_pending'}})) continue;
+          priceWriteAuthorized = true;
+          continue;
+        }
+        if (plan.phase === 'price_pending') {
+          const mayWrite = priceWriteAuthorized;
+          priceWriteAuthorized = false;
+          const product = mayWrite ? await this.adapter.applyStorePrice(plan.product!, plan) : await this.adapter.confirmStorePrice(plan.product!, plan);
+          if (product.price !== request.storePrice) conflict('Shopify did not confirm the entered store price. Keep this receipt pending.', 'STORE_PRICE_UNCERTAIN');
+          if (!await this.adapter.compareAndSet(snapshot, {...state, pending: {...plan, product, phase: 'price_applied'}})) continue;
+          continue;
+        }
+        if (plan.phase === 'product_ready' || plan.phase === 'price_applied') {
           await this.adapter.ensureActive(plan.product!, plan);
           // Timestamp is persisted before the first possible stock adjustment.
           const next = {...plan, phase: 'inventory_pending' as const, inventoryStartedAt: new Date(await this.adapter.serverNow()).toISOString()};

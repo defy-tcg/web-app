@@ -66,14 +66,23 @@ export function quantity(value: unknown): number {
   return result;
 }
 
-export function money(value: unknown): string {
-  if (typeof value !== 'string' && typeof value !== 'number') validation('Enter unit cost, including 0.00 for free stock.');
+export function money(value: unknown, label = 'Unit cost'): string {
+  if (typeof value !== 'string' && typeof value !== 'number') validation(`Enter ${label.toLowerCase()}, including 0.00 for free stock.`);
   const result = String(value).trim();
-  if (!/^\d+(?:\.\d{1,2})?$/.test(result)) validation('Unit cost must be a nonnegative decimal with at most two decimal places.');
+  if (!/^\d+(?:\.\d{1,2})?$/.test(result)) validation(`${label} must be a nonnegative decimal with at most two decimal places.`);
   const [whole, decimal = ''] = result.split('.');
   const cents = Number(whole) * 100 + Number((decimal + '00').slice(0, 2));
-  if (!Number.isSafeInteger(cents)) validation('Unit cost is too large.');
+  if (!Number.isSafeInteger(cents)) validation(`${label} is too large.`);
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
+}
+
+export function optionalStorePrice(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') validation('Store price must be text.');
+  if (!value.trim()) return undefined;
+  const result = money(value, 'Store price');
+  if (Number(result) > 1_000_000) validation('Store price cannot exceed 1,000,000.00.');
+  return result;
 }
 
 export function isoDate(value: unknown): string {
