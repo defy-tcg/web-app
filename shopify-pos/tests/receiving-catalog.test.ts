@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {CATALOG_GAMES, SEALED_CATALOG_URL, catalogIdentity, createSealedCatalogClient, type CatalogProduct} from '../extensions/receiving/src/catalog-client.ts';
+import {CATALOG_GAMES, CATALOG_GAME_LABELS, SEALED_CATALOG_URL, catalogIdentity, createSealedCatalogClient, type CatalogProduct} from '../extensions/receiving/src/catalog-client.ts';
 import {createCatalogController, type CatalogState} from '../extensions/receiving/src/catalog-controller.ts';
 import type {Product} from '../extensions/receiving/src/receiving-service.ts';
 
@@ -32,34 +32,37 @@ test('catalog requests use a fresh POS session bearer and exact bounded search/d
   }
 });
 
-test('Gundam catalog search and exact selection preserve game identity through the scanner registration flow', async () => {
-  const gundam: CatalogProduct = {id: 'gd01-booster-display', game: 'gundam', name: 'Newtype Rising Booster Display', setName: 'Newtype Rising',
-    language: 'English', unit: 'Display', imageUrl: null, marketCents: null};
+for (const source of [
+  {id: 'gd01-booster-display', game: 'gundam', name: 'Newtype Rising Booster Display', setName: 'Newtype Rising'},
+  {id: 'FRA-s1', game: 'magicthegathering', name: 'Reality Fracture Bundle', setName: 'Reality Fracture'},
+] as const) test(`${CATALOG_GAMES[source.game]} catalog search and exact selection preserve game identity through scanner registration`, async () => {
+  const product: CatalogProduct = {...source, language: 'English', unit: 'Display', imageUrl: null, marketCents: null};
   const requests: unknown[] = [];
-  const client = createSealedCatalogClient({getToken: async () => 'gundam-session', request: async (_url, init) => {
-    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer gundam-session');
+  const client = createSealedCatalogClient({getToken: async () => 'catalog-session', request: async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer catalog-session');
     const body = JSON.parse(String(init?.body)); requests.push(body);
-    return json('query' in body ? {products: [gundam], hasMore: false} : {product: gundam});
+    return json('query' in body ? {products: [product], hasMore: false} : {product});
   }});
   const controller = createCatalogController({client,
     findCatalogProduct: async reference => {
-      assert.deepEqual(reference, {game: 'gundam', id: gundam.id});
+      assert.deepEqual(reference, {game: source.game, id: source.id});
       return {ok: true, found: false, product: null};
     },
-    searchProducts: async ({query}) => { assert.equal(query, gundam.name); return {ok: true, products: [], hasMore: false}; },
+    searchProducts: async ({query}) => { assert.equal(query, source.name); return {ok: true, products: [], hasMore: false}; },
   }, () => {});
-  await controller.search('gundam', '  Newtype Rising  ');
+  await controller.search(source.game, `  ${source.setName}  `);
   assert.equal(controller.getState().kind, 'results');
-  await controller.select('gundam', gundam.id);
-  assert.deepEqual(requests, [{game: 'gundam', query: 'Newtype Rising'}, {game: 'gundam', id: gundam.id}]);
+  await controller.select(source.game, source.id);
+  assert.deepEqual(requests, [{game: source.game, query: source.setName}, {game: source.game, id: source.id}]);
   const selected = controller.getState();
   assert.equal(selected.kind, 'selected');
   if (selected.kind !== 'selected') return;
   assert.equal(selected.canRegister, true);
-  assert.equal(CATALOG_GAMES[selected.product.game], 'Gundam');
-  assert.deepEqual(catalogIdentity(selected.product), {game: 'gundam', id: gundam.id, name: gundam.name, setName: gundam.setName, language: 'English'});
-  const mismatch = createSealedCatalogClient({getToken: async () => 'session', request: async () => json({product: {...gundam, game: 'riftbound'}})});
-  await assert.rejects(mismatch.detail('gundam', gundam.id), /incomplete/);
+  assert.equal(CATALOG_GAMES[selected.product.game], source.game === 'gundam' ? 'Gundam' : 'MTG');
+  assert.equal(CATALOG_GAME_LABELS[selected.product.game], source.game === 'gundam' ? 'Gundam' : 'Magic: The Gathering (MTG)');
+  assert.deepEqual(catalogIdentity(selected.product), {...source, language: 'English'});
+  const mismatch = createSealedCatalogClient({getToken: async () => 'session', request: async () => json({product: {...product, game: 'riftbound'}})});
+  await assert.rejects(mismatch.detail(source.game, source.id), /incomplete/);
 });
 
 test('catalog refuses invalid inputs and absent POS authentication before any request', async () => {

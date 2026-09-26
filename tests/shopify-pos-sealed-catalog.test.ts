@@ -34,22 +34,23 @@ test("sealed search and exact selection authenticate, trim search, and expose on
   assert.deepEqual(calls, [{ game: "pokemon", query: "Paldean Fates" }, { game: "pokemon", id: product.id }]);
 });
 
-test("authenticated Gundam searches and exact selections keep the requested game and safe public fields", async () => {
-  const gundam = { ...product, id: "GD01-s1", game: "gundam" as const,
-    name: "Newtype Rising Booster Pack", setName: "Newtype Rising", unit: "Booster pack" };
+for (const [game, id, setName] of [["gundam", "GD01-s1", "Newtype Rising"], ["magicthegathering", "FRA-s3", "Reality Fracture"]] as const) {
+test(`authenticated ${game} searches and exact selections keep the requested game and safe public fields`, async () => {
+  const item = { ...product, id, game, name: `${setName} Booster Pack`, setName, unit: "Booster pack" };
   const calls: unknown[] = [];
   const { handle } = harness({
-    search: async input => { calls.push(input); return { products: [gundam], hasMore: false }; },
-    get: async input => { calls.push(input); return { ...gundam, privateProviderField: "hidden" }; },
+    search: async input => { calls.push(input); return { products: [item], hasMore: false }; },
+    get: async input => { calls.push(input); return { ...item, privateProviderField: "hidden" }; },
   });
-  const search = await handle(request({ game: "gundam", query: " Newtype Rising " }));
+  const search = await handle(request({ game, query: ` ${setName} ` }));
   assert.equal(search.status, 200);
-  assert.deepEqual(await search.json(), { products: [gundam], hasMore: false });
-  const detail = await handle(request({ game: "gundam", id: gundam.id }));
+  assert.deepEqual(await search.json(), { products: [item], hasMore: false });
+  const detail = await handle(request({ game, id }));
   assert.equal(detail.status, 200);
-  assert.deepEqual(await detail.json(), { product: gundam });
-  assert.deepEqual(calls, [{ game: "gundam", query: "Newtype Rising" }, { game: "gundam", id: "GD01-s1" }]);
+  assert.deepEqual(await detail.json(), { product: item });
+  assert.deepEqual(calls, [{ game, query: setName }, { game, id }]);
 });
+}
 
 test("sealed catalog rejects unauthenticated and cookie-only requests before consuming Scrydex credits", async () => {
   const { handle, calls } = harness();

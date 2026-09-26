@@ -235,19 +235,31 @@ test("rejections allow new-product requests and zero counts against negative sto
   assert.deepEqual(page.receipts, []);
 });
 
-test("rejected Gundam catalog stock counts remain readable without appearing as confirmed receipts", async () => {
-  const record = rejectedRecord();
-  record.request.game = record.product.game = "Gundam";
-  record.request.name = record.product.name = "Newtype Rising Booster Box";
-  record.request.unit = record.product.unit = "Booster box";
-  Object.assign(record.request, { catalog: { game: "gundam", id: "GD01-s1", name: record.request.name, setName: "Newtype Rising", language: "English" } });
-  refreshFingerprint(record);
-  const page = await getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies);
-  assert.equal(page.scannedCount, 1);
-  assert.deepEqual(page.receipts, []);
-  record.request.game = "Riftbound";
-  refreshFingerprint(record);
-  await assert.rejects(getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies), { code: "INCOMPLETE_HISTORY" });
+test("rejected Gundam and Magic catalog stock counts require canonical games and never become confirmed receipts", async () => {
+  for (const fixture of [
+    { game: "gundam", label: "Gundam", id: "GD01-s1", setName: "Newtype Rising", mismatchedLabel: "Riftbound" },
+    { game: "magicthegathering", label: "MTG", id: "fdn-s1", setName: "Foundations", mismatchedLabel: "Magic: The Gathering" },
+  ]) {
+    const record = rejectedRecord();
+    record.request.game = record.product.game = fixture.label;
+    record.request.name = record.product.name = `${fixture.setName} Booster Box`;
+    record.request.unit = record.product.unit = "Booster box";
+    const catalog = { game: fixture.game, id: fixture.id, name: record.request.name, setName: fixture.setName, language: "English" };
+    Object.assign(record.request, { catalog });
+    refreshFingerprint(record);
+    const page = await getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies);
+    assert.equal(page.scannedCount, 1);
+    assert.deepEqual(page.receipts, []);
+    record.request.game = fixture.mismatchedLabel;
+    refreshFingerprint(record);
+    await assert.rejects(getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies), { code: "INCOMPLETE_HISTORY" });
+    if (fixture.game === "magicthegathering") {
+      record.request.game = fixture.label;
+      catalog.game = "mtg";
+      refreshFingerprint(record);
+      await assert.rejects(getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies), { code: "INCOMPLETE_HISTORY" });
+    }
+  }
 });
 
 test("invalid cursors and unapproved configuration cannot issue a query", async () => {

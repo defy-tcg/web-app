@@ -1,6 +1,6 @@
 import {text, validation} from './receiving-validation.ts';
 
-export const RECEIVING_CATALOG_GAMES = {pokemon: 'Pokémon', onepiece: 'One Piece', riftbound: 'Riftbound', gundam: 'Gundam'} as const;
+export const RECEIVING_CATALOG_GAMES = {pokemon: 'Pokémon', onepiece: 'One Piece', riftbound: 'Riftbound', gundam: 'Gundam', magicthegathering: 'MTG'} as const;
 export type CatalogReference = {game: keyof typeof RECEIVING_CATALOG_GAMES; id: string};
 export type ReceiptCatalog = CatalogReference & {name: string; setName: string; language: 'English'};
 
@@ -11,7 +11,7 @@ function object(value: unknown): Record<string, unknown> {
 
 export function normalizeCatalogReference(value: unknown): CatalogReference {
   const input = object(value);
-  if (typeof input.game !== 'string' || !Object.hasOwn(RECEIVING_CATALOG_GAMES, input.game)) validation('Choose Pokémon, One Piece, Riftbound, or Gundam for the catalog product.');
+  if (typeof input.game !== 'string' || !Object.hasOwn(RECEIVING_CATALOG_GAMES, input.game)) validation('Choose Pokémon, One Piece, Riftbound, Gundam, or Magic: The Gathering for the catalog product.');
   const id = text(input.id, 'Catalog ID', 100, true);
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(id)) validation('Select a valid sealed catalog ID.');
   return {game: input.game as CatalogReference['game'], id};

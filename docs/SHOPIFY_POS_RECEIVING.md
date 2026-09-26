@@ -134,7 +134,12 @@ need verification on the store's device.
 
 ## Unknown barcodes and Scrydex
 
-The game selector supports Pokémon, One Piece, Riftbound, and Gundam sealed products.
+The game selector supports Pokémon, One Piece, Riftbound, Gundam, and
+**Magic: The Gathering (MTG)** sealed products. Magic uses the Scrydex
+`magicthegathering` catalog and keeps the store's canonical `MTG` game in
+receipts and Shopify metadata. Search by set or product name, confirm the exact
+package, and enter your store price. Missing catalog products can be registered
+manually after searching existing Shopify listings; the selected game is retained.
 Scrydex's Gundam sealed endpoint returned an empty catalog when checked on
 September 25, 2026. For an unrecognized Gundam barcode, choose **Gundam**, search
 the existing Shopify catalog by product name or SKU, then select **Register new

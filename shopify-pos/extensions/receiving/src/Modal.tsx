@@ -4,7 +4,7 @@ import '@shopify/ui-extensions/preact';
 import type {Api} from '@shopify/ui-extensions/pos.home.modal.render';
 import {findProduct, findCatalogProduct, searchProducts, saveReceipt, loadPendingReceipt, readStock} from './receiving-service';
 import {subscribeToExternalScanner} from './scanner';
-import {CATALOG_GAMES, catalogIdentity, createSealedCatalogClient, type CatalogGame, type CatalogIdentity} from './catalog-client';
+import {CATALOG_GAMES, CATALOG_GAME_LABELS, catalogIdentity, createSealedCatalogClient, type CatalogGame, type CatalogIdentity} from './catalog-client';
 import {createCatalogController, type CatalogState} from './catalog-controller';
 import {CheckoutSetup} from './CheckoutSetup';
 
@@ -387,7 +387,7 @@ export function ReceivingModal() {
               const next = event.currentTarget.values?.[0] as CatalogGame | undefined;
               if (next && Object.hasOwn(CATALOG_GAMES, next)) { setCatalogGame(next); catalogController.current?.reset(); setPackageConfirmed(false); }
             }}>
-              {Object.entries(CATALOG_GAMES).map(([value, name]) => <s-choice key={value} value={value} disabled={!editable}>{name}</s-choice>)}
+              {Object.entries(CATALOG_GAME_LABELS).map(([value, name]) => <s-choice key={value} value={value} disabled={!editable}>{name}</s-choice>)}
             </s-choice-list>
             <s-text-field label="Sealed product name" maxLength={100} value={catalogQuery} disabled={!editable} onInput={(event) => {
               if (!editable) return;

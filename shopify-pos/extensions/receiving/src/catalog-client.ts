@@ -2,6 +2,7 @@ import {RECEIVING_CATALOG_GAMES} from './receiving-catalog.ts';
 
 export const SEALED_CATALOG_URL = 'https://defy-store-os.vercel.app/api/shopify/pos/sealed-catalog';
 export const CATALOG_GAMES = RECEIVING_CATALOG_GAMES;
+export const CATALOG_GAME_LABELS = {...CATALOG_GAMES, magicthegathering: 'Magic: The Gathering (MTG)'} as const;
 export type CatalogGame = keyof typeof CATALOG_GAMES;
 export type CatalogProduct = {
   id: string; game: CatalogGame; name: string; setName: string; language: 'English';
@@ -58,7 +59,7 @@ async function readBody(response: Response): Promise<unknown> {
 
 export function createSealedCatalogClient(transport: Transport) {
   async function post(input: {game: CatalogGame; query: string} | {game: CatalogGame; id: string}) {
-    if (!isGame(input.game)) throw new Error('Choose Pokémon, One Piece, Riftbound, or Gundam.');
+    if (!isGame(input.game)) throw new Error('Choose Pokémon, One Piece, Riftbound, Gundam, or Magic: The Gathering.');
     if ('query' in input && (!clean(input.query, 100) || input.query.trim().length < 3)) throw new Error('Enter a product name between 3 and 100 characters.');
     if ('id' in input && (!clean(input.id, 100) || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(input.id))) throw invalid();
     const token = await transport.getToken();

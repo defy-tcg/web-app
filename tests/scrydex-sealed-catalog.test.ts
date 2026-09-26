@@ -69,6 +69,31 @@ test("Gundam uses its own sealed endpoint and preserves empty coverage without s
   await assert.rejects(getSealedCatalogProduct({ game: "gundam", id: item.id }, provider({ data: { ...item, variants: [{ name: "firstEdition" }] } })), code("ambiguous"));
 });
 
+test("Magic sealed search and selection preserve package identity even without a market quote", async t => {
+  config(t);
+  // Observed Magic catalog shape: English normal edition, empty prices.
+  const items = [
+    candidate({ id: "FRA-s3", name: "Reality Fracture Collector Booster Box", type: "Booster Box" }),
+    candidate({ id: "FRA-s8", name: "Reality Fracture Play Booster Box", type: "Booster Box" }),
+  ].map(item => ({ ...item, expansion: { id: "FRA", name: "Reality Fracture", language_code: "EN" },
+    language: "English", language_code: "EN", variants: [{ name: "normal", prices: [] }],
+    images: [{ type: "front", medium: `https://images.scrydex.com/magicthegathering/${item.id}/medium` }] }));
+  const f = provider(searchResult(items));
+  const result = await searchSealedCatalog({ game: "magicthegathering", query: "Reality Fracture" }, f);
+  assert.equal(f.calls[0].url.pathname, "/magicthegathering/v1/sealed");
+  assert.deepEqual(result.products.map(({ id, name, game, unit, marketCents }) => ({ id, name, game, unit, marketCents })), items.map(item => ({
+    id: item.id, name: item.name, game: "magicthegathering", unit: "Booster box", marketCents: null,
+  })));
+  const detail = provider({ data: items[0] });
+  assert.deepEqual(await getSealedCatalogProduct({ game: "magicthegathering", id: "FRA-s3" }, detail), result.products[0]);
+  assert.equal(detail.calls[0].url.pathname, "/magicthegathering/v1/sealed/FRA-s3");
+  await assert.rejects(getSealedCatalogProduct({ game: "magicthegathering", id: "FRA-s3" }, provider({ data: items[1] })), code("not_found"));
+  await assert.rejects(getSealedCatalogProduct({ game: "magicthegathering", id: "FRA-s3" }, provider({ data: { ...items[0], language_code: "JA" } })), code("not_found"));
+  const invalid = provider(searchResult(items));
+  await assert.rejects(searchSealedCatalog({ game: "mtg", query: "Reality Fracture" }, invalid), code("unsupported"));
+  assert.equal(invalid.calls.length, 0);
+});
+
 test("search escapes each term across product, set and package fields and fixes English scope and request bounds", async t => {
   config(t);
   const f = provider(searchResult([]));

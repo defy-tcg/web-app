@@ -180,7 +180,7 @@ function parseHistoryRecord(value: unknown): { id: string; requestId: string; lo
   receivedDate(request.receivedDate); flag(request.replaceInvalidBarcode);
   if (request.catalog !== undefined) {
     const catalog = object(request.catalog);
-    const games: Record<string, string> = { pokemon: "Pokémon", onepiece: "One Piece", riftbound: "Riftbound", gundam: "Gundam" };
+    const games: Record<string, string> = { pokemon: "Pokémon", onepiece: "One Piece", riftbound: "Riftbound", gundam: "Gundam", magicthegathering: "MTG" };
     const game = text(catalog.game, 20);
     if (Object.keys(catalog).some(key => !["game", "id", "name", "setName", "language"].includes(key))
       || !Object.hasOwn(games, game) || request.game !== games[game] || catalog.language !== "English"
