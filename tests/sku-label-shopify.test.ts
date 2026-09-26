@@ -11,7 +11,7 @@ type Product = { id: string; status: string; pos: boolean; catalogId: { value: s
 type Fields = { namespace: string; key: string; value: string; compareDigest?: string | null };
 type VariantInput = { id?: string; barcodes?: { value: string; type?: string }[]; price?: string; inventoryPolicy?: string; inventoryItem?: { sku?: string; tracked?: boolean }; metafields?: Fields[]; optionValues?: { optionName: string; name: string }[] };
 type CatalogType = "app" | "market" | "company" | "none";
-function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean; channels?: { id: string; type: CatalogType }[]; incompleteChannels?: CatalogType; unpublishFailure?: "error" | "unconfirmed" | "response-loss"; changedPolicyIdentity?: boolean; websiteChannel?: "missing" | "ambiguous" | "incomplete" | "same-as-pos" | "legacy"; websiteFailure?: "error" | "unconfirmed" | "response-loss"; changedWebsiteIdentity?: boolean } = {}) {
+function fixture(options: { missingScopes?: boolean; priceError?: boolean; starting?: Product; codeSearchCandidates?: Variant[]; failAfterCreate?: boolean; failAfterStock?: boolean; failBeforePublish?: boolean; untagged?: boolean; failAfterAdopt?: boolean; channels?: { id: string; type: CatalogType }[]; incompleteChannels?: CatalogType; unpublishFailure?: "error" | "unconfirmed" | "response-loss"; changedPolicyIdentity?: boolean; websiteChannel?: "missing" | "ambiguous" | "incomplete" | "same-as-pos" | "legacy"; websiteFailure?: "error" | "unconfirmed" | "response-loss"; changedWebsiteIdentity?: boolean } = {}) {
   let time = 1_800_000_000_000;
   let product = options.starting ? structuredClone(options.starting) : null;
   let serial = 0;
@@ -32,6 +32,14 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
       calls.push({ name, variables: clone(variables) });
       let result: unknown;
       const current = () => product ? { ...clone(product), storefrontCatalogId: clone(product.sourceId) } : null;
+      const page = <Node>(nodes: Node[], field = "variants") => {
+        const size = Number(new RegExp(`${field}\\(first: (\\d+)`).exec(query)?.[1]);
+        assert.ok(size > 0 && size <= 10, "QR lookups must keep nested barcode query cost bounded");
+        const offset = variables.after ? Number(String(variables.after).replace("after-", "")) : 0;
+        const end = Math.min(offset + size, nodes.length);
+        return { nodes: nodes.slice(offset, end), pageInfo: { hasNextPage: end < nodes.length, endCursor: end ? `after-${end}` : null } };
+      };
+      const pagedCurrent = () => product ? { ...current(), variants: page(product.variants.nodes) } : null;
       switch (name) {
         case "QrLinkPreflight": result = { shop: { id: "gid://shopify/Shop/1", currencyCode: "USD", receiving: { value: "{}", namespace: "app--1--receiving" } }, location: { isActive: true }, currentAppInstallation: { accessScopes: (options.missingScopes ? ["write_products", "write_inventory"] : ["write_products", "write_inventory", "write_publications"]).map(handle => ({ handle })) } }; break;
         case "QrLinkStatusConnection": result = { currentAppInstallation: { accessScopes: (options.missingScopes ? ["write_products", "write_inventory"] : ["write_products", "write_inventory", "write_publications"]).map(handle => ({ handle })) } }; break;
@@ -82,11 +90,16 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
           }
           break;
         }
-        case "QrLinkByIdentity": case "QrLinkOriginalManual": case "SinglesProduct": {
+        case "QrLinkByIdentity": case "QrLinkOriginalManual": {
+          const identifier = variables.identifier as { customId: { value: string } };
+          result = { productByIdentifier: product?.catalogId?.value === identifier.customId.value ? pagedCurrent() : null }; break;
+        }
+        case "SinglesProduct": {
           const identifier = variables.identifier as { customId: { value: string } };
           result = { productByIdentifier: product?.catalogId?.value === identifier.customId.value ? current() : null }; break;
         }
-        case "QrLinkProduct": case "SinglesProductById": result = { product: variables.id === product?.id ? current() : null }; break;
+        case "QrLinkProduct": case "QrLinkVariants": result = { product: variables.id === product?.id ? pagedCurrent() : null }; break;
+        case "SinglesProductById": result = { product: variables.id === product?.id ? current() : null }; break;
         case "SinglesStorefrontHandle": result = { productByIdentifier: null }; break;
         case "SinglesMappings": result = { productVariants: { nodes: product?.variants.nodes.filter(item => item.sku?.startsWith("DEFY-RFB-")).map(item => ({ ...clone(item), product: { id: product!.id } })) || [], pageInfo: { hasNextPage: false } } }; break;
         case "SinglesTaggedMappings": case "QrLinkTagged": result = { products: { nodes: !options.untagged && product?.sourceId?.value === String(card.tcgplayerId) ? [{ id: product.id }] : [], pageInfo: { hasNextPage: false } } }; break;
@@ -99,7 +112,11 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
           break;
         }
         case "QrLinkStatuses": { const fields: Record<string, unknown> = {}; for (const match of query.matchAll(/(q\d+): metafield\(namespace: "[^"]+", key: "([^"]+)"\)/g)) fields[match[1]] = journals.get(match[2]) || null; result = { shop: fields }; break; }
-        case "QrLinkCode": { const code = /sku:"([^"]+)"/.exec(String(variables.query))?.[1]; result = { productVariants: { nodes: (product?.variants.nodes || []).filter(item => item.sku === code || item.barcodes.nodes.some(barcode => barcode.value === code)).map(item => ({ ...clone(item), product: { id: product!.id } })), pageInfo: { hasNextPage: false } } }; break; }
+        case "QrLinkCode": {
+          const code = /sku:"([^"]+)"/.exec(String(variables.query))?.[1];
+          const candidates = options.codeSearchCandidates ?? (product?.variants.nodes || []).filter(item => item.sku === code || item.barcodes.nodes.some(barcode => barcode.value === code));
+          result = { productVariants: page(candidates.map(item => ({ ...clone(item), product: { id: product!.id } })), "productVariants") }; break;
+        }
         case "QrStockTarget": {
           const value = product?.variants.nodes.find(item => item.id === variables.id);
           result = { productVariant: value ? { ...clone(value), product: current(), inventoryItem: { ...clone(value.inventoryItem), inventoryLevel: { location: { id: "gid://shopify/Location/1" }, quantities: [{ name: "available", quantity: value.inventoryQuantity }] } } } : null }; break;
@@ -168,6 +185,15 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
 function existing(overrides: Partial<Variant> = {}): Product {
   return { id: "gid://shopify/Product/12", status: "ACTIVE", pos: true, catalogId: { value: "single:tcgplayer:printing:652905" }, sourceId: { value: "652905" }, options: [{ name: "Condition" }, { name: "Finish" }, { name: "Language" }], variants: { nodes: [{ id: "gid://shopify/ProductVariant/123", sku: card.sku, barcode: "9780262033848", barcodes: { nodes: [{ value: "9780262033848", type: "ISBN" }], pageInfo: { hasNextPage: false } }, price: "50.00", inventoryQuantity: 7, inventoryPolicy: "DENY", inventoryItem: { id: "gid://shopify/InventoryItem/1", tracked: true }, selectedOptions: [{ name: "Condition", value: "Near Mint" }, { name: "Finish", value: "Foil" }, { name: "Language", value: "English" }], pos: true, qrIdentity: null, ...overrides }], pageInfo: { hasNextPage: false, endCursor: null } } };
 }
+function pagedProduct(): Product {
+  const value = existing();
+  const exact = value.variants.nodes[0];
+  value.variants.nodes = [...Array.from({ length: 10 }, (_, index) => ({ ...structuredClone(exact),
+    id: `gid://shopify/ProductVariant/${1000 + index}`, sku: `SIBLING-${index}`, inventoryQuantity: 0,
+    selectedOptions: exact.selectedOptions.map(option => option.name === "Finish" ? { ...option, value: `Other finish ${index}` } : { ...option }),
+  })), exact];
+  return value;
+}
 const japaneseCard: SkuLabelShopifyProduct = { ...card, id: 79, sku: "DEFY-3448510729", name: "Charmander", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165", tcgplayerId: 566513, quantity: 1, initialQuantity: 1 };
 const qrJournalKey = (sku: string) => `qr_${digest(sku).slice(0, 60)}`;
 const quoteFixture: NonNullable<SkuLabelShopifyDependencies["resolvePrice"]> = async () => ({ cents: 4802, matchedName: "Charmander", groupName: "Pokemon Card 151", variation: "Foil", scrydexId: "fixture-japanese", url: "https://example.com" });
@@ -230,6 +256,111 @@ test("existing barcode types, order, SKU, stock, and cost are preserved", async 
   const f = fixture({ starting: existing() }); assert.equal((await linkSkuLabelToShopify(card, f.deps)).status, "ready");
   assert.deepEqual(f.product().variants.nodes[0].barcodes.nodes, [{ value: "9780262033848", type: "ISBN" }, { value: card.sku, type: null }]);
   assert.equal(f.product().variants.nodes[0].sku, card.sku); assert.equal(f.product().variants.nodes[0].inventoryQuantity, 7); assert.equal(f.quantityAdded(), 0);
+});
+test("small product pages find the exact variant after the first page and retain its existing barcode and stock", async () => {
+  const value = pagedProduct();
+  const f = fixture({ starting: value });
+  const result = await linkSkuLabelToShopify(card, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.variantId, value.variants.nodes[10].id);
+  assert.ok(f.calls.some(call => call.name === "QrLinkVariants" && call.variables.after === "after-10"));
+  assert.equal(f.product().variants.nodes[10].inventoryQuantity, 7);
+  assert.deepEqual(f.product().variants.nodes[10].barcodes.nodes, [{ value: "9780262033848", type: "ISBN" }, { value: card.sku, type: null }]);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate" || call.name === "QrLinkVariant").length, 0);
+});
+test("creation recovered by unique identity reads every variant page before selecting or creating a variant", async () => {
+  const f = fixture(), graphql = f.deps.graphql;
+  f.deps.graphql = async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+    const result = await graphql<T>(query, variables);
+    if (query.includes("mutation QrLinkCreate(")) {
+      // The create response omits its ID, while the unique-ID lookup recovers a
+      // product whose exact variant is beyond the first bounded page.
+      f.product().variants.nodes = pagedProduct().variants.nodes;
+      (result as { productCreate: { product: { id: string } | null } }).productCreate.product = null;
+    }
+    return result;
+  };
+  const result = await linkSkuLabelToShopify(card, f.deps);
+  assert.equal(result.status, "ready"); assert.equal(result.variantId, "gid://shopify/ProductVariant/123");
+  assert.ok(f.calls.some(call => call.name === "QrLinkVariants"));
+  assert.equal(f.calls.filter(call => call.name === "QrLinkVariant").length, 0);
+  assert.equal(f.product().variants.nodes.length, 11);
+  assert.equal(f.quantityAdded(), 0);
+});
+test("duplicate condition and finish on a later product page blocks linking before card or stock mutations", async () => {
+  const value = pagedProduct();
+  value.variants.nodes[0].selectedOptions = structuredClone(value.variants.nodes[10].selectedOptions);
+  const f = fixture({ starting: value });
+  const result = await linkSkuLabelToShopify({ ...card, initialQuantity: 3 }, f.deps);
+  assert.equal(result.status, "blocked"); assert.match(result.message, /More than one Shopify variant/);
+  assert.equal(f.calls.filter(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock", "QrLinkPublish"].includes(call.name)).length, 0);
+});
+test("a stocked unpriced sibling on a later product page prevents publication and starting stock", async () => {
+  const value = pagedProduct();
+  [value.variants.nodes[0], value.variants.nodes[10]] = [value.variants.nodes[10], value.variants.nodes[0]];
+  Object.assign(value.variants.nodes[10], { inventoryQuantity: 2, price: "0.00" });
+  const f = fixture({ starting: value });
+  const result = await linkSkuLabelToShopify({ ...card, initialQuantity: 3 }, f.deps);
+  assert.equal(result.status, "blocked"); assert.match(result.message, /Another stocked variant/);
+  assert.equal(f.calls.filter(call => ["QrLinkInitialStock", "QrLinkActivate", "QrLinkPublish"].includes(call.name)).length, 0);
+});
+test("missing, empty, repeated cursors and repeated variants cannot confirm a complete product", async () => {
+  for (const malformed of ["missing", "empty", "repeated-cursor", "repeated-variant"]) {
+    const value = pagedProduct(), f = fixture({ starting: value }), graphql = f.deps.graphql;
+    f.deps.graphql = async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+      const result = await graphql<T>(query, variables);
+      if ((malformed === "missing" || malformed === "empty") && query.includes("query QrLinkProduct(")) {
+        (result as { product: Product }).product.variants.pageInfo.endCursor = malformed === "missing" ? null : " ";
+      }
+      if (query.includes("query QrLinkVariants(")) {
+        const connection = (result as { product: Product }).product.variants;
+        if (malformed === "repeated-cursor") connection.pageInfo = { hasNextPage: true, endCursor: "after-10" };
+        if (malformed === "repeated-variant") connection.nodes = [structuredClone(value.variants.nodes[0])];
+      }
+      return result;
+    };
+    const result = await linkSkuLabelToShopify(card, f.deps);
+    assert.equal(result.status, "blocked", malformed); assert.match(result.message, /complete variant list/);
+    assert.equal(f.calls.filter(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock"].includes(call.name)).length, 0);
+  }
+});
+test("QR search continues past fuzzy matches to verify the exact code on a later page", async () => {
+  const f = fixture({ starting: existing(), codeSearchCandidates: pagedProduct().variants.nodes });
+  const result = await linkSkuLabelToShopify(card, f.deps);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(f.calls.filter(call => call.name === "QrLinkCode").map(call => call.variables.after), [null, "after-10"]);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 0);
+});
+test("QR barcode conflicts and incomplete barcodes on later search pages prevent mutation", async () => {
+  for (const incomplete of [false, true]) {
+    const candidates = pagedProduct().variants.nodes;
+    candidates[0] = { ...structuredClone(candidates[10]), id: "gid://shopify/ProductVariant/999" };
+    if (incomplete) candidates[10].barcodes.pageInfo.hasNextPage = true;
+    const f = fixture({ starting: existing(), codeSearchCandidates: candidates });
+    const result = await linkSkuLabelToShopify({ ...card, initialQuantity: 3 }, f.deps);
+    assert.equal(result.status, "blocked");
+    assert.match(result.message, incomplete ? /incomplete barcode list/ : /multiple Shopify variants/);
+    assert.equal(f.calls.filter(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock", "QrLinkPublish"].includes(call.name)).length, 0);
+  }
+});
+test("malformed QR search pagination cannot authorize a new link", async () => {
+  for (const malformed of ["missing", "empty", "repeated-cursor", "repeated-variant"]) {
+    const candidates = pagedProduct().variants.nodes;
+    const f = fixture({ starting: existing(), codeSearchCandidates: candidates }), graphql = f.deps.graphql;
+    f.deps.graphql = async <T>(query: string, variables?: Record<string, unknown>): Promise<T> => {
+      const result = await graphql<T>(query, variables);
+      if (query.includes("query QrLinkCode(")) {
+        const connection = (result as { productVariants: Product["variants"] }).productVariants;
+        if (!variables?.after && (malformed === "missing" || malformed === "empty")) connection.pageInfo.endCursor = malformed === "missing" ? null : " ";
+        if (variables?.after && malformed === "repeated-cursor") connection.pageInfo = { hasNextPage: true, endCursor: "after-10" };
+        if (variables?.after && malformed === "repeated-variant") connection.nodes[0].id = candidates[0].id;
+      }
+      return result;
+    };
+    const result = await linkSkuLabelToShopify(card, f.deps);
+    assert.equal(result.status, "blocked", malformed); assert.match(result.message, /complete QR code search/);
+    assert.equal(f.calls.filter(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkBarcode", "QrLinkInitialStock"].includes(call.name)).length, 0);
+  }
 });
 test("concurrent employee requests and repeat submissions create only one product and stock receipt", async () => {
   const f = fixture(); const input = { ...card, initialQuantity: 3, quantity: 3 };

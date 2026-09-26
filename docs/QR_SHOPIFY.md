@@ -237,6 +237,17 @@ request affects only that group: other confirmed results and specific saved
 blockers remain visible. Unverified cards show no stale price, stock count, or
 verification timestamp. Status reads never create products or receive stock.
 
+Save and retry banners, including the saved-label print confirmation, follow the
+latest link status. A successful automatic retry clears the earlier pending
+message without requiring another save or a page reload.
+
+Detailed variant and barcode lookups use pages of ten and check every returned
+page for conflicts. Explicit Shopify request-limit rejections can wait for the
+reported capacity to recover and retry the identical request up to three times,
+with at most 15 seconds of added waiting per client. Uncertain mutation results
+are left to the existing receipt recovery. Server diagnostics record operation
+names, error codes, and numeric request costs without credentials or payloads.
+
 - **Ready:** Shopify confirmed the matching variant, saved barcode, sale price,
   starting receipt, and POS publication. Riftbound also requires live website
   publication of both the product and exact variant. Missing website publication

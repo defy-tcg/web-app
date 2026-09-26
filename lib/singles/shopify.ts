@@ -28,6 +28,26 @@ function config() {
 }
 
 let tokenCache: { shop: string; clientId: string; clientSecret: string; value: string; expiresAt: number } | null = null;
+interface QueryCost {
+  requestedQueryCost?: number; actualQueryCost?: number | null;
+  throttleStatus?: { maximumAvailable?: number; currentlyAvailable?: number; restoreRate?: number };
+}
+const MAX_THROTTLE_WAIT_MS = 15_000;
+function costDetails(cost: QueryCost | undefined) {
+  const values = { requestedQueryCost: cost?.requestedQueryCost, actualQueryCost: cost?.actualQueryCost,
+    maximumAvailable: cost?.throttleStatus?.maximumAvailable, currentlyAvailable: cost?.throttleStatus?.currentlyAvailable,
+    restoreRate: cost?.throttleStatus?.restoreRate };
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => typeof value === "number" && Number.isFinite(value) && value >= 0)) as Partial<Record<keyof typeof values, number>>;
+}
+function throttleDelay(cost: ReturnType<typeof costDetails>, attempt: number): number | null {
+  const { requestedQueryCost: requested, maximumAvailable: maximum, currentlyAvailable: available, restoreRate } = cost;
+  // Waiting cannot make a request larger than the entire bucket executable.
+  if (requested !== undefined && maximum !== undefined && requested > maximum) return null;
+  if (requested !== undefined && available !== undefined && restoreRate !== undefined && restoreRate > 0) {
+    return Math.max(250, Math.ceil(Math.max(0, requested - available) / restoreRate * 1000) + 100);
+  }
+  return 1000 * 2 ** attempt;
+}
 async function transport(settings: ReturnType<typeof config>, apiVersion = API_VERSION): Promise<{ graphql: SinglesGraphQL; clock: () => number }> {
   if (!tokenCache || tokenCache.shop !== settings.shop || tokenCache.clientId !== settings.clientId || tokenCache.clientSecret !== settings.clientSecret || tokenCache.expiresAt <= Date.now()) {
     let response: Response;
@@ -42,22 +62,47 @@ async function transport(settings: ReturnType<typeof config>, apiVersion = API_V
   }
   const token = tokenCache.value;
   let serverOffset: number | null = null;
+  // Bound all throttle delays for this client, including a long catalog scan.
+  let throttleWaitMs = 0;
   const graphql: SinglesGraphQL = async <T>(query: string, variables: Variables = {}): Promise<T> => {
-    let response: Response;
-    try {
-      response = await fetch(`https://${settings.shop}/admin/api/${apiVersion}/graphql.json`, { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000),
-        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: JSON.stringify({ query, variables }) });
-    } catch { throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify timed out. Retry the same saved request.", true, query.includes("mutation")); }
-    const date = Date.parse(response.headers.get("date") ?? "");
-    if (Number.isFinite(date)) serverOffset = date - Date.now();
-    if (!response.ok) throw new SinglesError("SHOPIFY_UNAVAILABLE", `Shopify returned HTTP ${response.status}. Retry the same request.`, true, query.includes("mutation"));
-    const body = await response.json() as { data?: T; errors?: { message: string; extensions?: { code?: string } }[] };
-    if (body.errors?.length) {
-      const code = body.errors[0].extensions?.code ?? "GRAPHQL_ERROR";
-      throw new SinglesError(code, body.errors.map(error => error.message).join("; "), ["THROTTLED", "INTERNAL_SERVER_ERROR"].includes(code), query.includes("mutation"));
+    const operation = /\b(?:query|mutation)\s+([_A-Za-z][_0-9A-Za-z]*)/.exec(query)?.[1]?.slice(0, 80) ?? "anonymous";
+    const mutation = /\bmutation\b/.test(query);
+    const log = (code: string, details: Record<string, unknown> = {}) => console.warn("[shopify-graphql] Request not confirmed", {
+      operation, code: /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "GRAPHQL_ERROR", ...details,
+    });
+    const requestBody = JSON.stringify({ query, variables });
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(`https://${settings.shop}/admin/api/${apiVersion}/graphql.json`, { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(15_000),
+          headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: requestBody });
+      } catch { log("SHOPIFY_UNAVAILABLE"); throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify timed out. Retry the same saved request.", true, mutation); }
+      const date = Date.parse(response.headers.get("date") ?? "");
+      if (Number.isFinite(date)) serverOffset = date - Date.now();
+      if (!response.ok) { log("SHOPIFY_UNAVAILABLE", { httpStatus: response.status }); throw new SinglesError("SHOPIFY_UNAVAILABLE", `Shopify returned HTTP ${response.status}. Retry the same request.`, true, mutation); }
+      let body: { data?: T | null; errors?: { message: string; extensions?: { code?: string } }[]; extensions?: { cost?: QueryCost } };
+      try { body = await response.json(); }
+      catch { log("INVALID_RESPONSE"); throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify returned an unreadable result. Retry the same saved request.", true, mutation); }
+      if (body.errors?.length) {
+        const code = body.errors[0].extensions?.code ?? "GRAPHQL_ERROR";
+        const cost = costDetails(body.extensions?.cost);
+        // Only an explicit pre-execution rejection is replayable. Partial data,
+        // network failures, HTTP failures, and other errors can hide a mutation.
+        const actualCost = body.extensions?.cost?.actualQueryCost;
+        const rejected = body.data == null && (actualCost == null || actualCost === 0) && body.errors.every(error => error.extensions?.code === "THROTTLED");
+        const delay = rejected ? throttleDelay(cost, attempt) : null;
+        const retry = attempt < 3 && delay !== null && throttleWaitMs + delay <= MAX_THROTTLE_WAIT_MS;
+        log(code, { attempt: attempt + 1, retry, ...cost, ...(retry ? { waitMs: delay } : {}) });
+        if (retry) {
+          throttleWaitMs += delay;
+          await new Promise<void>(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        throw new SinglesError(code, body.errors.map(error => error.message).join("; "), ["THROTTLED", "INTERNAL_SERVER_ERROR"].includes(code), mutation && !rejected);
+      }
+      if (!body.data) { log("EMPTY_RESPONSE"); throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify returned no confirmed result. Retry the same request.", true, mutation); }
+      return body.data;
     }
-    if (!body.data) throw new SinglesError("SHOPIFY_UNAVAILABLE", "Shopify returned no confirmed result. Retry the same request.", true, query.includes("mutation"));
-    return body.data;
   };
   return { graphql, clock: () => {
     if (serverOffset === null) throw new SinglesError("CLOCK_UNAVAILABLE", "Shopify server time could not be verified. Retry this receipt.", true);

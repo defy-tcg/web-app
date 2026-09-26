@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
 import { compareSavedSkuLabels, sameSkuLabelVariant } from "@/lib/sku-label-matching";
 import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-draft";
+import { skuLabelFeedbackText, type SkuLabelFeedback } from "@/lib/sku-label-feedback";
 import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
@@ -137,9 +138,9 @@ export default function SkuLabelsClient() {
   const [shopifyLinks, setShopifyLinks] = useState<Record<string, ShopifyLabelLink>>({});
   const [linkingSkus, setLinkingSkus] = useState<string[]>([]);
   const [automaticLinkingSkus, setAutomaticLinkingSkus] = useState<string[]>([]);
-  const [printReady, setPrintReady] = useState("");
+  const [printReady, setPrintReady] = useState<SkuLabelFeedback>("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<SkuLabelFeedback>("");
   const [storageWarning, setStorageWarning] = useState("");
   const generated = useRef(new Set<string>());
   const pendingReservations = useRef<Label[]>([]);
@@ -280,12 +281,12 @@ export default function SkuLabelsClient() {
       const [link] = await linkSavedSkus([sku]);
       updateShopifyLinks([link]);
       queueAutomaticLinks([link]);
-      setMessage(link.status === "ready" ? `${sku} is linked to Shopify POS. Refresh POS, then scan the same label.` : `${sku} is saved in Defy. ${link.message}`);
+      setMessage({ text: `${sku} is saved in Defy.`, skus: [sku] });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Shopify could not be linked. Retry with this same SKU.";
       updateShopifyLinks([pendingShopifyLink(sku, message)]);
       queueAutomaticLinks([pendingShopifyLink(sku, message)]);
-      setError(message);
+      setMessage({ text: `${sku} is saved in Defy.`, skus: [sku] });
     } finally {
       retryingShopify.current = false;
       setLinkingSkus([]);
@@ -448,7 +449,7 @@ export default function SkuLabelsClient() {
       const savedMessage = result.created
         ? `${product.name} saved with permanent SKU ${product.sku}. Starting quantity: ${product.quantity}.`
         : `Loaded the original QR for ${product.name}: ${product.sku}. No stock was added.`;
-      setMessage(`${savedMessage} ${shopify.status === "ready" ? "Linked to Shopify POS. Refresh POS to scan it." : `Shopify POS is not ready yet. ${shopify.message}`}`);
+      setMessage({ text: savedMessage, skus: [product.sku] });
     } finally {
       generating.current = false;
       setBusy(false);
@@ -463,8 +464,7 @@ export default function SkuLabelsClient() {
     setError("");
     const savedConfirmation = createdCount === 0 ? "Your QR labels are already saved. Reprinting keeps their original SKUs and does not add stock."
       : `${createdCount} new single${createdCount === 1 ? "" : "s"} saved to inventory.${existingCount ? ` ${existingCount} already saved; stock and prices unchanged.` : ""}`;
-    const pending = products.filter((product) => links.find((link) => link.sku === product.sku)?.status !== "ready").length;
-    const confirmation = `${savedConfirmation} ${pending ? `${pending} label${pending === 1 ? " is" : "s are"} not ready for Shopify POS. Finish linking below before scanning.` : "All labels are linked to Shopify POS. Refresh POS before scanning."}`;
+    const confirmation = { text: savedConfirmation, skus: products.map(product => product.sku) };
     setMessage(confirmation);
     setPrintReady(confirmation);
   }
@@ -599,7 +599,7 @@ export default function SkuLabelsClient() {
           </section>
         </div>
 
-        <div className="sku-feedback" aria-live="polite">{message && <p className="sku-success" role="status">{message}</p>}{error && <p className="sku-inline-error" role="alert">{error}</p>}{storageWarning && <p className="sku-storage-warning" role="status">{storageWarning}</p>}</div>
+        <div className="sku-feedback" aria-live="polite">{message && <p className="sku-success" role="status">{skuLabelFeedbackText(message, shopifyLinks)}</p>}{error && <p className="sku-inline-error" role="alert">{error}</p>}{storageWarning && <p className="sku-storage-warning" role="status">{storageWarning}</p>}</div>
 
         {labels.length > 0 && <section className="sku-panel sku-batch" aria-labelledby="sku-batch-title">
           <header className="sku-batch-heading"><div><p className="eyebrow">YOUR CURRENT BATCH</p><h2 id="sku-batch-title">{labels.length} custom QR SKU{labels.length === 1 ? "" : "s"}</h2></div><div className="sku-batch-actions"><button className="secondary-button" onClick={() => void copySkus(labels.map((label) => label.sku))}>Copy SKUs</button><button className="secondary-button" onClick={downloadCsv}>Download CSV</button><button className="secondary-button" disabled={inventoryBusy || busy || pdfBusy} onClick={() => {
@@ -627,7 +627,7 @@ export default function SkuLabelsClient() {
         <footer className="sku-footer"><strong>Your SKU stays with the card.</strong><p>Saving links the exact QR to Shopify POS and keeps it in your shared Defy library. Wait for <strong>Shopify POS ready</strong>, then refresh POS before scanning.</p><p>Starting quantity is transferred once. Use <strong>Change inventory</strong> in Saved card details to add copies or set the total available in Shopify. Importing the same card, condition, and finish reuses its original QR without adding stock. Manual drafts stay in this browser until you save them; downloading or printing alone does not save or link a draft.</p></footer>
       </div>
       <dialog ref={printDialog} className="sku-print-dialog" aria-labelledby="sku-print-dialog-title" onClose={() => setPrintReady("")}>
-        <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are saved.</h2><p>{printReady}</p><p>Print {total} label{total === 1 ? "" : "s"} on paper <strong>38 mm across the roll × 13 mm in the feed direction</strong>, at <strong>100% / actual size</strong>.</p>
+        <p className="eyebrow">SAVED TO DEFY INVENTORY</p><h2 id="sku-print-dialog-title">Your labels are saved.</h2><p>{skuLabelFeedbackText(printReady, shopifyLinks)}</p><p>Print {total} label{total === 1 ? "" : "s"} on paper <strong>38 mm across the roll × 13 mm in the feed direction</strong>, at <strong>100% / actual size</strong>.</p>
         <div className="sku-dialog-actions"><button className="primary-button" onClick={() => { printDialog.current?.close(); print(); }}>Print labels</button><button className="secondary-button" onClick={() => { printDialog.current?.close(); void downloadPdf(); }}>Download PDF</button><button className="secondary-button" onClick={() => printDialog.current?.close()}>Print later</button></div>
         <p className="sku-print-help">If no print dialog appears, use Download PDF and open it in Preview. Your cards are already saved, even if you print later.</p>
       </dialog>

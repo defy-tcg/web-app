@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { digest } from "../lib/singles/intake.ts";
-import { getSkuLabelShopifyStatuses, type SkuLabelShopifyDependencies, type SkuLabelShopifyProduct, type SkuLabelShopifyStatus } from "../lib/sku-label-shopify.ts";
+import { digest, SinglesError } from "../lib/singles/intake.ts";
+import { getSkuLabelShopifyStatuses, linkSkuLabelToShopify, type SkuLabelShopifyDependencies, type SkuLabelShopifyProduct, type SkuLabelShopifyStatus } from "../lib/sku-label-shopify.ts";
 
 const checkedAt = "2027-01-15T08:00:00.000Z";
 const locationId = "gid://shopify/Location/1";
@@ -164,4 +164,19 @@ test("a connection failure leaves every requested label safely pending without f
   assertReadOnly(f, result);
   result.forEach(assertUnavailable);
   assert.equal(f.calls.length, 1);
+});
+
+test("link failures distinguish Shopify request limits from outages without exposing upstream details", async t => {
+  const f = fixture(1);
+  const logs: unknown[][] = [];
+  t.mock.method(console, "warn", (...values: unknown[]) => logs.push(values));
+  for (const [code, message] of [["THROTTLED", /limiting requests/], ["SHOPIFY_UNAVAILABLE", /temporarily unavailable/], ["INTERNAL_SERVER_ERROR", /temporarily unavailable/]] as const) {
+    const status = await linkSkuLabelToShopify(f.products[0], { ...f.deps, graphql: async () => { throw new SinglesError(code, "private upstream payload", true); } });
+    assert.equal(status.status, "pending");
+    assert.match(status.message, message);
+    assert.doesNotMatch(status.message, /private upstream/);
+    assert.equal(status.sku, f.products[0].sku);
+  }
+  assert.ok(!JSON.stringify(logs).includes("private upstream"));
+  assert.deepEqual(logs.map(entry => (entry[1] as { code: string }).code), ["THROTTLED", "SHOPIFY_UNAVAILABLE", "INTERNAL_SERVER_ERROR"]);
 });

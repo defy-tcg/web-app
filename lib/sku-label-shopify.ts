@@ -57,13 +57,15 @@ interface Payload { userErrors?: { code?: string; message: string }[] }
 const NAMESPACE = "$app:singles";
 const RECEIVING = "$app:receiving";
 const LEASE_MS = 120_000;
+// Nested barcode connections multiply requested cost, even when a product has few variants.
+const QR_VARIANT_PAGE_SIZE = 10;
 const V_FIELDS = `id sku barcode barcodes(first: 20) { nodes { value type } pageInfo { hasNextPage } } price inventoryQuantity inventoryPolicy inventoryItem { id tracked }
   selectedOptions { name value } pos: publishedOnPublication(publicationId: $pos)
   qrIdentity: metafield(namespace: "${NAMESPACE}", key: "qr_identity") { value }`;
 const P_FIELDS = `id status pos: publishedOnPublication(publicationId: $pos)
   catalogId: metafield(namespace: "${RECEIVING}", key: "catalog_id") { value }
   sourceId: metafield(namespace: "defy_intake", key: "catalog_id") { value } manualOrigin: metafield(namespace: "${NAMESPACE}", key: "manual_origin") { value } options { name }
-  variants(first: 100) { nodes { ${V_FIELDS} } pageInfo { hasNextPage endCursor } }`;
+  variants(first: ${QR_VARIANT_PAGE_SIZE}) { nodes { ${V_FIELDS} } pageInfo { hasNextPage endCursor } }`;
 const textKey = inventoryLabelIdentityText;
 const conditions: Record<string, string> = { "Near Mint": "NM", "Lightly Played": "LP", "Moderately Played": "MP", "Heavily Played": "HP", Damaged: "DMG" };
 const fail = (message: string) => { throw new SinglesError("QR_LINK_BLOCKED", message); };
@@ -160,6 +162,10 @@ function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
     return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: `The QR is saved. ${pricingFailureMessages[error.code]}` };
   }
   if (error instanceof SinglesError && ["QR_LINK_BLOCKED", "QR_LINK_PENDING", "PRODUCT_IDENTITY_CONFLICT"].includes(error.code)) return { sku, status: error.retryable ? "pending" : "blocked", message: error.message };
+  console.warn("[sku-label-shopify] Link not confirmed", { sku,
+    code: error instanceof SinglesError && /^[A-Z_]{1,64}$/.test(error.code) ? error.code : "UNEXPECTED_ERROR" });
+  if (error instanceof SinglesError && error.code === "THROTTLED") return { sku, status: "pending", message: "The QR is saved. Shopify is limiting requests. Wait briefly, then retry this same QR if linking remains pending; no new label is needed." };
+  if (error instanceof SinglesError && ["SHOPIFY_UNAVAILABLE", "INTERNAL_SERVER_ERROR"].includes(error.code)) return { sku, status: "pending", message: "The QR is saved. Shopify is temporarily unavailable. Retry this same QR shortly; its original stock receipt is retained." };
   if (error instanceof SinglesError && !error.retryable) return { sku, status: "blocked", message: "The QR is saved, but Shopify could not verify its connection or card mapping. Review the Shopify connection and retry the saved QR." };
   return { sku, status: "pending", message: "The QR is saved. Shopify has not confirmed POS readiness yet; retry this same QR code." };
 }
@@ -544,14 +550,24 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
       if (!result.product) fail("The linked Shopify product was removed. Review this card's mapping; a replacement was not created.");
       const current = result.product!;
       const cursors = new Set<string>();
-      while (current.variants.pageInfo.hasNextPage) {
-        const after = current.variants.pageInfo.endCursor;
-        if (!after || cursors.has(after)) fail("Shopify did not return a complete variant list. Retry after reviewing the product.");
+      const variants = new Set<string>();
+      let connection = current.variants;
+      current.variants = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+      for (;;) {
+        if (!connection || !Array.isArray(connection.nodes) || connection.nodes.length > QR_VARIANT_PAGE_SIZE || typeof connection.pageInfo?.hasNextPage !== "boolean") fail("Shopify did not return a complete variant list. Retry after reviewing the product.");
+        for (const variant of connection.nodes) {
+          if (!variant?.id || variants.has(variant.id)) fail("Shopify did not return a complete variant list. Retry after reviewing the product.");
+          variants.add(variant.id);
+        }
+        current.variants.nodes.push(...connection.nodes);
+        current.variants.pageInfo = connection.pageInfo;
+        if (!connection.pageInfo.hasNextPage) break;
+        const after = connection.pageInfo.endCursor;
+        if (!connection.nodes.length || typeof after !== "string" || !after.trim() || cursors.has(after)) fail("Shopify did not return a complete variant list. Retry after reviewing the product.");
         cursors.add(after!);
-        const page = await graphql<{ product: { variants: Product["variants"] } | null }>(`query QrLinkVariants($id: ID!, $pos: ID!, $after: String!) { product(id: $id) { variants(first: 100, after: $after) { nodes { ${V_FIELDS} } pageInfo { hasNextPage endCursor } } } }`, { id, pos, after });
+        const page = await graphql<{ product: { variants: Product["variants"] } | null }>(`query QrLinkVariants($id: ID!, $pos: ID!, $after: String!) { product(id: $id) { variants(first: ${QR_VARIANT_PAGE_SIZE}, after: $after) { nodes { ${V_FIELDS} } pageInfo { hasNextPage endCursor } } } }`, { id, pos, after });
         if (!page.product) fail("The linked Shopify product disappeared while its variants were checked.");
-        current.variants.nodes.push(...page.product!.variants.nodes);
-        current.variants.pageInfo = page.product!.variants.pageInfo;
+        connection = page.product!.variants;
       }
       return current;
     };
@@ -612,11 +628,28 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 100_000_000) fail("The QR is saved. Set a positive sale price before making this manual card available in Shopify POS.");
     // Search both SKU and barcode, then exact-filter Shopify's search results.
     const escaped = product.sku.replace(/[\\":()]/g, "\\$&");
-    const codes = await graphql<{ productVariants: { nodes: (Variant & { product: { id: string } })[]; pageInfo: { hasNextPage: boolean } } }>(`query QrLinkCode($query: String!, $pos: ID!) { productVariants(first: 100, query: $query) { nodes { ${V_FIELDS} product { id } } pageInfo { hasNextPage } } }`, { query: `sku:"${escaped}" OR barcode:"${escaped}"`, pos });
-    if (codes.productVariants.pageInfo.hasNextPage) fail("Too many Shopify variants use this code. Review duplicate SKUs and barcodes.");
-    if (codes.productVariants.nodes.some(variant => variant.barcodes.pageInfo.hasNextPage)) fail("Shopify returned an incomplete barcode list. Review this card before linking.");
-    const exact = codes.productVariants.nodes.filter(variant => variant.sku === product.sku || variant.barcodes.nodes.some(barcode => barcode.value === product.sku));
-    if (exact.length > 1) fail("This QR code appears on multiple Shopify variants. Resolve that barcode conflict before POS linking.");
+    type CodeVariant = Variant & { product: { id: string } };
+    const exact: CodeVariant[] = [];
+    const codeCursors = new Set<string>(), codeVariants = new Set<string>();
+    let codeAfter: string | null = null;
+    for (;;) {
+      const codes: { productVariants: { nodes: CodeVariant[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } = await graphql(`query QrLinkCode($query: String!, $pos: ID!, $after: String) { productVariants(first: ${QR_VARIANT_PAGE_SIZE}, query: $query, after: $after) { nodes { ${V_FIELDS} product { id } } pageInfo { hasNextPage endCursor } } }`, { query: `sku:"${escaped}" OR barcode:"${escaped}"`, pos, after: codeAfter });
+      const connection = codes.productVariants;
+      if (!connection || !Array.isArray(connection.nodes) || connection.nodes.length > QR_VARIANT_PAGE_SIZE || typeof connection.pageInfo?.hasNextPage !== "boolean") fail("Shopify did not return a complete QR code search. Review duplicate SKUs and barcodes before linking.");
+      for (const variant of connection.nodes) {
+        if (!variant?.id || codeVariants.has(variant.id)) fail("Shopify did not return a complete QR code search. Review duplicate SKUs and barcodes before linking.");
+        codeVariants.add(variant.id);
+        if (variant.barcodes.pageInfo.hasNextPage) fail("Shopify returned an incomplete barcode list. Review this card before linking.");
+        if (variant.sku === product.sku || variant.barcodes.nodes.some(barcode => barcode.value === product.sku)) exact.push(variant);
+      }
+      if (exact.length > 1) fail("This QR code appears on multiple Shopify variants. Resolve that barcode conflict before POS linking.");
+      if (!connection.pageInfo.hasNextPage) break;
+      const after = connection.pageInfo.endCursor;
+      if (!connection.nodes.length || typeof after !== "string" || !after.trim() || codeCursors.has(after)) fail("Shopify did not return a complete QR code search. Review duplicate SKUs and barcodes before linking.");
+      codeCursors.add(after!);
+      codeAfter = after;
+      await renew();
+    }
     let mappedId = record.productId;
     let mappedVariant = record.variantId;
     if (identity.riftbound && !record.adoptionPending) {
@@ -684,7 +717,8 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
         media: identity.source ? [{ originalSource: `https://tcgplayer-cdn.tcgplayer.com/product/${identity.source}_in_1000x1000.jpg`, mediaContentType: "IMAGE", alt: title }] : [],
       });
       // Unique app-owned identifier resolves a concurrent creator or response loss.
-      target = created.productCreate.product?.id ? await readProduct(created.productCreate.product.id) : await byIdentity();
+      const createdTarget = created.productCreate.product?.id ? created.productCreate.product : await byIdentity();
+      target = createdTarget ? await readProduct(createdTarget.id) : null;
       if (!target) { check(created.productCreate); pending("Shopify has not confirmed the new card. Retry this saved QR; no replacement SKU is needed."); }
     }
     if (record.adoptionPending) {
