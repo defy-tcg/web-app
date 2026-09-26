@@ -568,7 +568,7 @@ test("Riftbound QR links publish the exact product and variant to the website wi
     const f = fixture();
     const result = await linkSkuLabelToShopify(input, f.deps);
     assert.equal(result.status, "ready"); assert.match(result.message, /Defy website/);
-    assert.equal(result.priceCents, input.tcgplayerId ? 5090 : 5000);
+    assert.equal(result.priceCents, input.tcgplayerId ? 5114 : 5000);
     assert.equal(f.website.product, true); assert.deepEqual([...f.website.variants], [result.variantId]);
     assert.deepEqual(f.calls.filter(call => call.name === "QrLinkWebsitePublish" || call.name === "QrLinkWebsitePublishVariant").map(call => call.variables.id), [result.productId, result.variantId]);
     assert.equal(f.quantityAdded(), 2);
@@ -664,7 +664,7 @@ test("stocked sibling with no price blocks product publication", async () => {
   const f = fixture({ starting: value }); const result = await linkSkuLabelToShopify(card, f.deps); assert.equal(result.status, "blocked"); assert.match(result.message, /Another stocked variant/); assert.equal(f.calls.filter(call => call.name === "QrLinkActivate").length, 0);
 });
 test("Riftbound registration retains canonical SKU and applies established markup", async () => {
-  const f = fixture(); const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps); assert.equal(result.status, "ready"); assert.equal(result.priceCents, 5090); assert.equal(f.product().variants.nodes[0].sku, "DEFY-RFB-652905-FOIL-EN-NM"); assert.equal(f.product().variants.nodes[0].barcode, card.sku);
+  const f = fixture(); const result = await linkSkuLabelToShopify({ ...card, game: "Riftbound" }, f.deps); assert.equal(result.status, "ready"); assert.equal(result.priceCents, 5114); assert.equal(f.product().variants.nodes[0].sku, "DEFY-RFB-652905-FOIL-EN-NM"); assert.equal(f.product().variants.nodes[0].barcode, card.sku);
 });
 test("Kha'Zix Overnumbered recovers its saved QR with the correct price, website link, and one starting copy", async () => {
   const input: SkuLabelShopifyProduct = {
@@ -691,14 +691,14 @@ test("Kha'Zix Overnumbered recovers its saved QR with the correct price, website
   assert.equal(f.quantityAdded(), 1);
   const result = await linkSkuLabelToShopify(input, f.deps);
   assert.equal(result.status, "ready");
-  assert.equal(result.priceCents, 11920, "The exact market quote receives the existing 6% Riftbound markup");
+  assert.equal(result.priceCents, 11976, "The exact market quote receives the existing 6.5% Riftbound markup");
   assert.equal(result.transferredQuantity, 1);
   assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
   const variants = f.product().variants.nodes;
   assert.equal(variants.length, 1);
   assert.equal(variants[0].sku, "DEFY-RFB-684507-FOIL-EN-NM");
   assert.equal(variants[0].barcode, input.sku);
-  assert.equal(variants[0].price, "119.20");
+  assert.equal(variants[0].price, "119.76");
   assert.equal(variants[0].pos, true);
   assert.equal(f.website.product, true);
   assert.ok(f.website.variants.has(variants[0].id));

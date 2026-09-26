@@ -1,7 +1,7 @@
 import { gameFromAlias } from "./tcg-games.ts";
 
 export const SCRYDEX_PRICE_SOURCE = "scrydex";
-export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6;
+export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6.5;
 export const POKEMON_SINGLE_MARKUP_PERCENT = 1.5;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;

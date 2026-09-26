@@ -12,11 +12,11 @@ const catalog: Catalog = { fetchedAt: "2026-09-18", sourceUpdatedAt: "2026-09-18
 const row: SinglesIntakeRow = { cardKey: "101:Normal", condition: "Near Mint", quantity: 3, costCents: 100, priceCents: 1 };
 const quote = (cents: number) => ({ cents, scrydexId: "ogn-001", variation: "normal-NM", url: "https://scrydex.com/" });
 
-test("Scrydex selling prices add 6% and round to the nearest cent", () => {
+test("Scrydex selling prices add 6.5% and round to the nearest cent", () => {
   const product = { game: "Riftbound", productType: "Single" };
-  assert.equal(scrydexSellPriceCents(1000, product), 1060);
-  assert.equal(scrydexSellPriceCents(105, product), 111);
-  assert.equal(scrydexSellPriceCents(104, product), 110);
+  assert.equal(scrydexSellPriceCents(1000, product), 1065);
+  assert.equal(scrydexSellPriceCents(105, product), 112);
+  assert.equal(scrydexSellPriceCents(104, product), 111);
   assert.equal(scrydexSellPriceCents(29, product), 31);
 });
 
@@ -34,18 +34,18 @@ test("single review uses the exact catalog identity and selected finish/conditio
   assert.equal(inputs[0].cardNumber, "001");
   assert.equal(inputs[0].game, "Riftbound");
   assert.equal(inputs[0].productType, "Single");
-  assert.deepEqual(reviewed.rows.map((item) => item.priceCents), [1060, 111]);
+  assert.deepEqual(reviewed.rows.map((item) => item.priceCents), [1065, 112]);
   assert.deepEqual(reviewed.rows.map((item) => item.pricing.marketCents), [1000, 105]);
   assert.equal(reviewed.rows[0].pricing.source, "scrydex");
-  assert.equal(reviewed.totalPriceCents, 3402);
+  assert.equal(reviewed.totalPriceCents, 3419);
   assert.equal(reviewed.totalCostCents, 500);
   assert.equal(row.priceCents, 1, "preview must not mutate the submitted request");
 });
 
 test("missing, invalid or unavailable Scrydex prices block single review without fallback", async () => {
-  const maximum = await previewPricedSingles([row], catalog, async () => quote(94_339_623));
+  const maximum = await previewPricedSingles([row], catalog, async () => quote(93_896_714));
   assert.equal(maximum.rows[0].priceCents, 100_000_000);
-  for (const result of [null, quote(0), quote(-100), quote(NaN), quote(1.1), quote(94_339_624), quote(100_000_001)]) {
+  for (const result of [null, quote(0), quote(-100), quote(NaN), quote(1.1), quote(93_896_715), quote(100_000_001)]) {
     await assert.rejects(previewPricedSingles([row], catalog, async () => result), { code: "SCRYDEX_PRICE_UNAVAILABLE" });
   }
   await assert.rejects(previewPricedSingles([row], catalog, async () => { throw new Error("private upstream details"); }), (error: unknown) => {

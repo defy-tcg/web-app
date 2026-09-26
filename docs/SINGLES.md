@@ -55,7 +55,7 @@ source date. Its historical market benchmarks do not determine selling prices.
 Review fetches a Scrydex quote for each exact English printing, finish, and raw
 condition. Intake displays the raw market price and calculates its total as
 market price multiplied by quantity. Riftbound singles have a customer-facing
-selling price of Scrydex market plus 6%; Pokémon singles (including Japanese)
+selling price of Scrydex market plus 6.5%; Pokémon singles (including Japanese)
 use market plus 1.5%. Both round half-up to cents. Other games
 and product types, including Riftbound sealed products, sell at the raw market
 price. The Riftbound singles selling price is still sent to
