@@ -225,10 +225,24 @@ function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
   return [...new Set([name, nameWithoutArtAnnotation(name, false)])].filter(Boolean);
 }
 
+const RIFTBOUND_PROVING_GROUNDS = {
+  id: "OGS", name: "Proving Grounds", code: "OGS", type: "Starter", printed_total: 24,
+};
+
+function verifiedProvingGrounds(candidate: ObjectValue) {
+  const expansion = object(candidate.expansion);
+  return Object.entries(RIFTBOUND_PROVING_GROUNDS).every(([key, value]) =>
+    typeof value === "number" ? expansion[key] === value : identity(expansion[key]) === identity(value));
+}
+
 function verifiedRiftboundName(product: ScrydexProduct, candidate: ObjectValue) {
   if (!Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0) return false;
   const name = productNameWithoutGame(product);
   const overnumbered = /^(.+?)\s*\(Overnumbered\)$/i.exec(name);
+  const starter = /^(.+?)\s*\(Starter\)$/i.exec(name);
+  // Preserve the Starter edition: TCGplayer uses parentheses while Scrydex
+  // uses a literal " - Starter" suffix in this verified starter expansion.
+  if (starter && !verifiedProvingGrounds(candidate)) return false;
   if (overnumbered) {
     // Overnumbered is a specific Showcase printing. Never strip Signature,
     // collector suffixes, or an arbitrary edition annotation to obtain a quote.
@@ -247,7 +261,8 @@ function verifiedRiftboundName(product: ScrydexProduct, candidate: ObjectValue) 
   if (identity(candidate.type) === "legend" && subtypes.length === 1 && text(subtypes[0]) && text(candidate.name)) {
     names.push(`${text(subtypes[0])}, ${text(candidate.name)}`);
   }
-  return names.some(value => identity(value) === identity(overnumbered?.[1] ?? name))
+  const expectedName = starter ? `${starter[1].trim()} - Starter` : overnumbered?.[1] ?? name;
+  return names.some(value => identity(value) === identity(expectedName))
     && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
 }
 
@@ -377,6 +392,12 @@ function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: 
       && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
   }
   if (exactSetName(product, candidate)) return true;
+  if (game === "riftbound" && identity(product.productType) === "single"
+    && identity(product.setName) === "origins: proving grounds") {
+    return verifiedProvingGrounds(candidate)
+      && Number.isSafeInteger(product.tcgplayerId) && (product.tcgplayerId ?? 0) > 0
+      && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+  }
   if (game !== "pokemon" || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
     || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!))) return false;
   const expansion = object(candidate.expansion);
@@ -542,7 +563,13 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   if (englishRiftbound) {
     // Scrydex's name index can also miss hyphenated words. A bounded set and
     // collector lookup supplies candidates without changing exact selection.
-    const setQuery = ["expansion.name", "expansion.code", "expansion.id"].map(field => `${field}:${queryLiteral(product.setName)}`).join(" OR ");
+    const setClauses = ["expansion.name", "expansion.code", "expansion.id"].map(field => `${field}:${queryLiteral(product.setName)}`);
+    // Marketplace IDs are not reliably indexed. Retrieve the known provider
+    // set label by its exact expansion ID, still bounded to this card number.
+    if (identity(product.setName) === "origins: proving grounds") {
+      setClauses.push(`expansion.id:${queryLiteral(RIFTBOUND_PROVING_GROUNDS.id)}`);
+    }
+    const setQuery = setClauses.join(" OR ");
     clauses.push(`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND (${setQuery}) AND language_code:EN)`);
   }
   const unnumbered = unnumberedPokemonPrinting(product);

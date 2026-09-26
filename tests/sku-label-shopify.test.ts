@@ -447,6 +447,41 @@ test("Nidoking's exact Pokémon quote adds 1.5% and keeps its QR and one-time st
   assert.equal(stockCalls.length, 2);
   assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables);
 });
+test("Master Yi Starter repairs its saved QR with the verified OGS quote and transfers one copy once", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 123, sku: "DEFY-9917551442", name: "Master Yi, Wuju Bladesman (Starter)", game: "Riftbound",
+    setName: "Origins: Proving Grounds", cardNumber: "019/024", finish: "Normal", tcgplayerId: 653154,
+    quantity: 1, initialQuantity: 1,
+  };
+  const f = fixture({ priceError: true });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  assert.equal(f.quantityAdded(), 0);
+  // Verified live Scrydex identity for the same TCGplayer Starter printing.
+  f.deps.resolvePrice = async product => selectScrydexPrice(product, [{
+    id: "OGS-19", name: "Wuju Bladesman - Starter", number: "19", printed_number: "019/24",
+    type: "Legend", subtypes: ["Master Yi"], rarity: "Rare", language_code: "EN",
+    expansion: { id: "OGS", name: "Proving Grounds", code: "OGS", type: "Starter", printed_total: 24, language_code: "EN" },
+    variants: [{ name: "normal", marketplaces: [{ name: "tcgplayer", product_id: "653154" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 20.62 }] }],
+  }]);
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.sku, input.sku);
+  assert.equal(result.priceCents, 2227);
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  const variants = f.product().variants.nodes;
+  assert.equal(variants.length, 1);
+  assert.equal(variants[0].barcode, input.sku);
+  assert.equal(variants[0].price, "22.27");
+  assert.equal(variants[0].inventoryQuantity, 1);
+  assert.equal(variants[0].pos, true);
+  assert.equal(f.website.product, true);
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
+});
 test("Mega Evolution resumes a price-blocked QR with its exact quote and one original stock transfer", async () => {
   const input: SkuLabelShopifyProduct = {
     ...card, id: 79, sku: "DEFY-8490864590", name: "Mega Latias ex - 181/132", game: "Pokémon",
