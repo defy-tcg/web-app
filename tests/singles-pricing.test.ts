@@ -12,11 +12,11 @@ const catalog: Catalog = { fetchedAt: "2026-09-18", sourceUpdatedAt: "2026-09-18
 const row: SinglesIntakeRow = { cardKey: "101:Normal", condition: "Near Mint", quantity: 3, costCents: 100, priceCents: 1 };
 const quote = (cents: number) => ({ cents, scrydexId: "ogn-001", variation: "normal-NM", url: "https://scrydex.com/" });
 
-test("Scrydex selling prices add 6.5% and round to the nearest cent", () => {
+test("Scrydex Riftbound selling prices below $40 add 8% and round to the nearest cent", () => {
   const product = { game: "Riftbound", productType: "Single" };
-  assert.equal(scrydexSellPriceCents(1000, product), 1065);
-  assert.equal(scrydexSellPriceCents(105, product), 112);
-  assert.equal(scrydexSellPriceCents(104, product), 111);
+  assert.equal(scrydexSellPriceCents(1000, product), 1080);
+  assert.equal(scrydexSellPriceCents(105, product), 113);
+  assert.equal(scrydexSellPriceCents(104, product), 112);
   assert.equal(scrydexSellPriceCents(29, product), 31);
 });
 
@@ -34,12 +34,22 @@ test("single review uses the exact catalog identity and selected finish/conditio
   assert.equal(inputs[0].cardNumber, "001");
   assert.equal(inputs[0].game, "Riftbound");
   assert.equal(inputs[0].productType, "Single");
-  assert.deepEqual(reviewed.rows.map((item) => item.priceCents), [1065, 112]);
+  assert.deepEqual(reviewed.rows.map((item) => item.priceCents), [1080, 113]);
   assert.deepEqual(reviewed.rows.map((item) => item.pricing.marketCents), [1000, 105]);
   assert.equal(reviewed.rows[0].pricing.source, "scrydex");
-  assert.equal(reviewed.totalPriceCents, 3419);
+  assert.equal(reviewed.totalPriceCents, 3466);
   assert.equal(reviewed.totalCostCents, 500);
   assert.equal(row.priceCents, 1, "preview must not mutate the submitted request");
+});
+
+test("single review and receipt validation share the raw-market $40 Riftbound threshold", async () => {
+  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+    const resolver: SinglesPriceResolver = async () => quote(market);
+    const reviewed = await previewPricedSingles([row], catalog, resolver);
+    assert.equal(reviewed.rows[0].pricing.marketCents, market);
+    assert.equal(reviewed.rows[0].priceCents, expected);
+    await validateSinglesPricing(reviewed, resolver);
+  }
 });
 
 test("missing, invalid or unavailable Scrydex prices block single review without fallback", async () => {

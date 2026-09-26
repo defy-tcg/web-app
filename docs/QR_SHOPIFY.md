@@ -101,7 +101,8 @@ review rather than a fresh mutation.
 
 TCGplayer links identify cards; their listed prices are not trusted selling
 prices. Linking requires an exact, positive Scrydex USD quote. The existing policy
-adds 1.5% for Pokémon singles (including Japanese), 6.5% for Riftbound singles,
+adds 1.5% for Pokémon singles (including Japanese), 8% for Riftbound singles below
+$40 raw market or 6.5% at $40 and above,
 and uses the raw market price for other supported games. Prices round half-up
 to cents. Manual cards require a positive entered sale price. An unavailable,
 unsupported, ambiguous, or nonpositive price blocks readiness instead of
@@ -115,7 +116,7 @@ handles provider capitalization such as **Seal of Discord** versus **Seal Of
 Discord**, which Scrydex's case-sensitive exact-name search can miss. The lookup
 still makes one request and verifies the complete name, set, collector number,
 language, finish, and condition before pricing. Other printings, including
-Overnumbered cards, remain separate and use the same 6.5% Riftbound markup.
+Overnumbered cards, remain separate and use the same Riftbound price tiers.
 
 Some Riftbound Legend records split the character from the printed title. For
 example, Scrydex's **Voidreaver** with character **Kha'Zix** can match TCGplayer's

@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { products } from "../db/schema";
-import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
+import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
 import { TCG_GAME_REGISTRY, type TcgGameKey } from "./tcg-games";
 
 // PostgreSQL btrim defaults to spaces; this is the whitespace set used by JS trim.
@@ -77,7 +77,9 @@ export function protectedPricingColumns(incoming: StoredPricing) {
   const gameKey = sql<string>`btrim(regexp_replace(replace(lower(regexp_replace(normalize(${products.game}, NFKD), '[\u0300-\u036f]', '', 'g')), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
   const isSingle = sql`lower(btrim(${products.productType}, ${JS_TRIM_CHARACTERS})) = 'single'`;
   const markupBasisPoints = sql<number>`CASE
-    WHEN ${inArray(gameKey, normalizedGameAliases(["riftbound"]))} THEN ${RIFTBOUND_SINGLE_MARKUP_PERCENT * 100}
+    WHEN ${inArray(gameKey, normalizedGameAliases(["riftbound"]))} THEN CASE
+      WHEN ${products.marketPriceCents} < ${RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS} THEN ${RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT * 100}::integer
+      ELSE ${RIFTBOUND_SINGLE_MARKUP_PERCENT * 100}::integer END
     WHEN ${inArray(gameKey, normalizedGameAliases(["pokemon", "pokemon-japanese"]))} THEN ${POKEMON_SINGLE_MARKUP_PERCENT * 100}
     ELSE 0 END`;
   return {

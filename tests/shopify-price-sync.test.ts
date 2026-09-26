@@ -33,16 +33,27 @@ function shopify(variant: PricingVariant, options: { duplicates?: boolean; chang
   return { graphql, writes };
 }
 
-test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 6.5%", async () => {
+test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 8% below $40", async () => {
   const variant = single(); const client = shopify(variant);
   const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async identity => {
     assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); assert.equal(identity.finish, "Foil"); return quote;
   } });
-  assert.equal(result.priceCents, 112); assert.equal(result.marketCents, 105);
+  assert.equal(result.priceCents, 113); assert.equal(result.marketCents, 105);
   const variants = client.writes[0].variants as Record<string, unknown>[];
   assert.deepEqual(Object.keys(variants[0]).sort(), ["id", "metafields", "price"]);
-  assert.equal(variants.length, 1); assert.equal(variants[0].price, "1.12");
+  assert.equal(variants.length, 1); assert.equal(variants[0].price, "1.13");
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+});
+
+test("scheduled Riftbound pricing shares the raw-market $40 threshold", async () => {
+  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+    const variant = single(); const client = shopify(variant);
+    const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-26T12:00:00Z", resolve: async () => ({ ...quote, cents: market }) });
+    assert.equal(result.marketCents, market);
+    assert.equal(result.priceCents, expected);
+    assert.equal((client.writes[0].variants as { price: string }[])[0].price, (expected / 100).toFixed(2));
+    assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  }
 });
 
 test("sealed products match registered codes and keep raw market pricing", async () => {
@@ -114,7 +125,7 @@ test("a secondary custom QR matches Defy for scheduled pricing without changing 
   const result = await updateVariantPrice({ variant, legacy: [legacy], catalog, ...client, now: "2026-09-22T12:00:00Z", resolve: async identity => {
     assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); return quote;
   } });
-  assert.equal(result.priceCents, 112);
+  assert.equal(result.priceCents, 113);
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
   assert.deepEqual(variant.barcodes.nodes, [{ value: "012345678901", type: "UPC" }, { value: "DEFY-9775456393", type: null }]);
 });

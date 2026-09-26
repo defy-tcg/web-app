@@ -59,13 +59,22 @@ function fixture(initial = [variant()]) {
   return { state, dependencies };
 }
 
-test("POS scan updates only the exact Riftbound single price with 6.5%, never cost or stock", async () => {
+test("POS scan updates only the exact Riftbound single price below $40 with 8%, never cost or stock", async () => {
   const f = fixture();
   const result = await refreshPosPrice("0123456789", f.dependencies);
-  assert.deepEqual(result, { variantId: 123, productId: "gid://shopify/Product/456", sku: "DEFY-RFB-652819-NORMAL-EN-NM", title: "Charm — Origins", priceCents: 1065, currency: "USD", scrydexId: "ogn-043" });
-  assert.deepEqual(f.state.mutations, [{ productId: "gid://shopify/Product/456", variants: [{ id: "gid://shopify/ProductVariant/123", price: "10.65" }] }]);
+  assert.deepEqual(result, { variantId: 123, productId: "gid://shopify/Product/456", sku: "DEFY-RFB-652819-NORMAL-EN-NM", title: "Charm — Origins", priceCents: 1080, currency: "USD", scrydexId: "ogn-043" });
+  assert.deepEqual(f.state.mutations, [{ productId: "gid://shopify/Product/456", variants: [{ id: "gid://shopify/ProductVariant/123", price: "10.80" }] }]);
   assert.equal(f.state.quoted[0].finish, "Nonfoil");
   assert.equal(f.state.queries.filter(call => call.query.includes("query DefyPosVerify")).length, 1);
+});
+
+test("POS scans use 8% below $40 raw market and retain 6.5% at or above it", async () => {
+  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+    const f = fixture(); f.state.marketCents = market;
+    const result = await refreshPosPrice("0123456789", f.dependencies);
+    assert.equal(result.priceCents, expected);
+    assert.deepEqual(f.state.mutations, [{ productId: "gid://shopify/Product/456", variants: [{ id: "gid://shopify/ProductVariant/123", price: (expected / 100).toFixed(2) }] }]);
+  }
 });
 
 test("Japanese Pokémon POS pricing adds 1.5% while keeping its exact game and language", async () => {
@@ -96,7 +105,7 @@ test("a secondary QR finds the same variant and updates only its price", async (
   const result = await refreshPosPrice("DEFY-9775456393", f.dependencies);
   assert.equal(result.variantId, 123);
   assert.equal(result.sku, item.sku);
-  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "10.65" }] }]);
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "10.80" }] }]);
   assert.deepEqual(item.barcodes.nodes.map(barcode => barcode.value), ["0123456789", "DEFY-9775456393"]);
   assert.match(f.state.queries[0].query, /barcodes\(first: 20\)/);
 });
@@ -249,8 +258,8 @@ test("provider and Shopify update failures cannot return a successful cart price
 });
 
 test("unchanged price skips the mutation after verifying current identity", async () => {
-  const item = variant(); item.price = "10.65"; const f = fixture([item]);
-  assert.equal((await refreshPosPrice(item.sku, f.dependencies)).priceCents, 1065);
+  const item = variant(); item.price = "10.80"; const f = fixture([item]);
+  assert.equal((await refreshPosPrice(item.sku, f.dependencies)).priceCents, 1080);
   assert.equal(f.state.mutations.length, 0); assert.equal(f.state.queries.length, 2);
 });
 

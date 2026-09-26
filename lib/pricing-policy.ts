@@ -2,6 +2,8 @@ import { gameFromAlias } from "./tcg-games.ts";
 
 export const SCRYDEX_PRICE_SOURCE = "scrydex";
 export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6.5;
+export const RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT = 8;
+export const RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS = 4_000;
 export const POKEMON_SINGLE_MARKUP_PERCENT = 1.5;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
@@ -19,7 +21,10 @@ export function scrydexSellPriceCents(marketCents: number, product: PricingProdu
   }
   if (product.productType.trim().toLowerCase() !== "single") return marketCents;
   const game = gameFromAlias(product.game)?.key;
-  const markupPercent = game === "riftbound" ? RIFTBOUND_SINGLE_MARKUP_PERCENT
+  // Select the tier from raw market, never the previously marked-up selling price.
+  const riftboundMarkup = marketCents < RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS
+    ? RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT : RIFTBOUND_SINGLE_MARKUP_PERCENT;
+  const markupPercent = game === "riftbound" ? riftboundMarkup
     : game === "pokemon" || game === "pokemon-japanese" ? POKEMON_SINGLE_MARKUP_PERCENT : 0;
   // Integer basis points keep fractional percentages and half-cent ties exact.
   return Math.floor((marketCents * (10_000 + markupPercent * 100) + 5_000) / 10_000);

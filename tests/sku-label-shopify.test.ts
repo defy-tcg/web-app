@@ -213,6 +213,21 @@ test("QR registration creates one exact card, publishes only POS, and caches con
   assert.deepEqual(f.calls.filter(call => call.name.startsWith("QrLinkPublish")).map(call => call.variables.input), [[{ publicationId: "gid://shopify/Publication/2" }], [{ publicationId: "gid://shopify/Publication/2" }]]);
   const statuses = await getSkuLabelShopifyStatuses([card], f.deps); assert.equal(statuses[0].status, "ready"); assert.ok(statuses[0].checkedAt);
 });
+test("QR linking uses 8% below $40 raw market and retains 6.5% at or above it", async () => {
+  const riftboundCard = { ...card, game: "Riftbound" };
+  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+    const f = fixture();
+    f.deps.resolvePrice = async () => ({ cents: market, matchedName: riftboundCard.name, groupName: riftboundCard.setName,
+      variation: riftboundCard.finish, scrydexId: "fixture-riftbound", url: "https://example.com" });
+    const result = await linkSkuLabelToShopify(riftboundCard, f.deps);
+    assert.equal(result.status, "ready");
+    assert.equal(result.priceCents, expected);
+    assert.equal(f.product().variants.nodes[0].price, (expected / 100).toFixed(2));
+    assert.equal(f.product().variants.nodes[0].barcode, riftboundCard.sku);
+    assert.equal(f.quantityAdded(), 0);
+  }
+});
+
 test("missing publication permission blocks before any mutation", async () => {
   const f = fixture({ missingScopes: true }); const result = await linkSkuLabelToShopify(card, f.deps);
   assert.equal(result.status, "blocked"); assert.match(result.message, /write_publications/); assert.equal(f.calls.length, 1); assert.equal(f.product(), null);

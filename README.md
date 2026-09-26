@@ -133,8 +133,9 @@ Blank image fields in later CSV imports preserve existing links.
 Configure server-only `SCRYDEX_API_KEY` and `SCRYDEX_TEAM_ID` in `.env.local` and
 Vercel. Inventory's **Refresh Scrydex prices** action processes small resumable
 batches. Successful matches store the unmarked market price. **Riftbound singles**
-sell at **market × 1.065**, rounded half-up to the nearest USD cent: a $10.00
-market price produces a $10.65 selling price. Pokémon singles (including Japanese)
+sell at **market × 1.08 below $40 raw market**, or **market × 1.065 at $40 and
+above**, rounded half-up to the nearest USD cent: a $10.00 market price produces
+a $10.80 selling price, while $40.00 produces $42.60. Pokémon singles (including Japanese)
 use a 1.5% markup. Other games and product types, including Riftbound sealed
 products, sell at the unmarked market price. Repeated
 refreshes do not compound the markup. Market and selling-price fields are
