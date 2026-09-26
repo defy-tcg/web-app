@@ -1,6 +1,6 @@
 import { getScrydexConfig, ScrydexError } from "./scrydex.ts";
 
-export type SealedCatalogGame = "pokemon" | "onepiece" | "riftbound";
+export type SealedCatalogGame = "pokemon" | "onepiece" | "riftbound" | "gundam";
 export type SealedCatalogProduct = {
   id: string; game: SealedCatalogGame; name: string; setName: string; language: "English";
   unit: string; imageUrl: string | null; marketCents: number | null;
@@ -17,8 +17,8 @@ const key = (value: unknown) => text(value).normalize("NFKC").replace(/\s+/g, " 
 const upstream = () => new ScrydexError("upstream_error", "Scrydex sealed catalog is unavailable or returned an incomplete response. Retry shortly.");
 
 function game(value: unknown): SealedCatalogGame {
-  if (value !== "pokemon" && value !== "onepiece" && value !== "riftbound") {
-    throw new ScrydexError("unsupported", "Choose Pokémon, One Piece, or Riftbound for sealed catalog search.");
+  if (value !== "pokemon" && value !== "onepiece" && value !== "riftbound" && value !== "gundam") {
+    throw new ScrydexError("unsupported", "Choose Pokémon, One Piece, Riftbound, or Gundam for sealed catalog search.");
   }
   return value;
 }

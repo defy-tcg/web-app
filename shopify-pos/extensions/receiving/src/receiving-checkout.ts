@@ -92,8 +92,8 @@ export class CheckoutService {
     const singleVariant = siblings?.pageInfo?.hasNextPage === false && siblings.nodes?.length === 1 && siblings.nodes[0].id === request.variantId;
     if (parent.status === 'DRAFT') {
       const catalogId = parent.catalogId?.value || '';
-      const source = /^scrydex:(pokemon|onepiece|riftbound):[a-zA-Z0-9_-]+$/.exec(catalogId);
-      const sourceGame = source ? RECEIVING_CATALOG_GAMES[source[1] as keyof typeof RECEIVING_CATALOG_GAMES] : null;
+      const source = /^scrydex:([a-z]+):[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.exec(catalogId);
+      const sourceGame = source && Object.hasOwn(RECEIVING_CATALOG_GAMES, source[1]) ? RECEIVING_CATALOG_GAMES[source[1] as keyof typeof RECEIVING_CATALOG_GAMES] : null;
       if (!singleVariant || !/^DEFY-S-\d{6}$/.test(request.sku) || !(catalogId === barcodeKey(request.barcode) ||
         (sourceGame && sourceGame === node.game.value && parent.productType === `${sourceGame} Sealed`))) {
         fail('CHECKOUT_DRAFT_REVIEW', 'Only a single-variant sealed draft created by this receiver can be activated here. Review this product and its other variants in Shopify Admin.');

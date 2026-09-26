@@ -46,8 +46,8 @@ async function readLookup(request: Request): Promise<Lookup> {
   catch { throw new InputError("The search request is not valid JSON."); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new InputError("Choose a game and enter a product name.");
   const data = value as Record<string, unknown>;
-  if (Object.keys(data).length !== 2 || typeof data.game !== "string" || !["pokemon", "onepiece", "riftbound"].includes(data.game)) {
-    throw new InputError("Choose Pokémon, One Piece, or Riftbound and a product name or catalog ID.");
+  if (Object.keys(data).length !== 2 || typeof data.game !== "string" || !["pokemon", "onepiece", "riftbound", "gundam"].includes(data.game)) {
+    throw new InputError("Choose Pokémon, One Piece, Riftbound, or Gundam and a product name or catalog ID.");
   }
   const game = data.game as SealedCatalogGame;
   if (typeof data.query === "string" && data.query.trim().length >= 3 && data.query.length <= 100 && !/[\u0000-\u001f\u007f]/.test(data.query)) {

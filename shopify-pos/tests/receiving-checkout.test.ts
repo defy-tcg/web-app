@@ -92,6 +92,42 @@ test('explicit checkout action activates only its received draft and publishes p
   assert.equal(f.mutations().length, count, 'ready products are read-only on retry');
 });
 
+test('Gundam sealed catalog drafts become checkout-ready without weakening source game and product type checks', async () => {
+  const gundam = () => {
+    const f = fixture();
+    f.parent.title = 'Newtype Rising Booster Display';
+    f.parent.productType = 'Gundam Sealed';
+    f.parent.catalogId.value = 'scrydex:gundam:gd01-booster-display';
+    f.node.game.value = 'Gundam';
+    f.node.unit.value = 'Display';
+    return f;
+  };
+  const f = gundam();
+  const result = await f.service.prepare(input);
+  assert.equal(result.product.game, 'Gundam');
+  assert.equal(result.product.catalogId, 'scrydex:gundam:gd01-booster-display');
+  assert.equal(result.product.status, 'ACTIVE');
+  assert.equal(f.parent.pos, true);
+  assert.equal(f.node.pos, true);
+  assert.equal(f.priceWrites().length, 0);
+  const manual = gundam();
+  manual.parent.catalogId.value = barcodeKey(input.barcode);
+  manual.parent.productType = '';
+  assert.equal((await manual.service.prepare(input)).product.game, 'Gundam');
+  assert.equal(manual.parent.pos, true);
+  assert.equal(manual.node.pos, true);
+  for (const change of [
+    (item: ReturnType<typeof fixture>) => { item.node.game.value = 'Riftbound'; },
+    (item: ReturnType<typeof fixture>) => { item.parent.productType = 'Gundam Single'; },
+    (item: ReturnType<typeof fixture>) => { item.parent.catalogId.value = 'scrydex:unsupported:gd01-booster-display'; },
+    (item: ReturnType<typeof fixture>) => { item.parent.catalogId.value = 'scrydex:gundam:../gd01'; },
+  ]) {
+    const invalid = gundam(); change(invalid);
+    await assert.rejects(invalid.service.prepare(input), (error: ReceivingError) => error.code === 'CHECKOUT_DRAFT_REVIEW');
+    assert.equal(invalid.mutations().length, 0);
+  }
+});
+
 test('positive explicit store price repairs an old zero-priced item without receiving stock or rewriting its barcode', async () => {
   const f = fixture(); f.node.price = '0.00';
   const result = await f.service.prepare({...input, storePrice: ' 39.5 '});

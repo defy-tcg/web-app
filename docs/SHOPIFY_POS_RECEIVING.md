@@ -134,8 +134,16 @@ need verification on the store's device.
 
 ## Unknown barcodes and Scrydex
 
-The Scrydex search supports Pokémon, One Piece, and Riftbound sealed products.
-It offers English products with one standard (`normal`) edition. Older listings
+The game selector supports Pokémon, One Piece, Riftbound, and Gundam sealed products.
+Scrydex's Gundam sealed endpoint returned an empty catalog when checked on
+September 25, 2026. For an unrecognized Gundam barcode, choose **Gundam**, search
+the existing Shopify catalog by product name or SKU, then select **Register new
+sealed product** if the exact package is missing. The form keeps Gundam selected;
+enter the exact name, selling unit, quantity, cost, and store price. Future scans
+of that saved package barcode find its Shopify listing directly. Scrydex search
+can also return Gundam products when its provider catalog contains them.
+
+Catalog search offers English products with one standard (`normal`) edition. Older listings
 that combine editions require manual registration of the exact physical edition.
 Search uses a product name; Scrydex does not supply the barcode mapping. Staff
 must compare the selected name, set, image when available, and selling unit with

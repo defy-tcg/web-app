@@ -33,7 +33,10 @@ function rejectionNode(record = rejectedRecord(), id = "gid://shopify/Metaobject
   return { id, handle: record.request.requestId, payload: { value: JSON.stringify(record) } };
 }
 function refreshFingerprint(record: ReturnType<typeof rejectedRecord>) {
-  record.fingerprint = JSON.stringify(record.request, Object.keys(record.request).sort());
+  const canonical = (value: unknown): string => value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`
+    : JSON.stringify(value);
+  record.fingerprint = canonical(record.request);
   return record;
 }
 function harness(nodes: unknown[] = [node()], hasNextPage = false, endCursor: string | null = null) {
@@ -230,6 +233,21 @@ test("rejections allow new-product requests and zero counts against negative sto
   const page = await getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies);
   assert.equal(page.scannedCount, 1);
   assert.deepEqual(page.receipts, []);
+});
+
+test("rejected Gundam catalog stock counts remain readable without appearing as confirmed receipts", async () => {
+  const record = rejectedRecord();
+  record.request.game = record.product.game = "Gundam";
+  record.request.name = record.product.name = "Newtype Rising Booster Box";
+  record.request.unit = record.product.unit = "Booster box";
+  Object.assign(record.request, { catalog: { game: "gundam", id: "GD01-s1", name: record.request.name, setName: "Newtype Rising", language: "English" } });
+  refreshFingerprint(record);
+  const page = await getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies);
+  assert.equal(page.scannedCount, 1);
+  assert.deepEqual(page.receipts, []);
+  record.request.game = "Riftbound";
+  refreshFingerprint(record);
+  await assert.rejects(getReceivingHistory(undefined, harness([rejectionNode(record)]).dependencies), { code: "INCOMPLETE_HISTORY" });
 });
 
 test("invalid cursors and unapproved configuration cannot issue a query", async () => {

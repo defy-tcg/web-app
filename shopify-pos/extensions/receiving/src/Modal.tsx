@@ -397,7 +397,7 @@ export function ReceivingModal() {
             {catalogState.kind === 'checking' && <s-text>Verifying the selected product and checking existing Shopify SKUs…</s-text>}
             {catalogState.kind === 'error' && <><s-banner heading="Catalog needs attention" tone="warning" /><s-text>{catalogState.message} You can still search Shopify manually below.</s-text></>}
             {catalogState.kind === 'results' && <>
-              {catalogState.products.length === 0 && <s-text>No sealed products found. Try another name or use the Shopify search below.</s-text>}
+              {catalogState.products.length === 0 && <s-text>No sealed products found. Search your existing Shopify catalog below first. If none match the package, choose Register new sealed product and enter its details manually.</s-text>}
               {catalogState.hasMore && <s-text>More catalog results exist. Refine the product name if the exact package is missing.</s-text>}
               {catalogState.products.map((item) => <s-section key={item.id} heading={item.name}>
                 <s-stack direction="block" gap="small">
@@ -434,9 +434,10 @@ export function ReceivingModal() {
           {results.map((item) => <s-button key={item.sku} disabled={!editable} onClick={() => selectProduct(item)}>{item.name} · {item.sku}</s-button>)}
           {!registering && searched && catalogState.kind !== 'selected' && <s-button disabled={!editable} onClick={() => {
             if (!isEditable(phaseRef.current)) return;
+            const game = catalogGame ? CATALOG_GAMES[catalogGame] : formRef.current.game;
             resetCatalog();
             setRegistration(true); transition('ready');
-            updateForm({...formRef.current, expectedAvailableQuantity: 0});
+            updateForm({...formRef.current, game, expectedAvailableQuantity: 0});
             alert('Register new sealed product', 'Enter the exact product and selling unit. A permanent store SKU is assigned when the receipt saves.', 'info');
           }}>Register new sealed product</s-button>}
         </>}

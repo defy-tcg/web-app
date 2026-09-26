@@ -45,6 +45,30 @@ test("documented English sealed fixtures return bounded identity, package, image
   }
 });
 
+test("Gundam uses its own sealed endpoint and preserves empty coverage without substituting another game", async t => {
+  config(t);
+  const empty = provider(searchResult([]));
+  assert.deepEqual(await searchSealedCatalog({ game: "gundam", query: "Newtype Rising" }, empty), { products: [], hasMore: false });
+  assert.equal(empty.calls.length, 1);
+  assert.equal(empty.calls[0].url.pathname, "/gundam/v1/sealed");
+
+  // Synthetic future catalog coverage: retain the same package/edition checks.
+  const item = candidate({ id: "GD01-s1", name: "Newtype Rising Booster Pack",
+    expansion: { id: "GD01", name: "Newtype Rising", language_code: "EN" },
+    images: [{ type: "front", medium: "https://images.scrydex.com/gundam/GD01-s1/medium" }] });
+  const search = provider(searchResult([item]));
+  const result = await searchSealedCatalog({ game: "gundam", query: "Newtype Rising" }, search);
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0], { id: "GD01-s1", game: "gundam", name: item.name, setName: "Newtype Rising",
+    language: "English", unit: "Booster pack", imageUrl: item.images[0].medium, marketCents: 713 });
+  const detail = provider({ data: item });
+  assert.deepEqual(await getSealedCatalogProduct({ game: "gundam", id: item.id }, detail), result.products[0]);
+  assert.equal(detail.calls[0].url.pathname, "/gundam/v1/sealed/GD01-s1");
+  assert.doesNotMatch(JSON.stringify(result), /test-only|apiKey|teamId|barcode|\bsku\b/);
+  await assert.rejects(getSealedCatalogProduct({ game: "gundam", id: item.id }, provider({ data: { ...item, language_code: "JA" } })), code("not_found"));
+  await assert.rejects(getSealedCatalogProduct({ game: "gundam", id: item.id }, provider({ data: { ...item, variants: [{ name: "firstEdition" }] } })), code("ambiguous"));
+});
+
 test("search escapes each term across product, set and package fields and fixes English scope and request bounds", async t => {
   config(t);
   const f = provider(searchResult([]));

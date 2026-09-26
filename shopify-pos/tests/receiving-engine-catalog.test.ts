@@ -210,6 +210,69 @@ test('new catalog drafts persist canonical source/card metadata and barcode clai
   assert.equal(fixture.calls.slice(callCount).filter(call => call.query.includes('mutation ')).length, 0);
 });
 
+test('Gundam catalog receiving creates its exact sealed source and metadata, then retries stock once with the same SKU', async () => {
+  const gundam: ReceiptCatalog = {game: 'gundam', id: 'gd01-booster-display', name: 'Newtype Rising Booster Display', setName: 'Newtype Rising', language: 'English'};
+  const details = {catalog: gundam, game: 'Gundam', name: gundam.name, unit: 'Display'};
+  const normalized = request(details);
+  assert.deepEqual(normalized.catalog, gundam);
+  assert.equal(receivingCatalogKey(gundam), 'scrydex:gundam:gd01-booster-display');
+  assert.throws(() => request({...details, game: 'Riftbound'}), /must match/);
+  const fixture = shopifyFixture();
+  const journal = new MemoryAdapter();
+  journal.resolveProduct = savedPlan => fixture.adapter.resolveProduct(savedPlan);
+  journal.failAfterAdjust = true;
+  const service = new ReceivingService(journal);
+  await assert.rejects(service.receive(normalized), (error: ReceivingError) => error.code === 'CONNECTION_UNCERTAIN' && error.committedPossible);
+  assert.equal(journal.state.pending?.request.catalog?.game, 'gundam');
+  const result = await service.receive(normalized);
+  assert.equal(result.duplicate, true);
+  assert.equal(result.product.sku, 'DEFY-S-000001');
+  assert.equal(result.product.game, 'Gundam');
+  assert.equal(result.product.name, gundam.name);
+  assert.equal(result.product.catalogId, 'scrydex:gundam:gd01-booster-display');
+  assert.deepEqual(result.receipt.catalog, gundam);
+  assert.equal(result.receipt.unitCost, '21.50');
+  assert.equal(journal.adjustedQuantity, 2);
+  assert.equal(journal.state.nextSequence, 2);
+  const created = fixture.calls.find(call => call.query.includes('mutation CreateReceivingDraft'))!;
+  assert.equal(created.variables.input.productType, 'Gundam Sealed');
+  assert.equal(created.variables.identifier.customId.value, 'scrydex:gundam:gd01-booster-display');
+  assert.equal(fixture.saved().card_game.value, 'Gundam');
+  assert.equal(fixture.saved().card_scrydex_id.value, gundam.id);
+  assert.equal((await service.receive(normalized)).duplicate, true);
+  assert.equal(journal.adjustedQuantity, 2);
+  assert.equal(fixture.calls.filter(call => call.query.includes('mutation CreateReceivingDraft')).length, 1);
+});
+
+test('manually registered Gundam stock retains its scanned barcode and game when no Scrydex package exists', async () => {
+  const manual = request({catalog: undefined, game: 'Gundam', name: 'Newtype Rising Booster Display', unit: 'Display', quantity: 3, unitCost: '79.50'});
+  assert.equal(Object.hasOwn(manual, 'catalog'), false);
+  const fixture = shopifyFixture();
+  const journal = new MemoryAdapter();
+  journal.resolveProduct = savedPlan => fixture.adapter.resolveProduct(savedPlan);
+  journal.failAfterAdjust = true;
+  const service = new ReceivingService(journal);
+  await assert.rejects(service.receive(manual), (error: ReceivingError) => error.code === 'CONNECTION_UNCERTAIN' && error.committedPossible);
+  const recovered = await service.receive(manual);
+  assert.equal(recovered.duplicate, true);
+  assert.equal(recovered.receipt.game, 'Gundam');
+  assert.equal(recovered.receipt.unitCost, '79.50');
+  assert.equal(recovered.product.game, 'Gundam');
+  assert.equal(recovered.product.barcode, input.barcode);
+  assert.equal(recovered.product.catalogId, barcodeKey(input.barcode));
+  assert.equal(recovered.product.sku, 'DEFY-S-000001');
+  assert.equal(Object.hasOwn(recovered.receipt, 'catalog'), false);
+  assert.equal(journal.catalogReads, 0);
+  assert.equal(journal.adjustedQuantity, 3);
+  assert.equal(journal.state.nextSequence, 2);
+  const draft = fixture.calls.find(call => call.query.includes('mutation CreateReceivingDraft'))!;
+  assert.equal(draft.variables.identifier.customId.value, barcodeKey(input.barcode));
+  assert.equal(draft.variables.input.variants[0].metafields.find((field: Json) => field.key === 'game').value, 'Gundam');
+  assert.equal(fixture.calls.filter(call => call.query.includes('CompleteReceivingCatalogMetadata')).length, 0);
+  assert.equal((await service.receive(manual)).duplicate, true);
+  assert.equal(journal.adjustedQuantity, 3);
+});
+
 test('lost draft or metadata responses recover the same reservation before inventory changes and never duplicate stock', async () => {
   for (const stage of ['creation', 'metadata'] as const) {
     const fixture = shopifyFixture();

@@ -34,6 +34,23 @@ test("sealed search and exact selection authenticate, trim search, and expose on
   assert.deepEqual(calls, [{ game: "pokemon", query: "Paldean Fates" }, { game: "pokemon", id: product.id }]);
 });
 
+test("authenticated Gundam searches and exact selections keep the requested game and safe public fields", async () => {
+  const gundam = { ...product, id: "GD01-s1", game: "gundam" as const,
+    name: "Newtype Rising Booster Pack", setName: "Newtype Rising", unit: "Booster pack" };
+  const calls: unknown[] = [];
+  const { handle } = harness({
+    search: async input => { calls.push(input); return { products: [gundam], hasMore: false }; },
+    get: async input => { calls.push(input); return { ...gundam, privateProviderField: "hidden" }; },
+  });
+  const search = await handle(request({ game: "gundam", query: " Newtype Rising " }));
+  assert.equal(search.status, 200);
+  assert.deepEqual(await search.json(), { products: [gundam], hasMore: false });
+  const detail = await handle(request({ game: "gundam", id: gundam.id }));
+  assert.equal(detail.status, 200);
+  assert.deepEqual(await detail.json(), { product: gundam });
+  assert.deepEqual(calls, [{ game: "gundam", query: "Newtype Rising" }, { game: "gundam", id: "GD01-s1" }]);
+});
+
 test("sealed catalog rejects unauthenticated and cookie-only requests before consuming Scrydex credits", async () => {
   const { handle, calls } = harness();
   for (const authorization of ["", "Bearer undefined", `Bearer ${token}x`, "Basic 123"]) {

@@ -32,6 +32,36 @@ test('catalog requests use a fresh POS session bearer and exact bounded search/d
   }
 });
 
+test('Gundam catalog search and exact selection preserve game identity through the scanner registration flow', async () => {
+  const gundam: CatalogProduct = {id: 'gd01-booster-display', game: 'gundam', name: 'Newtype Rising Booster Display', setName: 'Newtype Rising',
+    language: 'English', unit: 'Display', imageUrl: null, marketCents: null};
+  const requests: unknown[] = [];
+  const client = createSealedCatalogClient({getToken: async () => 'gundam-session', request: async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer gundam-session');
+    const body = JSON.parse(String(init?.body)); requests.push(body);
+    return json('query' in body ? {products: [gundam], hasMore: false} : {product: gundam});
+  }});
+  const controller = createCatalogController({client,
+    findCatalogProduct: async reference => {
+      assert.deepEqual(reference, {game: 'gundam', id: gundam.id});
+      return {ok: true, found: false, product: null};
+    },
+    searchProducts: async ({query}) => { assert.equal(query, gundam.name); return {ok: true, products: [], hasMore: false}; },
+  }, () => {});
+  await controller.search('gundam', '  Newtype Rising  ');
+  assert.equal(controller.getState().kind, 'results');
+  await controller.select('gundam', gundam.id);
+  assert.deepEqual(requests, [{game: 'gundam', query: 'Newtype Rising'}, {game: 'gundam', id: gundam.id}]);
+  const selected = controller.getState();
+  assert.equal(selected.kind, 'selected');
+  if (selected.kind !== 'selected') return;
+  assert.equal(selected.canRegister, true);
+  assert.equal(CATALOG_GAMES[selected.product.game], 'Gundam');
+  assert.deepEqual(catalogIdentity(selected.product), {game: 'gundam', id: gundam.id, name: gundam.name, setName: gundam.setName, language: 'English'});
+  const mismatch = createSealedCatalogClient({getToken: async () => 'session', request: async () => json({product: {...gundam, game: 'riftbound'}})});
+  await assert.rejects(mismatch.detail('gundam', gundam.id), /incomplete/);
+});
+
 test('catalog refuses invalid inputs and absent POS authentication before any request', async () => {
   let requests = 0;
   const client = createSealedCatalogClient({getToken: async () => undefined, request: async () => { requests++; return json({}); }});
