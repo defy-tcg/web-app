@@ -22,7 +22,7 @@ export type BuylistSnapshot = { currency: "USD"; condition: "Near Mint"; languag
 
 export function buylistOffers(marketCents: number) {
   if (!Number.isSafeInteger(marketCents) || marketCents <= 0 || marketCents > 100_000_000) throw new Error("Invalid buylist market price.");
-  return { cashCents: Math.floor((marketCents * 70 + 50) / 100), creditCents: Math.floor((marketCents * 80 + 50) / 100) };
+  return { cashCents: Math.floor((marketCents * 75 + 50) / 100), creditCents: Math.floor((marketCents * 80 + 50) / 100) };
 }
 
 export async function buildBuylistSnapshot(

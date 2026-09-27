@@ -14,7 +14,7 @@ and does not read or mutate inventory, customer records, receipts, or Shopify.
 The Sites worker proxies the response to `/api/buylist`. Scrydex credentials and
 price calculation remain exclusively on the Defy OS server.
 
-Riftbound offers use verified Scrydex **raw market** cents: 70% cash and 80% store credit,
+Riftbound offers use verified Scrydex **raw market** cents: 75% cash and 80% store credit,
 rounded half up to the cent. The Riftbound retail markup never applies. Only the
 resulting offer amounts and public card identity are returned; percentages and
 raw market quotes are not displayed. The complete snapshot is cached for 24 hours

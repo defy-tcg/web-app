@@ -11,7 +11,7 @@ export const maxDuration = 60;
 // Scrydex freshly so a second cache layer cannot extend the quote's lifetime.
 const readBuylist = unstable_cache(() => buildBuylistSnapshot(product => resolveScrydexPrice(product, {
   fetch: (input, options) => fetch(input, { ...options, cache: "no-store", next: { revalidate: 0 } }),
-})), ["defy-public-buylist-v1"], { revalidate: BUYLIST_TTL_SECONDS });
+})), ["defy-public-buylist-v2"], { revalidate: BUYLIST_TTL_SECONDS });
 
 const readPokemonBuylist = unstable_cache(() => buildPokemonBuylistSnapshot(product => resolveScrydexPrice(product, {
   fetch: (input, options) => fetch(input, { ...options, cache: "no-store", next: { revalidate: 0 } }),
