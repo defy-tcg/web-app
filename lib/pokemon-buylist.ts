@@ -1,12 +1,11 @@
 import { BUYLIST_TTL_SECONDS } from "./buylist.ts";
 import { resolveScrydexPrice, type ScrydexProduct, type ScrydexPrice } from "./scrydex.ts";
 
-// The five owner-approved English holofoil printings. Keep the exact TCGplayer
+// The four owner-approved English holofoil printings. Keep the exact TCGplayer
 // set labels so Scrydex's set aliases also require the matching marketplace ID.
 export const POKEMON_BUYLIST_CARDS = [
   { name: "Mew ex", setName: "SV: Scarlet & Violet Promo Cards", cardNumber: "053", finish: "Foil", tcgplayerId: 518871 },
   { name: "Mewtwo", setName: "SV: Scarlet & Violet Promo Cards", cardNumber: "052", finish: "Foil", tcgplayerId: 518872 },
-  { name: "Poliwhirl", setName: "SV: Scarlet & Violet 151", cardNumber: "176/165", finish: "Foil", tcgplayerId: 517034 },
   { name: "Psyduck", setName: "SV: Scarlet & Violet 151", cardNumber: "175/165", finish: "Foil", tcgplayerId: 517035 },
   { name: "Pikachu", setName: "SV: Scarlet & Violet 151", cardNumber: "173/165", finish: "Foil", tcgplayerId: 513721 },
 ] as const;
