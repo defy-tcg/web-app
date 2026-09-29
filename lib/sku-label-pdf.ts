@@ -1,6 +1,6 @@
 import { PDFDocument, PrintScaling, StandardFonts, rgb } from "pdf-lib";
 import qrcode from "qrcode-generator";
-import { isGeneratedSku, MAX_LABEL_COPIES, MAX_LABELS_PER_PRINT, MAX_SKU_BATCH, type SkuLabel } from "./sku-labels.ts";
+import { isGeneratedSku, MAX_LABEL_COPIES, MAX_LABELS_PER_PRINT, MAX_SKU_BATCH, SKU_LABEL_WEBSITE, type SkuLabel } from "./sku-labels.ts";
 
 const MM = 72 / 25.4;
 const WIDTH_MM = 38;
@@ -9,6 +9,10 @@ const QR_MM = 11;
 const DETAILS_MM = 24;
 const LINE_MM = 2;
 const NAME_DPI = 600;
+const BRAND_MM = 2.25;
+const WEBSITE_MM = 1.5;
+const SKU_MM = 2.5;
+const GAP_MM = 0.25;
 
 type NameImage = { png: Uint8Array | string; heightMm: number };
 type RasterizeName = (name: string) => Promise<NameImage>;
@@ -93,6 +97,7 @@ export async function createSkuLabelPdf(
   pdf.catalog.getOrCreateViewerPreferences().setPrintScaling(PrintScaling.None);
   const font = await pdf.embedFont(StandardFonts.CourierBold);
   const brandFont = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const websiteFont = await pdf.embedFont(StandardFonts.Helvetica);
   const nameImages = new Map<string, Promise<{ image: Awaited<ReturnType<typeof pdf.embedPng>>; heightMm: number }>>();
 
   for (const label of labels) {
@@ -111,9 +116,11 @@ export async function createSkuLabelPdf(
     qr.addData(label.sku, "Alphanumeric");
     qr.make();
     const moduleSize = QR_MM * MM / (qr.getModuleCount() + 8);
-    const textHeightMm = nameImage ? 3 + 0.25 + nameImage.heightMm + 0.25 + 2.5 : 3 + 0.25 + 2.5;
+    const textHeightMm = BRAND_MM + SKU_MM + WEBSITE_MM + 2 * GAP_MM +
+      (nameImage ? nameImage.heightMm + GAP_MM : 0);
     const textBottom = (HEIGHT_MM - textHeightMm) / 2;
-    const brandBottom = textBottom + textHeightMm - 3;
+    const brandBottom = textBottom + textHeightMm - BRAND_MM;
+    const skuBottom = textBottom + WEBSITE_MM + GAP_MM;
 
     for (let copy = 0; copy < copies; copy++) {
       const page = pdf.addPage([WIDTH_MM * MM, HEIGHT_MM * MM]);
@@ -131,23 +138,30 @@ export async function createSkuLabelPdf(
       }
       page.drawText("Defy TCG - Redmond", {
         x: 13 * MM,
-        y: brandBottom * MM + (3 * MM - brandFont.heightAtSize(6.5, { descender: false })) / 2,
+        y: brandBottom * MM + (BRAND_MM * MM - brandFont.heightAtSize(6.5, { descender: false })) / 2,
         size: 6.5,
         font: brandFont,
         color: rgb(0, 0, 0),
       });
       if (nameImage) page.drawImage(nameImage.image, {
         x: 13 * MM,
-        y: (textBottom + 2.5 + 0.25) * MM,
+        y: (skuBottom + SKU_MM + GAP_MM) * MM,
         width: DETAILS_MM * MM,
         height: nameImage.heightMm * MM,
       });
       const fontHeight = font.heightAtSize(7, { descender: false });
       page.drawText(label.sku, {
         x: 13 * MM,
-        y: textBottom * MM + (2.5 * MM - fontHeight) / 2,
+        y: skuBottom * MM + (SKU_MM * MM - fontHeight) / 2,
         size: 7,
         font,
+        color: rgb(0, 0, 0),
+      });
+      page.drawText(SKU_LABEL_WEBSITE, {
+        x: 13 * MM,
+        y: textBottom * MM + (WEBSITE_MM * MM - websiteFont.heightAtSize(5, { descender: false })) / 2,
+        size: 5,
+        font: websiteFont,
         color: rgb(0, 0, 0),
       });
     }

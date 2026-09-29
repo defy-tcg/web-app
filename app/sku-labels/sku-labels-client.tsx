@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "@/lib/sku-labels";
+import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg, SKU_LABEL_WEBSITE } from "@/lib/sku-labels";
 import { compareSavedSkuLabels, sameSkuLabelVariant } from "@/lib/sku-label-matching";
 import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-draft";
 import { skuLabelFeedbackText, type SkuLabelFeedback } from "@/lib/sku-label-feedback";
@@ -115,6 +115,7 @@ function QrLabel({ label }: { label: Label }) {
         <div className="sku-paper-brand">Defy TCG - Redmond</div>
         {displayName && <strong>{displayName}</strong>}
         <code>{label.sku}</code>
+        <div className="sku-paper-website">{SKU_LABEL_WEBSITE}</div>
       </div>
     </div>
   );
@@ -574,7 +575,7 @@ export default function SkuLabelsClient() {
           </section>
 
           <section className="sku-panel sku-preview-panel" aria-labelledby="sku-preview-title">
-            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Your permanent QR label.</h2><p>Defy TCG - Redmond + QR + card name + SKU</p></div></div>
+            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Your permanent QR label.</h2><p>Defy TCG - Redmond + QR + card name + SKU + {SKU_LABEL_WEBSITE}</p></div></div>
             <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div>
               {linkedSelection && !labels.length ? <div role="status">
                 {linkedSelection.name && <h3>{linkedSelection.name}</h3>}
@@ -641,6 +642,7 @@ export default function SkuLabelsClient() {
               <div className="sku-thermal-brand">Defy TCG - Redmond</div>
               {label.name.trim() && <div className="sku-thermal-name">{label.name.trim()}</div>}
               <div className="sku-thermal-code">{label.sku}</div>
+              <div className="sku-thermal-website">{SKU_LABEL_WEBSITE}</div>
             </div>
           </section>
         )))}

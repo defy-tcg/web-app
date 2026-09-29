@@ -88,6 +88,7 @@ test("print document contains exact size pages, all copies, safe names and no tr
   assert.equal((html.match(/<div class="sku">DEFY-1234567890<\/div>/g) ?? []).length, 3);
   assert.equal((html.match(/<div class="sku">RB-1000000000<\/div>/g) ?? []).length, 3);
   assert.equal((html.match(/<div class="name">/g) ?? []).length, 3);
+  assert.equal((html.match(/<div class="website">defytcg\.com<\/div>/g) ?? []).length, 6);
   assert.match(html, /&lt;script&gt;&amp;&quot;&#39; test/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /\.label \+ \.label \{ break-before: page; page-break-before: always; \}/);

@@ -3,6 +3,7 @@ import qrcode from "qrcode-generator";
 export const MAX_SKU_BATCH = 100;
 export const MAX_LABEL_COPIES = 100;
 export const MAX_LABELS_PER_PRINT = 1_000;
+export const SKU_LABEL_WEBSITE = "defytcg.com";
 
 export type SkuLabel = { sku: string; name: string };
 
@@ -83,7 +84,7 @@ export function createSkuLabelDocument(labels: readonly SkuLabel[], copies: numb
   const pages = labels.flatMap(({ sku, name }) => {
     const svg = skuQrSvg(sku);
     const displayName = Array.from(name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
-    const label = `<section class="label"><div class="qr">${svg}</div><div class="details"><div class="brand">Defy TCG - Redmond</div>${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div></div></section>`;
+    const label = `<section class="label"><div class="qr">${svg}</div><div class="details"><div class="brand">Defy TCG - Redmond</div>${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div><div class="website">${SKU_LABEL_WEBSITE}</div></div></section>`;
     return Array<string>(copies).fill(label);
   }).join("\n");
   return `<!DOCTYPE html>
@@ -98,9 +99,10 @@ body { width: 38mm; -webkit-print-color-adjust: exact; print-color-adjust: exact
 .qr { width: 11mm; height: 11mm; flex: 0 0 11mm; }
 .qr svg { display: block; width: 11mm; height: 11mm; shape-rendering: crispEdges; }
 .details { width: 24mm; min-width: 0; display: grid; gap: .25mm; font-family: Arial, sans-serif; }
-.brand { display: flex; align-items: center; height: 3mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
+.brand { display: flex; align-items: center; height: 2.25mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
 .name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
 .sku { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
+.website { font: 400 5pt/1.5mm Arial, sans-serif; white-space: nowrap; }
 </style></head><body>
 ${pages}
 </body></html>`;

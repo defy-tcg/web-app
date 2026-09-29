@@ -38,9 +38,10 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-qr { position: absolute; left: 2.6316cqw; top: 2.6316cqw; width: 28.9474cqw; height: 28.9474cqw; }
 .sku-qr svg { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; }
 .sku-paper-text { position: absolute; left: 34.2105cqw; top: 50%; transform: translateY(-50%); width: 63.1579cqw; min-width: 0; display: grid; gap: .6579cqw; }
-.sku-paper-brand { display: flex; align-items: center; height: 7.8947cqw; font: 700 6.0344cqw/1 Arial, sans-serif; white-space: nowrap; }
+.sku-paper-brand { display: flex; align-items: center; height: 5.9211cqw; font: 700 6.0344cqw/1 Arial, sans-serif; white-space: nowrap; }
 .sku-paper-text strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 10.5263cqw; overflow: hidden; overflow-wrap: anywhere; font: 400 5.106cqw/5.2632cqw Arial, sans-serif; }
 .sku-paper-text code { display: block; font: 700 6.4985cqw/6.5789cqw "Courier New", monospace; white-space: nowrap; color: #000; padding: 0; border: 0; border-radius: 0; background: none; }
+.sku-paper-website { font: 400 4.6418cqw/3.9474cqw Arial, sans-serif; white-space: nowrap; }
 .sku-print-settings { display: flex; align-items: flex-end; gap: 20px; margin-top: 22px; }
 .sku-print-settings label { width: 110px; }
 .sku-print-settings input { width: 100%; }
@@ -174,9 +175,10 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-thermal-qr { width: 11mm; height: 11mm; flex: 0 0 11mm; }
   .sku-thermal-qr svg { display: block; width: 11mm; height: 11mm; shape-rendering: crispEdges; }
   .sku-thermal-details { width: 24mm; min-width: 0; display: grid; gap: .25mm; font-family: Arial, sans-serif; }
-  .sku-thermal-brand { display: flex; align-items: center; height: 3mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
+  .sku-thermal-brand { display: flex; align-items: center; height: 2.25mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
   .sku-thermal-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
   .sku-thermal-code { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
+  .sku-thermal-website { font: 400 5pt/1.5mm Arial, sans-serif; white-space: nowrap; }
 }
 .sku-card-import { margin-bottom: 24px; border-top: 3px solid var(--green2); }
 .sku-card-import .sku-panel-heading { margin-bottom: 20px; }

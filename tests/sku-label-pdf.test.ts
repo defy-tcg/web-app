@@ -32,6 +32,7 @@ test("PDF labels have one exact 38 by 13 mm page per copy and request actual-siz
   assert.match(await pageContent(bytes, 3), new RegExp(Buffer.from("RB-1000000000").toString("hex").toUpperCase()));
   for (let page = 0; page < 6; page++) {
     assert.match(await pageContent(bytes, page), new RegExp(Buffer.from("Defy TCG - Redmond").toString("hex").toUpperCase()));
+    assert.match(await pageContent(bytes, page), new RegExp(Buffer.from("defytcg.com").toString("hex").toUpperCase()));
   }
 });
 
@@ -65,7 +66,7 @@ test("Unicode names reach the rasterizer intact, are normalized, and reuse one e
   assert.equal(document.getPage(0).node.Resources()?.lookup(PDFName.of("XObject"), PDFDict).keys().length, 1);
 });
 
-test("PDF fits the longest details block with the Redmond heading", async () => {
+test("PDF fits the longest details block with the Redmond heading and website footer", async () => {
   const bytes = await createSkuLabelPdf([{ sku: "DEFY-1234567890", name: "Long name" }], 3,
     async () => ({ png: pixel, heightMm: 4 }));
   const document = await PDFDocument.load(bytes);
@@ -75,7 +76,7 @@ test("PDF fits the longest details block with the Redmond heading", async () => 
     .map((image) => /1 0 0 1 ([\d.]+) ([\d.]+) cm/.exec(image)!);
   assert.equal(imagePositions.length, 1);
   assert.ok(Math.abs(Number(imagePositions[0][1]) - 13 * mm) < 0.00001);
-  assert.ok(Math.abs(Number(imagePositions[0][2]) - 4.25 * mm) < 0.00001, "name fits between heading and SKU");
+  assert.ok(Math.abs(Number(imagePositions[0][2]) - 5.5 * mm) < 0.00001, "two-line name fits between heading and SKU above the website");
 });
 
 test("name wrapping handles words and long Unicode names with at most two fitting lines", () => {
