@@ -2,9 +2,11 @@
 
 The public storefront's **Sell us your cards!** header link opens `/buylist`.
 It displays a Pokémon cash buylist alongside cash and store-credit offers for
-the nine approved standard English Near Mint Riftbound printings.
+the ten approved standard English Near Mint Riftbound printings.
 Stacked Deck and Hidden Blade are excluded from Riftbound.
 Defy uses its normal/nonfoil printing; the other listed cards use foil.
+Vex, Apathetic uses the standard Unleashed 150/219 foil printing
+(TCGplayer product 685949).
 
 `GET /api/public/buylist` is the only public Defy OS inventory-adjacent endpoint.
 It has fixed allowlists in `lib/buylist.ts` and `lib/pokemon-buylist.ts`, accepts
@@ -19,7 +21,7 @@ rounded half up to the cent. The Riftbound retail markup never applies. Only the
 resulting offer amounts and public card identity are returned; percentages and
 raw market quotes are not displayed. The complete snapshot is cached for 24 hours
 and refreshed on demand. Ordinary page loads reuse it rather than issuing fresh
-Scrydex requests. Each refresh makes at most nine requests, at concurrency three.
+Scrydex requests. Each refresh makes at most ten requests, at concurrency three.
 A failed or ambiguous quote is unavailable, without another price feed fallback.
 Failures retry at the next daily refresh. Expired offers are hidden in both the
 server response and browser while the snapshot refreshes. Final condition and

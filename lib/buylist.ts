@@ -12,6 +12,7 @@ export const BUYLIST_CARDS = [
   { name: "Zhonya's Hourglass", setName: "Origins", cardNumber: "077/298", finish: "Foil", tcgplayerId: 652855 },
   { name: "Tideturner", setName: "Origins", cardNumber: "199/298", finish: "Foil", tcgplayerId: 652990 },
   { name: "Scuttle Crab", setName: "Unleashed", cardNumber: "053/219", finish: "Foil", tcgplayerId: 685519 },
+  { name: "Vex, Apathetic", setName: "Unleashed", cardNumber: "150/219", finish: "Foil", tcgplayerId: 685949 },
 ] as const;
 export const BUYLIST_TTL_SECONDS = 86_400;
 export type BuylistOffer = (typeof BUYLIST_CARDS)[number] & {
