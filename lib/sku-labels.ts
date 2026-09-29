@@ -3,7 +3,7 @@ import qrcode from "qrcode-generator";
 export const MAX_SKU_BATCH = 100;
 export const MAX_LABEL_COPIES = 100;
 export const MAX_LABELS_PER_PRINT = 1_000;
-export const SKU_LABEL_WEBSITE = "defytcg.com";
+export const SKU_LABEL_WEBSITE = "Buy singles at defytcg.com";
 
 export type SkuLabel = { sku: string; name: string };
 

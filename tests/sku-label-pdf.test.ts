@@ -32,7 +32,7 @@ test("PDF labels have one exact 38 by 13 mm page per copy and request actual-siz
   assert.match(await pageContent(bytes, 3), new RegExp(Buffer.from("RB-1000000000").toString("hex").toUpperCase()));
   for (let page = 0; page < 6; page++) {
     assert.match(await pageContent(bytes, page), new RegExp(Buffer.from("Defy TCG - Redmond").toString("hex").toUpperCase()));
-    assert.match(await pageContent(bytes, page), new RegExp(Buffer.from("defytcg.com").toString("hex").toUpperCase()));
+    assert.match(await pageContent(bytes, page), new RegExp(Buffer.from("Buy singles at defytcg.com").toString("hex").toUpperCase()));
   }
 });
 
