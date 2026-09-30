@@ -17,7 +17,7 @@ test("Pokémon cash offers pay 80% of raw market cents with no retail markup or 
   for (const invalid of [0, -1, 1.5, NaN, Infinity, 100_000_001]) assert.throws(() => pokemonBuylistCash(invalid));
 });
 
-test("the fixed Pokémon cash-only list contains exactly the four approved English Near Mint printings", async () => {
+test("the fixed Pokémon cash-only list contains only the two approved English Near Mint promos", async () => {
   let active = 0, max = 0;
   const requests: ScrydexProduct[] = [];
   const result = await buildPokemonBuylistSnapshot(async product => {
@@ -27,10 +27,9 @@ test("the fixed Pokémon cash-only list contains exactly the four approved Engli
     active--;
     return price(10000);
   }, () => now);
-  assert.equal(max, 3);
+  assert.equal(max, 2);
   assert.deepEqual(requests.map(card => [card.name, card.cardNumber, card.tcgplayerId]), [
     ["Mew ex", "053", 518871], ["Mewtwo", "052", 518872],
-    ["Psyduck", "175/165", 517035], ["Pikachu", "173/165", 513721],
   ]);
   for (const product of requests) {
     assert.equal(product.game, "Pokémon");
@@ -53,18 +52,21 @@ test("the fixed Pokémon cash-only list contains exactly the four approved Engli
 });
 
 test("failed or invalid Pokémon quotes remain unavailable without substituting screenshot prices", async () => {
-  const result = await buildPokemonBuylistSnapshot(async product => {
-    if (product.tcgplayerId === 518871) throw new Error("secret provider response");
-    return price(product.tcgplayerId === 518872 ? 0 : 4120);
-  }, () => now);
-  assert.equal(result.cards.length, 4);
-  for (const card of result.cards.slice(0, 2)) {
-    assert.equal(card.cashCents, null);
-    assert.equal(card.status, "unavailable");
+  for (const invalid of ["provider-error", "invalid-price"]) {
+    const result = await buildPokemonBuylistSnapshot(async product => {
+      if (product.tcgplayerId === 518871) {
+        if (invalid === "provider-error") throw new Error("secret provider response");
+        return price(0);
+      }
+      return price(4120);
+    }, () => now);
+    assert.equal(result.cards.length, 2);
+    assert.equal(result.cards[0].cashCents, null);
+    assert.equal(result.cards[0].status, "unavailable");
+    assert.equal(result.cards[1].cashCents, 3296);
+    assert.equal(result.cards[1].status, "available");
+    assert.equal(JSON.stringify(result).includes("secret provider response"), false);
   }
-  assert.equal(result.cards[2].cashCents, 3296);
-  assert.equal(result.cards[2].status, "available");
-  assert.equal(JSON.stringify(result).includes("secret provider response"), false);
 });
 
 test("Pokémon snapshot expiry removes cash offers without mutating a fresh cached snapshot", async () => {
@@ -72,7 +74,7 @@ test("Pokémon snapshot expiry removes cash offers without mutating a fresh cach
   assert.equal(currentPokemonBuylist(snapshot, now + 86_399_999), snapshot);
   for (const time of [now - 1, now + 86_400_000, now + 172_800_000]) {
     const result = currentPokemonBuylist(snapshot, time);
-    assert.equal(result.cards.length, 4);
+    assert.equal(result.cards.length, 2);
     assert(result.cards.every(card => card.cashCents === null && card.status === "unavailable"));
     assert.equal(JSON.stringify(result).includes("creditCents"), false);
   }

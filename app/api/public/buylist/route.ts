@@ -15,7 +15,7 @@ const readBuylist = unstable_cache(() => buildBuylistSnapshot(product => resolve
 
 const readPokemonBuylist = unstable_cache(() => buildPokemonBuylistSnapshot(product => resolveScrydexPrice(product, {
   fetch: (input, options) => fetch(input, { ...options, cache: "no-store", next: { revalidate: 0 } }),
-})), ["defy-public-pokemon-buylist-v2"], { revalidate: BUYLIST_TTL_SECONDS });
+})), ["defy-public-pokemon-buylist-v3"], { revalidate: BUYLIST_TTL_SECONDS });
 
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;

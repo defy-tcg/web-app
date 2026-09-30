@@ -33,15 +33,13 @@ The Pokémon selection contains exactly these English Near Mint holofoil cards:
 | --- | --- | --- |
 | Mew ex — 053 | Scarlet & Violet Promo Cards | 518871 |
 | Mewtwo — 052 | Scarlet & Violet Promo Cards | 518872 |
-| Psyduck — 175/165 | Scarlet & Violet 151 | 517035 |
-| Pikachu — 173/165 | Scarlet & Violet 151 | 513721 |
 
 `GET /api/public/buylist?game=pokemon` returns only **80% cash** offers calculated
 from current verified Scrydex raw USD market cents, rounded half up. It does not
 use the website selling price or Pokémon's 1.5% retail markup, and it contains no
 store-credit offer. The storefront's `/api/buylist?game=pokemon` proxy passes this
 fixed selection through. Pokémon has its own 24-hour snapshot cache and makes at
-most four provider requests per refresh, at concurrency three. Its response
+most two provider requests per refresh, at concurrency two. Its response
 includes the game, card identity, condition, language, freshness dates, and
 cash amounts; missing or expired quotes have `cashCents: null` and an unavailable
 status. It follows the same exact-printing verification and no-fallback policy
