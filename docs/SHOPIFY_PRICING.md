@@ -8,7 +8,8 @@ not a POS extension that intercepts each physical scan or reprices an open cart.
 Sync the POS device and remove/re-add an already-carted item to use a new price.
 
 Pokémon singles, including Japanese cards, use Scrydex raw market plus 1.5%.
-Riftbound singles use raw market plus 8% below $40 raw market, or 6.5% at $40
+Riftbound singles use raw market plus 11% from $2.00 through $10.00 raw market,
+inclusive, 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00
 and above. Both round half-up to cents.
 Other supported products, including Riftbound sealed, use raw market without
 markup. Exact English printings and positive USD quotes are required. Scrydex

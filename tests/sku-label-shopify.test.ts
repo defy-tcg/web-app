@@ -213,9 +213,9 @@ test("QR registration creates one exact card, publishes only POS, and caches con
   assert.deepEqual(f.calls.filter(call => call.name.startsWith("QrLinkPublish")).map(call => call.variables.input), [[{ publicationId: "gid://shopify/Publication/2" }], [{ publicationId: "gid://shopify/Publication/2" }]]);
   const statuses = await getSkuLabelShopifyStatuses([card], f.deps); assert.equal(statuses[0].status, "ready"); assert.ok(statuses[0].checkedAt);
 });
-test("QR linking uses 8% below $40 raw market and retains 6.5% at or above it", async () => {
+test("QR linking shares the inclusive $2–$10 Riftbound band and raw-market $40 threshold", async () => {
   const riftboundCard = { ...card, game: "Riftbound" };
-  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const f = fixture();
     f.deps.resolvePrice = async () => ({ cents: market, matchedName: riftboundCard.name, groupName: riftboundCard.setName,
       variation: riftboundCard.finish, scrydexId: "fixture-riftbound", url: "https://example.com" });

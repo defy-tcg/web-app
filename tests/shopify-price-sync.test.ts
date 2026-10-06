@@ -33,7 +33,7 @@ function shopify(variant: PricingVariant, options: { duplicates?: boolean; chang
   return { graphql, writes };
 }
 
-test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 8% below $40", async () => {
+test("Shopify singles preserve exact printing, condition and finish, using Scrydex market + 8% below $2", async () => {
   const variant = single(); const client = shopify(variant);
   const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-18T12:00:00Z", resolve: async identity => {
     assert.equal(identity.tcgplayerId, 101); assert.equal(identity.condition, "Lightly Played"); assert.equal(identity.finish, "Foil"); return quote;
@@ -45,8 +45,8 @@ test("Shopify singles preserve exact printing, condition and finish, using Scryd
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
 });
 
-test("scheduled Riftbound pricing shares the raw-market $40 threshold", async () => {
-  for (const [market, expected] of [[3999, 4319], [4000, 4260], [4001, 4261]]) {
+test("scheduled Riftbound pricing shares the inclusive $2–$10 band and raw-market $40 threshold", async () => {
+  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const variant = single(); const client = shopify(variant);
     const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-26T12:00:00Z", resolve: async () => ({ ...quote, cents: market }) });
     assert.equal(result.marketCents, market);

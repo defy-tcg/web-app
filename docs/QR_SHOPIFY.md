@@ -101,9 +101,10 @@ review rather than a fresh mutation.
 
 TCGplayer links identify cards; their listed prices are not trusted selling
 prices. Linking requires an exact, positive Scrydex USD quote. The existing policy
-adds 1.5% for Pokémon singles (including Japanese), 8% for Riftbound singles below
-$40 raw market or 6.5% at $40 and above,
-and uses the raw market price for other supported games. Prices round half-up
+adds 1.5% for Pokémon singles (including Japanese). Riftbound singles receive
+11% from $2.00 through $10.00 raw market, inclusive, 8% below $2.00 or above
+$10.00 but below $40.00, and 6.5% at $40.00 and above. The policy
+uses the raw market price for other supported games. Prices round half-up
 to cents. Manual cards require a positive entered sale price. An unavailable,
 unsupported, ambiguous, or nonpositive price blocks readiness instead of
 publishing a free item. Entered acquisition cost remains separate from market

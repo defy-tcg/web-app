@@ -4,6 +4,9 @@ export const SCRYDEX_PRICE_SOURCE = "scrydex";
 export const RIFTBOUND_SINGLE_MARKUP_PERCENT = 6.5;
 export const RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT = 8;
 export const RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS = 4_000;
+export const RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT = 11;
+export const RIFTBOUND_SINGLE_BAND_MIN_CENTS = 200;
+export const RIFTBOUND_SINGLE_BAND_MAX_CENTS = 1_000;
 export const POKEMON_SINGLE_MARKUP_PERCENT = 1.5;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
@@ -22,8 +25,10 @@ export function scrydexSellPriceCents(marketCents: number, product: PricingProdu
   if (product.productType.trim().toLowerCase() !== "single") return marketCents;
   const game = gameFromAlias(product.game)?.key;
   // Select the tier from raw market, never the previously marked-up selling price.
-  const riftboundMarkup = marketCents < RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS
-    ? RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT : RIFTBOUND_SINGLE_MARKUP_PERCENT;
+  const riftboundMarkup = marketCents >= RIFTBOUND_SINGLE_BAND_MIN_CENTS && marketCents <= RIFTBOUND_SINGLE_BAND_MAX_CENTS
+    ? RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT
+    : marketCents < RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS
+      ? RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT : RIFTBOUND_SINGLE_MARKUP_PERCENT;
   const markupPercent = game === "riftbound" ? riftboundMarkup
     : game === "pokemon" || game === "pokemon-japanese" ? POKEMON_SINGLE_MARKUP_PERCENT : 0;
   // Integer basis points keep fractional percentages and half-cent ties exact.
