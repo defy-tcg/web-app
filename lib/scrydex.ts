@@ -166,7 +166,7 @@ function gundamRarityAnnotation(product: ScrydexProduct, game: string) {
 function pokemonNameAliases(product: ScrydexProduct) {
   const name = productNameWithoutGame(product);
   const names = new Set([name]);
-  const rarities = new Set<"secret" | "rainbow">();
+  const rarities = new Set<"secret" | "rainbow" | "prime">();
   let pokemonCenterStamp = false;
   let metalCard151 = false;
   const printedNumber = numberKey(product.cardNumber);
@@ -182,9 +182,9 @@ function pokemonNameAliases(product: ScrydexProduct) {
       && [printedNumber, printedNumber.split("/")[0]].includes(numberKey(parentheticalNumber[1]))) {
       aliases.push(value.slice(0, parentheticalNumber.index));
     }
-    const rarity = /\s*\(\s*(Secret|Rainbow)(?:\s+Rare)?\s*\)\s*$/i.exec(value);
+    const rarity = /\s*\(\s*(Secret|Rainbow|Prime)(?:\s+Rare)?\s*\)\s*$/i.exec(value);
     if (rarity && rarity.index > 0) {
-      rarities.add(identity(rarity[1]) as "secret" | "rainbow");
+      rarities.add(identity(rarity[1]) as "secret" | "rainbow" | "prime");
       aliases.push(value.slice(0, rarity.index));
     }
     const center = /\s*\(Pok[eé]mon Center Exclusive\)\s*$/i.exec(value);
@@ -202,19 +202,21 @@ function pokemonNameAliases(product: ScrydexProduct) {
   return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp, metalCard151 };
 }
 
-function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow">, candidate: ObjectValue) {
+function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow" | "prime">, candidate: ObjectValue) {
   const values = [candidate.rarity, candidate.rarity_code].filter(value => value !== undefined && value !== null && value !== "");
   // Both fields are used by Scrydex. Any supplied field must agree; a valid
   // marketplace ID must not conceal absent or contradictory rarity metadata.
   const classes = values.map(value => {
     if (["rare secret", "secret rare"].includes(identity(value))) return "secret";
     if (["rare rainbow", "rainbow rare"].includes(identity(value))) return "rainbow";
+    if (identity(value) === "rare prime") return "prime";
     return undefined;
   });
   if (!classes.length || !classes[0] || !classes.every(value => value === classes[0])) return false;
   // TCGplayer's Secret label covers both secret and rainbow printings. An
-  // explicit Rainbow label is narrower; the full number still identifies it.
-  return rarities.every(rarity => rarity === "secret" || classes[0] === "rainbow");
+  // explicit Rainbow or Prime label requires its own verified rarity.
+  return rarities.every(rarity => rarity === "secret"
+    ? classes[0] === "secret" || classes[0] === "rainbow" : classes[0] === rarity);
 }
 
 function tcgplayerNameAliases(product: ScrydexProduct, game: string) {
