@@ -138,7 +138,7 @@ sell at **market × 1.11 from $2.00 through $10.00 raw market, inclusive**,
 **market × 1.065 at $40.00 and above**, rounded half-up to the nearest USD cent:
 a $10.00 market price produces a $11.10 selling price, while $40.00 produces
 $42.60. Pokémon singles (including Japanese)
-use a 1.5% markup. Other games and product types, including Riftbound sealed
+use a 1.7% markup. Other games and product types, including Riftbound sealed
 products, sell at the unmarked market price. Repeated
 refreshes do not compound the markup. Market and selling-price fields are
 read-only for Scrydex-managed items.

@@ -58,7 +58,7 @@ market price multiplied by quantity. Riftbound singles have a customer-facing
 selling price of Scrydex market plus 11% from $2.00 through $10.00 raw market,
 inclusive, 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00
 and above; Pokémon singles (including Japanese)
-use market plus 1.5%. Both round half-up to cents. Other games
+use market plus 1.7%. Both round half-up to cents. Other games
 and product types, including Riftbound sealed products, sell at the raw market
 price. The Riftbound singles selling price is still sent to
 Shopify when receiving, but is not displayed in intake review. Quotes require a

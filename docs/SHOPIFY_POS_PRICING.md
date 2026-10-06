@@ -5,7 +5,7 @@ finds the exact card/printing/condition and verified language in Scrydex, and up
 existing Shopify variant's customer selling price. Open this tile before scanning;
 Shopify's standard search/scanner does not call this integration.
 
-Pokémon singles, including Japanese cards, receive a 1.5% increase over raw
+Pokémon singles, including Japanese cards, receive a 1.7% increase over raw
 market. Riftbound singles receive 11% from $2.00 through $10.00 raw market,
 inclusive, 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00
 and above. Both round half-up to the nearest cent.

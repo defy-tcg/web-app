@@ -64,7 +64,7 @@ test("sealed products match registered codes and keep raw market pricing", async
   assert.equal(result.priceCents, 12999);
 });
 
-test("scheduled Japanese Pokémon pricing verifies language and adds 1.5% to the raw USD market", async () => {
+test("scheduled Japanese Pokémon pricing verifies language and adds 1.7% to the raw USD market", async () => {
   const saved: LegacyPricingProduct = { id: 19, sku: "DEFY-3448510729", barcode: null,
     name: "Charmander - 168/165", game: "Pokémon (Japanese)", setName: "SV2a: Pokemon Card 151", cardNumber: "168/165",
     productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 566513 };
@@ -79,9 +79,9 @@ test("scheduled Japanese Pokémon pricing verifies language and adds 1.5% to the
     assert.equal(identity.game, saved.game); assert.equal(identity.tcgplayerId, 566513);
     return { ...quote, cents: 2773, scrydexId: "sv2a_ja-168" };
   } });
-  assert.equal(result.priceCents, 2815);
+  assert.equal(result.priceCents, 2820);
   assert.equal(result.marketCents, 2773);
-  assert.equal((client.writes[0].variants as { price: string }[])[0].price, "28.15");
+  assert.equal((client.writes[0].variants as { price: string }[])[0].price, "28.20");
   assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
   for (const language of ["English", "Korean", ""]) {
     const changed = structuredClone(variant);
@@ -95,7 +95,7 @@ test("scheduled Japanese Pokémon pricing verifies language and adds 1.5% to the
   assert.throws(() => pricingIdentity(variant, [{ ...saved, game: "Pokémon" }], catalog));
 });
 
-test("scheduled English Pokémon pricing rounds a 1.5% markup half-up and refreshes an old market-only price", async () => {
+test("scheduled English Pokémon pricing rounds a 1.7% markup half-up and refreshes an old market-only price", async () => {
   const saved: LegacyPricingProduct = { id: 20, sku: "DEFY-3099353165", barcode: null,
     name: "Nidoking - 174/165", game: "Pokémon", setName: "SV: Scarlet & Violet 151", cardNumber: "174/165",
     productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 517029 };
@@ -105,15 +105,17 @@ test("scheduled English Pokémon pricing rounds a 1.5% markup half-up and refres
     product: { ...single().product, productType: "Pokémon single", catalogId: { value: "single:tcgplayer:printing:517029" },
       storefrontCatalogId: { value: "517029" }, game: { value: saved.game }, cardName: { value: saved.name },
       setName: { value: saved.setName }, cardNumber: { value: saved.cardNumber }, language: { value: "English" } } };
-  const client = shopify(variant);
-  const result = await updateVariantPrice({ variant, legacy: [saved], catalog, ...client, now: "2026-09-24T12:00:00Z", resolve: async identity => {
-    assert.equal(identity.game, saved.game); assert.equal(identity.tcgplayerId, 517029);
-    return { ...quote, cents: 1100, scrydexId: "sv3pt5-174" };
-  } });
-  assert.equal(result.priceCents, 1117);
-  assert.equal(result.marketCents, 1100);
-  assert.equal((client.writes[0].variants as { price: string }[])[0].price, "11.17");
-  assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  for (const [market, expected] of [[29, 29], [30, 31], [500, 509], [1100, 1119]]) {
+    const client = shopify(variant);
+    const result = await updateVariantPrice({ variant, legacy: [saved], catalog, ...client, now: "2026-09-24T12:00:00Z", resolve: async identity => {
+      assert.equal(identity.game, saved.game); assert.equal(identity.tcgplayerId, 517029);
+      return { ...quote, cents: market, scrydexId: "sv3pt5-174" };
+    } });
+    assert.equal(result.priceCents, expected);
+    assert.equal(result.marketCents, market);
+    assert.equal((client.writes[0].variants as { price: string }[])[0].price, (expected / 100).toFixed(2));
+    assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  }
 });
 
 test("a secondary custom QR matches Defy for scheduled pricing without changing any barcode", async () => {

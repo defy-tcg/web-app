@@ -63,7 +63,7 @@ Development, and changes apply to subsequent deployments.
 The master spreadsheet ID/tab are in `lib/master-inventory-sheet.ts`; image
 matching and the bundled Riftbound catalog use public TCGCSV/TCGplayer resources.
 Price refreshes and singles intake use Scrydex's raw USD market prices.
-Pokémon singles (including Japanese) receive a 1.5% customer selling-price markup,
+Pokémon singles (including Japanese) receive a 1.7% customer selling-price markup,
 and Riftbound singles receive 11% from $2.00 through $10.00 raw market, inclusive,
 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00 and above,
 rounded half-up to cents. Other games and
