@@ -203,7 +203,12 @@ are identified for stock management in Inventory. A new linked card defaults to
 zero starting quantity; staff can enter its actual starting quantity on first
 save. Shopify receives that original quantity once. Linked-card selling prices
 come from an exact Scrydex quote under the existing pricing policy; manual cards
-need a positive entered selling price. Clearing the current batch, retrying a
+need a positive entered selling price. Before Shopify creation begins, a saved
+TCGplayer printing missing from Scrydex or lacking a verified positive price can
+use an explicitly confirmed final selling price. The server verifies the reviewed
+card, retains its exact catalog identity, and saves the manual approval in the
+existing Shopify QR journal. It applies no automatic markup or substitute feed;
+ambiguous matches and provider failures remain blocked. Clearing the current batch, retrying a
 save, and reprinting do not receive more stock.
 
 The **Change inventory** panel in **Saved card details** offers **Add copies**

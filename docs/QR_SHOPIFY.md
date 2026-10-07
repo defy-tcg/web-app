@@ -198,6 +198,20 @@ variants, and retains a recoverable correction intent across interrupted request
 After correction, retry the Shopify link using the same QR. An existing or
 uncertain Shopify product cannot be relabeled through this flow.
 
+When the exact TCGplayer printing is missing from Scrydex, or lacks a verified
+positive market price, retry its Shopify link to check current availability.
+The blocked label offers **Set a manual selling price**. Confirm the physical
+card and enter its final USD selling price. The server rechecks the saved
+TCGplayer identity and Scrydex availability, then records the explicit price
+approval in the existing Shopify QR journal. No alternate printing or price
+feed supplies this amount, and no automatic markup is added. The approval keeps
+the original QR and starting-stock receipt and resumes across interrupted
+requests. It cannot reprice a listing whose creation or stock transfer has
+already begun, or bypass ambiguous matches, incomplete card details, or a
+provider outage. Automatic price refreshes continue to require exact Scrydex
+quotes; a missing promo remains at its approved manual price until a verified
+quote becomes available.
+
 Gundam imports recognize trailing **C**, **U**, **R**, and **LR** rarity labels,
 with or without **+**, only when Scrydex confirms the base rarity and exact
 TCGplayer product ID. A **+** card saved as Foil can use Scrydex's **altArt**

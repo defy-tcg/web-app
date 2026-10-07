@@ -233,3 +233,11 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-catalog-correction { margin: 1rem 0; }
 .sku-catalog-correction .sku-catalog-confirmation { display: flex; align-items: flex-start; gap: .6rem; }
 .sku-catalog-correction .sku-catalog-confirmation input { width: auto; margin: .2rem 0 0; flex-shrink: 0; }
+.sku-manual-price { grid-column: 2 / -1; border: 1px solid var(--line); border-radius: 8px; padding: 18px; background: var(--surface-muted); }
+.sku-manual-price > strong { font-size: 14px; }
+.sku-manual-price p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.sku-manual-price fieldset { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; border: 0; padding: 0; margin: 16px 0; }
+.sku-manual-price fieldset > label:first-child { flex: 0 1 180px; }
+.sku-manual-price .sku-manual-confirmation { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 240px; font-size: 12px; line-height: 1.5; }
+.sku-manual-price .sku-manual-confirmation input { width: auto; margin: 3px 0 0; flex-shrink: 0; }
+@media (max-width: 600px) { .sku-label-row > .sku-manual-price { grid-column: 1 / -1; } }

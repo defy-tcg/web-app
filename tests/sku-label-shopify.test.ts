@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, readSkuLabelStockTarget, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
+import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, readSkuLabelStockTarget, setSkuLabelManualPrice, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
 import { ScrydexError, selectScrydexPrice, type ScrydexErrorCode } from "../lib/scrydex.ts";
 import { digest } from "../lib/singles/intake.ts";
+import { SkuLabelInventoryError } from "../lib/sku-label-inventory.ts";
 
 const card: SkuLabelShopifyProduct = { id: 77, sku: "DEFY-9775456393", name: "Time Warp", game: "Magic: The Gathering", setName: "Test set", cardNumber: "122", condition: "Near Mint", finish: "Foil", tcgplayerId: 652905, costCents: 0, listPriceCents: 0, quantity: 0, initialQuantity: 0 };
 type Barcode = { value: string; type: string | null };
@@ -112,7 +113,7 @@ function fixture(options: { missingScopes?: boolean; priceError?: boolean; start
           break;
         }
         case "QrLinkStatuses": { const fields: Record<string, unknown> = {}; for (const match of query.matchAll(/(q\d+): metafield\(namespace: "[^"]+", key: "([^"]+)"\)/g)) fields[match[1]] = journals.get(match[2]) || null; result = { shop: fields }; break; }
-        case "QrLinkCode": {
+        case "QrLinkCode": case "QrManualPriceCodes": {
           const code = /sku:"([^"]+)"/.exec(String(variables.query))?.[1];
           const candidates = options.codeSearchCandidates ?? (product?.variants.nodes || []).filter(item => item.sku === code || item.barcodes.nodes.some(barcode => barcode.value === code));
           result = { productVariants: page(candidates.map(item => ({ ...clone(item), product: { id: product!.id } })), "productVariants") }; break;
@@ -239,7 +240,7 @@ test("unknown Scrydex price never publishes a zero-price linked card", async () 
 test("pricing failures distinguish catalog, price, configuration, and service issues without exposing upstream details", async t => {
   const warning = t.mock.method(console, "warn", () => {});
   const cases: [ScrydexErrorCode, RegExp][] = [
-    ["not_found", /catalog mapping needs review/], ["price_unavailable", /no verified positive USD market price/],
+    ["not_found", /no verified record for this exact card printing/], ["price_unavailable", /no verified positive USD market price/],
     ["not_configured", /pricing is not configured/], ["unsupported", /does not support/],
     ["incomplete_identity", /needs its exact name/], ["ambiguous", /multiple possible matches/],
     ["upstream_error", /Retry this saved QR shortly/],
@@ -253,6 +254,7 @@ test("pricing failures distinguish catalog, price, configuration, and service is
     assert.doesNotMatch(result.message, /Private|credentials/);
     assert.equal(f.product(), null);
     assert.equal(f.quantityAdded(), 0);
+    assert.equal(result.manualPriceAllowed, ["not_found", "price_unavailable"].includes(code) ? true : undefined);
     assert.deepEqual(warning.mock.calls.at(-1)?.arguments, ["[sku-label-shopify] Scrydex pricing blocked linking", { sku: card.sku, code }]);
     assert.equal((await getSkuLabelShopifyStatuses([card], f.deps))[0].message, result.message);
   }
@@ -996,4 +998,161 @@ test("normal linking cannot overwrite or bypass an unfinished explicit catalog c
   assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
   assert.deepEqual(JSON.parse(f.journals.get(key)!.value).catalogCorrectionIntent, intent);
   assert.ok(!f.calls.slice(callCount).some(call => ["QrLinkCreate", "QrLinkInitialStock", "QrLinkPublish", "QrLinkVariant"].includes(call.name)));
+});
+
+const melPromo: SkuLabelShopifyProduct = { ...card, id: 98, sku: "DEFY-6842788124", name: "Mel, Newly Awakened", game: "Riftbound",
+  setName: "Riftbound Organized Play Promotional Cards", cardNumber: "069b/166", tcgplayerId: 709987,
+  tcgplayerUrl: "https://www.tcgplayer.com/product/709987", quantity: 1, initialQuantity: 1 };
+async function blockedManualPriceFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const f = fixture({ ...options, priceError: true });
+  const status = await linkSkuLabelToShopify(melPromo, f.deps);
+  assert.equal(status.status, "blocked"); assert.equal(status.manualPriceAllowed, true);
+  assert.equal((await getSkuLabelShopifyStatuses([melPromo], f.deps))[0].manualPriceAllowed, true);
+  assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  return f;
+}
+
+test("a missing Mel promo can use an explicitly approved selling price while retaining its printing, QR, and one original stock receipt", async () => {
+  const f = await blockedManualPriceFixture({ failAfterStock: true });
+  const key = qrJournalKey(melPromo.sku), before = JSON.parse(f.journals.get(key)!.value);
+  const approved = await setSkuLabelManualPrice(melPromo, 27500, f.deps);
+  assert.equal(approved.status, "pending"); assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  const saved = JSON.parse(f.journals.get(key)!.value);
+  assert.equal(saved.identity, before.identity); assert.equal(saved.stockRequestKey, before.stockRequestKey);
+  assert.equal(saved.initialQuantity, 1); assert.equal(saved.manualPrice.cents, 27500);
+  assert.equal(saved.manualPrice.identity, before.identity); assert.equal(saved.manualPrice.initialQuantity, 1);
+  assert.equal(melPromo.listPriceCents, 0, "Approval does not rewrite the saved Defy product or invent a market quote");
+  assert.equal((await linkSkuLabelToShopify(melPromo, f.deps)).status, "pending");
+  assert.equal(f.quantityAdded(), 1);
+  const replayCalls = f.calls.length;
+  assert.equal((await setSkuLabelManualPrice(melPromo, 27500, f.deps)).status, "pending");
+  assert.deepEqual(f.calls.slice(replayCalls).map(call => call.name), ["SinglesRecord"], "Lost-response replay only reads the existing approval");
+  const linked = await linkSkuLabelToShopify(melPromo, f.deps);
+  assert.equal(linked.status, "ready"); assert.equal(linked.priceCents, 27500, "Manual input is a final selling price without a markup");
+  const product = f.product(), variant = product.variants.nodes[0];
+  assert.equal(product.sourceId?.value, "709987"); assert.equal(product.catalogId?.value, "single:riftbound:printing:709987");
+  assert.equal(variant.sku, "DEFY-RFB-709987-FOIL-EN-NM"); assert.equal(variant.barcode, melPromo.sku);
+  assert.equal(variant.price, "275.00"); assert.equal(variant.inventoryQuantity, 1); assert.equal(variant.pos, true);
+  assert.equal(f.website.product, true); assert.ok(f.website.variants.has(variant.id));
+  assert.equal(product.variants.nodes.length, 1); assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  const stockCalls = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(stockCalls.length, 2); assert.deepEqual(stockCalls[0].variables, stockCalls[1].variables); assert.equal(f.quantityAdded(), 1);
+  assert.equal((await setSkuLabelManualPrice(melPromo, 27500, f.deps)).status, "ready");
+  await assert.rejects(setSkuLabelManualPrice(melPromo, 27600, f.deps), SkuLabelInventoryError);
+  assert.equal((await linkSkuLabelToShopify(melPromo, f.deps)).status, "ready"); assert.equal(f.quantityAdded(), 1);
+});
+
+test("manual selling price approval validates money and rechecks the provider's exact outcome", async () => {
+  const f = await blockedManualPriceFixture();
+  const key = qrJournalKey(melPromo.sku), before = f.journals.get(key)!.value;
+  for (const amount of [0, -1, 1.5, NaN, Infinity, 100_000_001]) {
+    await assert.rejects(setSkuLabelManualPrice(melPromo, amount, f.deps), error => error instanceof SkuLabelInventoryError && error.status === 400);
+  }
+  for (const code of ["ambiguous", "incomplete_identity", "unsupported", "not_configured", "upstream_error"] as const) {
+    f.deps.resolvePrice = async () => { throw new ScrydexError(code, "private-provider-detail"); };
+    await assert.rejects(setSkuLabelManualPrice(melPromo, 100, f.deps), error => {
+      assert.ok(error instanceof SkuLabelInventoryError); assert.doesNotMatch(error.message, /private-provider-detail/); return true;
+    });
+    assert.equal(f.journals.get(key)!.value, before);
+  }
+  f.deps.resolvePrice = quoteFixture;
+  await assert.rejects(setSkuLabelManualPrice(melPromo, 100, f.deps), /now has a verified price/);
+  assert.equal(f.journals.get(key)!.value, before); assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  f.deps.resolvePrice = async () => { throw new ScrydexError("price_unavailable", "private-provider-detail"); };
+  await setSkuLabelManualPrice(melPromo, 1, f.deps);
+  assert.equal((await linkSkuLabelToShopify(melPromo, f.deps)).priceCents, 1);
+});
+
+test("manual price cannot authorize a changed collector, set, name, condition, finish, source, or original quantity", async () => {
+  for (const patch of [
+    { cardNumber: "069/166" }, { cardNumber: "069a/166" }, { setName: "Vendetta" }, { name: "Another Mel" },
+    { condition: "Lightly Played" }, { finish: "Normal" }, { tcgplayerId: 706064 }, { initialQuantity: 2 },
+  ]) {
+    const f = await blockedManualPriceFixture(); await setSkuLabelManualPrice(melPromo, 20000, f.deps);
+    const result = await linkSkuLabelToShopify({ ...melPromo, ...patch }, f.deps);
+    assert.equal(result.status, "blocked"); assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+});
+
+test("durable manual approval cannot bypass a provider outage, ambiguity, unsupported identity, or configuration failure", async () => {
+  const f = await blockedManualPriceFixture(); await setSkuLabelManualPrice(melPromo, 20000, f.deps);
+  for (const code of ["upstream_error", "ambiguous", "incomplete_identity", "unsupported", "not_configured"] as const) {
+    f.deps.resolvePrice = async () => { throw new ScrydexError(code, "private-provider-detail"); };
+    const result = await linkSkuLabelToShopify(melPromo, f.deps);
+    assert.equal(result.status, code === "upstream_error" ? "pending" : "blocked"); assert.equal(result.manualPriceAllowed, undefined);
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+});
+
+test("manual price approval rejects any journal creation, stock, correction, or verified-status marker", async () => {
+  for (const field of ["productId", "variantId", "shopifySku", "publicationId", "creationStartedAt", "stockInventoryItemId",
+    "stockLocationId", "adjustmentStartedAt", "adjustmentId", "previousIdentity", "adoptionPending", "catalogCorrectionIntent"]) {
+    const f = await blockedManualPriceFixture(), key = qrJournalKey(melPromo.sku);
+    const record = JSON.parse(f.journals.get(key)!.value);
+    f.journals.set(key, { value: JSON.stringify({ ...record, [field]: field.endsWith("At") ? 0 : field === "adoptionPending" ? false : "existing" }), compareDigest: "changed" });
+    await assert.rejects(setSkuLabelManualPrice(melPromo, 20000, f.deps), SkuLabelInventoryError);
+    assert.equal((await getSkuLabelShopifyStatuses([melPromo], f.deps))[0].manualPriceAllowed, undefined);
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+  for (const field of ["productId", "variantId", "adminUrl", "priceCents", "checkedAt", "transferredQuantity", "availableQuantity"]) {
+    const f = await blockedManualPriceFixture(), key = qrJournalKey(melPromo.sku);
+    const record = JSON.parse(f.journals.get(key)!.value);
+    f.journals.set(key, { value: JSON.stringify({ ...record, status: { ...record.status, [field]: 0 } }), compareDigest: "changed" });
+    await assert.rejects(setSkuLabelManualPrice(melPromo, 20000, f.deps), SkuLabelInventoryError);
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+});
+
+test("active linking leases and copied QR barcodes block manual price approval", async () => {
+  for (const printing of [`sku:${melPromo.sku}`, "single:riftbound:printing:709987"]) {
+    const f = await blockedManualPriceFixture(), key = `qr_lock_${digest(printing).slice(0, 55)}`;
+    f.journals.set(key, { value: JSON.stringify({ owner: "other-link", expiresAt: f.deps.clock() + 60000 }), compareDigest: "held" });
+    await assert.rejects(setSkuLabelManualPrice(melPromo, 20000, f.deps), /another request/);
+    assert.equal(f.product(), null); assert.equal(f.quantityAdded(), 0);
+  }
+  const copied = existing({ barcodes: { nodes: [{ value: melPromo.sku, type: null }], pageInfo: { hasNextPage: false } } });
+  const f = fixture({ starting: copied, priceError: true });
+  const blocked = await linkSkuLabelToShopify(melPromo, f.deps); assert.equal(blocked.manualPriceAllowed, true);
+  await assert.rejects(setSkuLabelManualPrice(melPromo, 20000, f.deps), SkuLabelInventoryError);
+  assert.equal(f.product().variants.nodes[0].price, "50.00"); assert.equal(f.quantityAdded(), 0);
+});
+
+test("a manual approval cannot reprice an existing Shopify variant or an approved variant after an external price change", async () => {
+  const target = existing({ sku: "DEFY-RFB-709987-FOIL-EN-NM" });
+  target.catalogId = { value: "single:riftbound:printing:709987" }; target.sourceId = { value: "709987" };
+  const f = fixture({ starting: target, priceError: true });
+  assert.equal((await linkSkuLabelToShopify(melPromo, f.deps)).manualPriceAllowed, true);
+  await setSkuLabelManualPrice(melPromo, 27500, f.deps);
+  const result = await linkSkuLabelToShopify(melPromo, f.deps);
+  assert.equal(result.status, "blocked"); assert.match(result.message, /different selling price/);
+  assert.equal(f.product().variants.nodes[0].price, "50.00"); assert.equal(f.quantityAdded(), 0);
+  assert.ok(!f.calls.some(call => ["QrLinkBarcode", "QrLinkVariant", "QrLinkInitialStock"].includes(call.name)));
+  const fresh = await blockedManualPriceFixture(); await setSkuLabelManualPrice(melPromo, 27500, fresh.deps);
+  assert.equal((await linkSkuLabelToShopify(melPromo, fresh.deps)).status, "ready");
+  fresh.product().variants.nodes[0].price = "280.00";
+  const count = fresh.calls.length;
+  assert.equal((await linkSkuLabelToShopify(melPromo, fresh.deps)).status, "blocked");
+  assert.equal(fresh.product().variants.nodes[0].price, "280.00"); assert.equal(fresh.quantityAdded(), 1);
+  assert.ok(!fresh.calls.slice(count).some(call => ["QrLinkBarcode", "QrLinkVariant", "QrLinkInitialStock"].includes(call.name)));
+});
+
+test("a newly available exact Scrydex quote resumes verified pricing without repeating a manual listing's original stock", async () => {
+  const f = await blockedManualPriceFixture(); await setSkuLabelManualPrice(melPromo, 27500, f.deps);
+  const manual = await linkSkuLabelToShopify(melPromo, f.deps); assert.equal(manual.status, "ready");
+  assert.equal(manual.priceCents, 27500); assert.equal(f.quantityAdded(), 1);
+  const key = qrJournalKey(melPromo.sku), before = JSON.parse(f.journals.get(key)!.value);
+  f.deps.resolvePrice = async product => {
+    assert.equal(product.tcgplayerId, 709987); assert.equal(product.cardNumber, "069b/166");
+    return { cents: 30000, matchedName: product.name, groupName: product.setName, variation: "foil / NM",
+      scrydexId: "verified-promo", url: "https://api.scrydex.com/riftbound/v1/cards/verified-promo" };
+  };
+  const count = f.calls.length;
+  const verified = await linkSkuLabelToShopify(melPromo, f.deps);
+  assert.equal(verified.status, "ready"); assert.equal(verified.priceCents, 31950);
+  assert.equal(verified.productId, manual.productId); assert.equal(verified.variantId, manual.variantId);
+  assert.equal(f.product().variants.nodes[0].price, "319.50"); assert.equal(f.product().variants.nodes[0].barcode, melPromo.sku);
+  assert.equal(f.quantityAdded(), 1); assert.equal(f.product().variants.nodes.length, 1);
+  assert.ok(!f.calls.slice(count).some(call => ["QrLinkCreate", "QrLinkVariant", "QrLinkInitialStock"].includes(call.name)));
+  const after = JSON.parse(f.journals.get(key)!.value);
+  assert.equal(after.stockRequestKey, before.stockRequestKey); assert.equal(after.adjustmentId, before.adjustmentId);
 });

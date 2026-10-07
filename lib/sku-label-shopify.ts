@@ -17,7 +17,7 @@ export interface SkuLabelShopifyProduct {
 }
 export interface SkuLabelShopifyStatus {
   sku: string; status: "ready" | "pending" | "blocked"; message: string;
-  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean;
+  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean;
 }
 export interface SkuLabelShopifyDependencies {
   graphql: SinglesGraphQL;
@@ -52,6 +52,7 @@ interface Journal {
   initialQuantity?: number; adjustmentStartedAt?: number; adjustmentId?: string; publicationId?: string;
   previousIdentity?: string; adoptionPending?: boolean; creationStartedAt?: number; stockRequestKey?: string; stockInventoryItemId?: string; stockLocationId?: string;
   catalogCorrectionIntent?: CatalogCorrectionIntent; catalogCorrectionReceipt?: CatalogCorrectionIntent;
+  manualPrice?: { identity: string; catalogVersion: string; initialQuantity: number; cents: number };
 }
 interface Payload { userErrors?: { code?: string; message: string }[] }
 const NAMESPACE = "$app:singles";
@@ -150,16 +151,17 @@ const pricingFailureMessages: Record<ScrydexErrorCode, string> = {
   not_configured: "Scrydex pricing is not configured. Ask an administrator to check the pricing connection, then retry this QR.",
   unsupported: "Scrydex automatic pricing does not support this card's game, language, product type, or condition. Review its saved details.",
   incomplete_identity: "The saved card needs its exact name, set, collector number, and finish before Scrydex can verify its price. Review its saved details.",
-  not_found: "Defy could not match this card's name, set, and collector number to Scrydex. Its catalog mapping needs review before Shopify can link it.",
+  not_found: "Scrydex has no verified record for this exact card printing. Review its catalog details, or enter an explicit manual selling price when that option is available. Its original QR and catalog identity are retained.",
   ambiguous: "Scrydex returned multiple possible matches. The exact printing, finish, and condition need review before Shopify can link it.",
-  price_unavailable: "Scrydex has no verified positive USD market price for this exact finish and condition. Retry after its pricing is available.",
+  price_unavailable: "Scrydex has no verified positive USD market price for this exact finish and condition. Enter an explicit manual selling price when that option is available, or retry after its pricing is available.",
   upstream_error: "Scrydex could not complete the price request. Retry this saved QR shortly; Shopify linking is still pending.",
 };
 function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
   if (error instanceof ScrydexError) {
     // Log only the known error code and saved SKU, never provider errors or credentials.
     console.warn("[sku-label-shopify] Scrydex pricing blocked linking", { sku, code: error.code });
-    return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: `The QR is saved. ${pricingFailureMessages[error.code]}` };
+    return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: `The QR is saved. ${pricingFailureMessages[error.code]}`,
+      ...(["not_found", "price_unavailable"].includes(error.code) ? { manualPriceAllowed: true } : {}) };
   }
   if (error instanceof SinglesError && ["QR_LINK_BLOCKED", "QR_LINK_PENDING", "PRODUCT_IDENTITY_CONFLICT"].includes(error.code)) return { sku, status: error.retryable ? "pending" : "blocked", message: error.message };
   console.warn("[sku-label-shopify] Link not confirmed", { sku,
@@ -283,7 +285,7 @@ export function skuLabelCatalogVersion(product: SkuLabelCatalogProduct): string 
     product.location, product.barcode, Number.isFinite(Date.parse(product.updatedAt)) ? new Date(product.updatedAt).toISOString() : product.updatedAt]));
 }
 
-function correctionUntouched(record: Journal | null, product: SkuLabelCatalogProduct, resume = false): record is Journal {
+function correctionUntouched(record: Journal | null, product: Pick<SkuLabelShopifyProduct, "sku" | "initialQuantity">, resume = false): record is Journal {
   if (!record || record.version !== 1 || record.sku !== product.sku || record.initialQuantity !== product.initialQuantity ||
     record.owner !== null || record.expiresAt !== 0 || record.status?.sku !== product.sku ||
     (!resume && record.status.status !== "blocked") || (resume && !["blocked", "pending"].includes(record.status.status))) return false;
@@ -297,6 +299,93 @@ function correctionUntouched(record: Journal | null, product: SkuLabelCatalogPro
 }
 const correctionBlocked = () => new SkuLabelInventoryError(409,
   "This QR cannot be corrected automatically because Shopify linking or stock may already exist. Review its existing mapping; no card or stock was changed.");
+
+function manualPriceCatalogVersion(product: SkuLabelShopifyProduct) {
+  return digest(JSON.stringify([product.id, product.sku, skuLabelCatalogDetails(product), product.condition, product.initialQuantity]));
+}
+
+function approvedManualPrice(record: Journal, product: SkuLabelShopifyProduct) {
+  const approved = record.manualPrice;
+  return approved?.identity === identityFor(product).identity && approved.catalogVersion === manualPriceCatalogVersion(product)
+    && approved.initialQuantity === product.initialQuantity && Number.isSafeInteger(approved.cents)
+    && approved.cents > 0 && approved.cents <= 100_000_000 ? approved.cents : null;
+}
+
+function manualPriceUntouched(record: Journal | null, product: SkuLabelShopifyProduct): record is Journal {
+  return correctionUntouched(record, product, Boolean(record?.manualPrice)) && !record.catalogCorrectionIntent
+    && record.identity === identityFor(product).identity
+    && ((record.status?.status === "blocked" && record.status.manualPriceAllowed === true)
+      || (record.status?.status === "pending" && approvedManualPrice(record, product) !== null));
+}
+
+const manualPriceBlocked = () => new SkuLabelInventoryError(409,
+  "A manual selling price can only be approved for this exact saved card before Shopify creation or stock begins. Review its existing link and retry; no card or stock was changed.");
+
+/** Explicit selling-price approval, bound to the original saved printing and stock receipt. */
+export async function setSkuLabelManualPrice(product: SkuLabelShopifyProduct, cents: number, dependencies?: SkuLabelShopifyDependencies): Promise<SkuLabelShopifyStatus> {
+  if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 100_000_000) {
+    throw new SkuLabelInventoryError(400, "Enter a positive selling price of no more than $1,000,000.00.");
+  }
+  const identity = identityFor(product);
+  if (!identity.source || !Number.isSafeInteger(product.initialQuantity) || product.initialQuantity < 0 || product.initialQuantity > 100_000) throw manualPriceBlocked();
+  const deps: SkuLabelShopifyDependencies = dependencies ?? await createShopifyGraphQL({ apiVersion: "2026-10" });
+  const adapter = new ShopifySinglesAdapter(deps.graphql, deps.settings, deps.clock);
+  const replay = (await adapter.read<Journal>(journalKey(product.sku))).value;
+  if (replay?.version === 1 && replay.sku === product.sku && replay.identity === identity.identity
+    && replay.initialQuantity === product.initialQuantity && !replay.catalogCorrectionIntent
+    && approvedManualPrice(replay, product) === cents && replay.status?.sku === product.sku) {
+    // A lost approval/link response can replay the same amount, never reprice it.
+    return replay.status;
+  }
+  const owner = randomUUID(), held: string[] = [];
+  const verifyLeases = async () => {
+    for (const name of held) {
+      const current = await adapter.read<Journal>(name);
+      if (current.value?.owner !== owner || current.value.expiresAt <= deps.clock()) throw manualPriceBlocked();
+    }
+  };
+  try {
+    for (const name of [lockKey(`sku:${product.sku}`), lockKey(identity.printing)]) {
+      const current = await adapter.read<Journal>(name);
+      if (current.value?.owner && current.value.expiresAt > deps.clock()) {
+        throw new SkuLabelInventoryError(409, "This card is being linked or corrected by another request. Wait, then retry the same saved QR.");
+      }
+      if (!await adapter.cas(name, current, { version: 1, identity: identity.printing, sku: product.sku, owner, expiresAt: deps.clock() + LEASE_MS })) throw manualPriceBlocked();
+      held.push(name);
+    }
+    const saved = await adapter.read<Journal>(journalKey(product.sku));
+    if (!manualPriceUntouched(saved.value, product)) throw manualPriceBlocked();
+    try {
+      await (deps.resolvePrice ?? resolveScrydexPrice)({ ...product, productType: "Single" });
+      throw new SkuLabelInventoryError(409, "Scrydex now has a verified price for this exact card. Retry its saved Shopify link to use the current quote.");
+    } catch (error) {
+      if (!(error instanceof ScrydexError)) throw error;
+      if (!["not_found", "price_unavailable"].includes(error.code)) {
+        throw new SkuLabelInventoryError(409, `A manual price cannot bypass this pricing issue. ${pricingFailureMessages[error.code]}`);
+      }
+    }
+    // A copied QR or a lost creation response must not authorize a new price.
+    const codes = await deps.graphql<{ productVariants: { nodes: { sku: string | null; barcodes: { nodes: { value: string }[]; pageInfo: { hasNextPage: boolean } } }[]; pageInfo: { hasNextPage: boolean } } }>(`query QrManualPriceCodes($query: String!) {
+      productVariants(first: 2, query: $query) { nodes { sku barcodes(first: 20) { nodes { value } pageInfo { hasNextPage } } } pageInfo { hasNextPage } }
+    }`, { query: `sku:"${product.sku}" OR barcode:"${product.sku}"` });
+    if (codes.productVariants.pageInfo.hasNextPage || codes.productVariants.nodes.some(variant =>
+      variant.barcodes.pageInfo.hasNextPage || variant.sku === product.sku || variant.barcodes.nodes.some(code => code.value === product.sku))) throw manualPriceBlocked();
+    await verifyLeases();
+    const current = await adapter.read<Journal>(journalKey(product.sku));
+    if (current.digest !== saved.digest || !manualPriceUntouched(current.value, product)) throw manualPriceBlocked();
+    const status: SkuLabelShopifyStatus = { sku: product.sku, status: "pending", message: "Manual selling price saved for this exact card. Retry its original QR to finish Shopify linking." };
+    if (!await adapter.cas(journalKey(product.sku), current, { ...current.value,
+      manualPrice: { identity: identity.identity, catalogVersion: manualPriceCatalogVersion(product), initialQuantity: product.initialQuantity, cents }, status })) throw manualPriceBlocked();
+    return status;
+  } finally {
+    for (const name of held.reverse()) {
+      try {
+        const current = await adapter.read<Journal>(name);
+        if (current.value?.owner === owner) await adapter.cas(name, current, { ...current.value, owner: null, expiresAt: 0 });
+      } catch { /* Existing lease expiry permits an explicit retry. */ }
+    }
+  }
+}
 
 /** Preview is read-only, and only an untouched blocked journal or its own interrupted correction is eligible. */
 export async function readSkuLabelCatalogCorrection(product: SkuLabelCatalogProduct, dependencies?: SkuLabelShopifyDependencies) {
@@ -458,7 +547,9 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
       try {
         const identity = identityFor(product).identity;
         const valid = stored?.version === 1 && stored.sku === product.sku && stored.identity === identity && stored.initialQuantity === product.initialQuantity && stored.status?.sku === product.sku;
-        results.push(valid && stored?.status ? unverified(stored.status) : { sku: product.sku, status: "pending", message: "Shopify POS has not confirmed this saved QR yet." });
+        results.push(valid && stored?.status ? unverified({ ...stored.status,
+          manualPriceAllowed: stored.status.manualPriceAllowed && manualPriceUntouched(stored, product) ? true : undefined })
+          : { sku: product.sku, status: "pending", message: "Shopify POS has not confirmed this saved QR yet." });
         if (stored?.catalogCorrectionIntent && stored.sku === product.sku) {
           results[results.length - 1] = { sku: product.sku, status: "pending", catalogCorrectionPending: true,
             message: "Finish the reviewed catalog correction before linking this saved QR to Shopify POS." };
@@ -621,9 +712,18 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     };
     await save();
     let cents = product.listPriceCents;
+    const manualCents = approvedManualPrice(record, product);
+    let manualPriceUsed = false;
     if (identity.source) {
-      const quote = await (deps.resolvePrice ?? resolveScrydexPrice)({ ...product, productType: "Single" });
-      cents = scrydexSellPriceCents(quote.cents, { game: product.game, productType: "Single" });
+      try {
+        const quote = await (deps.resolvePrice ?? resolveScrydexPrice)({ ...product, productType: "Single" });
+        cents = scrydexSellPriceCents(quote.cents, { game: product.game, productType: "Single" });
+      } catch (error) {
+        if (!(error instanceof ScrydexError) || !["not_found", "price_unavailable"].includes(error.code) || manualCents === null) throw error;
+        // This amount is the operator's final selling price, not a market quote.
+        cents = manualCents;
+        manualPriceUsed = true;
+      }
     }
     if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 100_000_000) fail("The QR is saved. Set a positive sale price before making this manual card available in Shopify POS.");
     // Search both SKU and barcode, then exact-filter Shopify's search results.
@@ -758,6 +858,9 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     }
     if (exact.length && (!variant || exact[0].id !== variant.id)) fail("This QR code belongs to another condition or finish of this Shopify product. Review its existing barcode before linking.");
     const initial = variant && !variant.sku && !variant.barcodes.nodes.length && target!.status === "DRAFT" && target!.catalogId?.value === identity.printing && target!.variants.nodes.length === 1 && variant.inventoryQuantity === 0;
+    if (manualPriceUsed && variant && !initial && priceCents(variant.price) !== cents) {
+      fail("This Shopify variant already has a different selling price. Review its existing Shopify price before linking this QR; the manual approval did not change it.");
+    }
     if (variant && !initial && !matchesSavedVariant(variant, target!, identity, deps.settings.shop)) fail("The Shopify card's condition, finish, language, or TCGplayer identity changed. Review the saved link before changing its price or stock.");
     if (variant?.qrIdentity?.value && variant.qrIdentity.value !== identity.identity) fail("This Shopify variant is already linked to a different QR card identity.");
     if (!variant || initial) {
@@ -860,7 +963,10 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     await save();
     return (await getSkuLabelShopifyStatuses([product], deps))[0];
   } catch (error) {
-    const status = { ...safeFailure(product.sku, error), ...(record?.productId ? { productId: record.productId } : {}), ...(record?.variantId ? { variantId: record.variantId } : {}) };
+    const failure = safeFailure(product.sku, error);
+    const status = { ...failure,
+      manualPriceAllowed: failure.manualPriceAllowed && record && manualPriceUntouched({ ...record, status: failure }, product) ? true : undefined,
+      ...(record?.productId ? { productId: record.productId } : {}), ...(record?.variantId ? { variantId: record.variantId } : {}) };
     if (adapter && record && !languageCorrectionPending) {
       try { const reservation = await adapter.read<Journal>(leaseName); const saved = await adapter.read<Journal>(journalKey(product.sku)); if (reservation.value?.owner === owner && saved.value?.identity === record.identity) await adapter.cas(journalKey(product.sku), saved, { ...saved.value, status }); } catch { /* A retry reconciles any unconfirmed status. */ }
     }

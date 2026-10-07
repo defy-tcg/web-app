@@ -13,6 +13,7 @@ import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
 import TcgplayerCardImport, { type LinkedLabelSelection } from "./tcgplayer-card-import";
 import SkuStockPanel from "./sku-stock-panel";
+import SkuManualPrice from "./sku-manual-price";
 import ShopifyLinkStatus, { isShopifyLabelLink, pendingShopifyLink, type ShopifyLabelLink } from "./shopify-link-status";
 
 type Label = SkuDraftLabel;
@@ -208,6 +209,11 @@ export default function SkuLabelsClient() {
 
   const inventoryLoaded = useCallback((products: SavedSkuProduct[]) => {
     setSavedProducts(products);
+    setLinkedSelection(current => {
+      if (!current?.product) return current;
+      const product = products.find(saved => saved.sku === current.product?.sku);
+      return product ? { ...current, name: product.name, product } : current;
+    });
     setLabels((current) => current.map((label) => {
       const saved = products.find((product) => product.sku === label.sku);
       return saved ? { sku: saved.sku, name: saved.name } : label;
@@ -619,6 +625,10 @@ export default function SkuLabelsClient() {
             <button className="secondary-button" onClick={() => void copySkus([label.sku])} aria-label={`Copy SKU ${label.sku}`}>Copy SKU</button>
             {!savedSkus.has(label.sku) && <button className="secondary-button sku-remove-draft" disabled={inventoryBusy || busy || pdfBusy || shopifyBusy} aria-label={`Remove draft ${label.sku}`} onClick={() => saveBatch(labels.filter((item) => item.sku !== label.sku))}>Remove draft</button>}
             <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} saved={savedSkus.has(label.sku)} busy={allLinkingSkus.includes(label.sku) || inventoryBusy} disabled={busy || inventoryBusy || pdfBusy || shopifyBusy} onRetry={(sku) => void retryShopifyLink(sku)} />
+            {shopifyLinks[label.sku]?.manualPriceAllowed && savedProducts.filter(product => product.sku === label.sku).map(product =>
+              <SkuManualPrice key={JSON.stringify([product.sku, product.name, product.game, product.setName, product.cardNumber,
+                product.condition, product.finish, product.tcgplayerId])} product={product} disabled={busy || inventoryBusy || pdfBusy || shopifyBusy}
+                onBusy={setInventoryBusy} onLinked={link => updateShopifyLinks([link])} />)}
           </article>)}</div>
         </section>}
         <SkuInventoryPanel labels={labels} products={savedProducts} disabled={busy || pdfBusy || inventoryBusy || shopifyBusy} canPrint={canPrint} shopifyLinks={shopifyLinks} linkingSkus={allLinkingSkus} onRetryShopify={(sku) => void retryShopifyLink(sku)} onSavingChange={setInventoryBusy} onLoadingChange={setInventoryLoading} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} onDraftChange={(sku, inventory) => saveBatch(labels.map((label) => label.sku === sku ? { ...label, inventory } : label))}
