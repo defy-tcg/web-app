@@ -17,7 +17,7 @@ test("Scrydex Riftbound selling prices add 11% from $2 through $10 and retain 8%
   assert.equal(scrydexSellPriceCents(1000, product), 1110);
   assert.equal(scrydexSellPriceCents(105, product), 113);
   assert.equal(scrydexSellPriceCents(104, product), 112);
-  assert.equal(scrydexSellPriceCents(29, product), 31);
+  assert.equal(scrydexSellPriceCents(29, product), 50);
 });
 
 test("single review uses the exact catalog identity and selected finish/condition, replacing client and catalog prices", async () => {
@@ -43,7 +43,7 @@ test("single review uses the exact catalog identity and selected finish/conditio
 });
 
 test("single review and receipt validation share all raw-market Riftbound tier boundaries", async () => {
-  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
+  for (const [market, expected] of [[1, 50], [8, 50], [45, 50], [46, 50], [47, 51], [49, 53], [50, 54], [51, 55], [199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const resolver: SinglesPriceResolver = async () => quote(market);
     const reviewed = await previewPricedSingles([row], catalog, resolver);
     assert.equal(reviewed.rows[0].pricing.marketCents, market);

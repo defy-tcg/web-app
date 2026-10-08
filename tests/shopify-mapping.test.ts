@@ -189,6 +189,59 @@ test("metadata exposes old OS card identity without changing its title, SKU or v
   assert.deepEqual(Object.keys(price[0]).sort(), ["id", "inventoryItem", "price"]);
 });
 
+test("frozen receipt prices keep the Riftbound floor at metadata writes without repricing their rows", async () => {
+  for (const [priceCents, expected] of [[1, "0.50"], [27, "0.50"], [49, "0.50"], [50, "0.50"], [51, "0.51"], [108, "1.08"], [1110, "11.10"]] as const) {
+    const row = { ...plan(), priceCents };
+    const before = structuredClone(row);
+    const f = fixture();
+    const item = { productId: "old", variantId: "old-variant", inventoryItemId: "old-item", sku: row.sku };
+    await f.adapter.metadata(row, item);
+    await f.adapter.metadata(row, item);
+    const writes = f.calls.filter(call => call.query.includes("mutation SinglesPrice"));
+    assert.equal(writes.length, 2);
+    for (const write of writes) {
+      assert.deepEqual(write.variables.variants, [{ id: item.variantId, price: expected, inventoryItem: { cost: "0.25" } }]);
+    }
+    assert.deepEqual(row, before, "The saved receipt row and its fingerprint inputs must remain unchanged");
+    assert.ok(f.calls.every(call => /mutation Singles(?:StorefrontMetadata|Price)/.test(call.query)), "Price metadata must not receive stock or change publications");
+  }
+});
+
+test("resumed low-price variant creation writes the floor once without changing frozen receipt data", async () => {
+  for (const existing of [false, true]) {
+    const f = fixture(existing ? [product("charm")] : []);
+    f.state.loseVariant = true;
+    const row = { ...plan({}, existing ? "Lightly Played" : "Near Mint"), priceCents: 27 };
+    const before = structuredClone(row);
+    await assert.rejects(f.adapter.resolve(row, context), /Lost variant response/);
+    const item = await f.adapter.resolve(row, context);
+    await f.adapter.metadata(row, item);
+    const creates = f.calls.filter(call => /mutation Singles(?:InitializeVariant|AddVariant)/.test(call.query));
+    assert.equal(creates.length, 1, "Recovery must reuse the created variant");
+    const written = (creates[0].variables.variants as { price: string; inventoryItem: { cost: string } }[])[0];
+    assert.equal(written.price, "0.50");
+    assert.equal(written.inventoryItem.cost, "0.25");
+    assert.deepEqual(f.calls.find(call => call.query.includes("mutation SinglesPrice"))!.variables.variants,
+      [{ id: item.variantId, price: "0.50", inventoryItem: { cost: "0.25" } }]);
+    assert.equal(f.products.size, 1);
+    assert.equal([...f.products.values()][0].variants.nodes.length, existing ? 2 : 1);
+    assert.ok(!f.calls.some(call => /inventoryAdjust|inventoryActivate|publishablePublish/.test(call.query)));
+    assert.deepEqual(row, before);
+  }
+});
+
+test("the Riftbound floor does not invent a positive price for an unpriced draft", async () => {
+  const row = { ...plan(), priceCents: 0 };
+  const before = structuredClone(row);
+  const f = fixture();
+  const item = await f.adapter.resolve(row, context);
+  await f.adapter.metadata(row, item);
+  const writes = f.calls.filter(call => /mutation Singles(?:InitializeVariant|Price)/.test(call.query));
+  assert.equal(writes.length, 2);
+  for (const write of writes) assert.equal((write.variables.variants as { price: string }[])[0].price, "0.00");
+  assert.deepEqual(row, before);
+});
+
 test("publication requires and verifies Online Store, POS and the existing Headless website", async () => {
   const f = fixture([product("charm")]);
   const inspection = await f.adapter.inspect();

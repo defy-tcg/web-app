@@ -12,20 +12,30 @@ test("Riftbound singles from $2 through $10 use 11%, with 8% elsewhere below $40
   assert.equal(scrydexSellPriceCents(300, riftboundSingle), 333);
   assert.equal(scrydexSellPriceCents(250, riftboundSingle), 278);
   assert.equal(scrydexSellPriceCents(950, riftboundSingle), 1055);
-  assert.equal(scrydexSellPriceCents(5, riftboundSingle), 5);
-  assert.equal(scrydexSellPriceCents(1, riftboundSingle), 1);
-  assert.equal(scrydexSellPriceCents(25, riftboundSingle), 27);
+  assert.equal(scrydexSellPriceCents(5, riftboundSingle), 50);
+  assert.equal(scrydexSellPriceCents(1, riftboundSingle), 50);
+  assert.equal(scrydexSellPriceCents(25, riftboundSingle), 50);
   assert.equal(scrydexSellPriceCents(100_000_000, riftboundSingle), 106_500_000);
 });
 
+test("Riftbound's $0.50 minimum applies after markup and half-up cent rounding", () => {
+  for (let market = 1; market <= 100; market++) {
+    const markedUp = Math.floor((market * 108 + 50) / 100);
+    assert.equal(scrydexSellPriceCents(market, riftboundSingle), Math.max(50, markedUp));
+  }
+  assert.equal(scrydexSellPriceCents(46, riftboundSingle), 50);
+  assert.equal(scrydexSellPriceCents(47, riftboundSingle), 51);
+  assert.equal(scrydexSellPriceCents(48, riftboundSingle), 52);
+});
+
 test("Riftbound tiers use raw market cents with inclusive $2 and $10 boundaries and 6.5% at $40", () => {
-  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [999, 1109], [1000, 1110], [1001, 1081], [3800, 4104], [3999, 4319], [4000, 4260], [4001, 4261], [5000, 5325]]) {
+  for (const [market, expected] of [[1, 50], [8, 50], [45, 50], [46, 50], [47, 51], [49, 53], [50, 54], [51, 55], [199, 215], [200, 222], [201, 223], [999, 1109], [1000, 1110], [1001, 1081], [3800, 4104], [3999, 4319], [4000, 4260], [4001, 4261], [5000, 5325]]) {
     assert.equal(scrydexSellPriceCents(market, riftboundSingle), expected, `market ${market}`);
   }
 });
 
 test("import preservation updates old Riftbound markup from raw market without compounding across any tier", () => {
-  for (const [market, oldPrice, expected] of [[199, 215, 215], [200, 216, 222], [201, 217, 223], [950, 1026, 1055], [1000, 1080, 1110], [1001, 1081, 1081], [3800, 4047, 4104], [3999, 4259, 4319], [4000, 4260, 4260], [4001, 4261, 4261]]) {
+  for (const [market, oldPrice, expected] of [[8, 9, 50], [46, 50, 50], [47, 51, 51], [199, 215, 215], [200, 216, 222], [201, 217, 223], [950, 1026, 1055], [1000, 1080, 1110], [1001, 1081, 1081], [3800, 4047, 4104], [3999, 4259, 4319], [4000, 4260, 4260], [4001, 4261, 4261]]) {
     const current = { ...riftboundSingle, marketPriceCents: market, listPriceCents: oldPrice, priceSource: "scrydex", priceUpdatedAt: "2026-09-18T00:00:00Z" };
     const incoming = { marketPriceCents: 700, listPriceCents: 700, priceSource: "master-sheet", priceUpdatedAt: null };
     const preserved = preserveScrydexPricing(current, incoming);
@@ -64,17 +74,20 @@ test("game aliases and single casing select the matching policy while other game
         assert.equal(isRiftboundSinglePricingProduct(product), game.key === "riftbound", `${alias}/${productType}`);
         const expected = game.key === "riftbound" ? 1110 : game.key === "pokemon" || game.key === "pokemon-japanese" ? 1017 : 1000;
         assert.equal(scrydexSellPriceCents(1000, product), expected, `${alias}/${productType}`);
+        assert.equal(scrydexSellPriceCents(8, product), game.key === "riftbound" ? 50 : 8, `${alias}/${productType} floor`);
       }
       for (const productType of ["Sealed", " sealed ", "Accessory", "", "Singles"]) {
         const product = { game: alias, productType };
         assert.equal(isRiftboundSinglePricingProduct(product), false, `${alias}/${productType}`);
         assert.equal(scrydexSellPriceCents(1000, product), 1000, `${alias}/${productType}`);
+        assert.equal(scrydexSellPriceCents(8, product), 8, `${alias}/${productType} floor`);
       }
     }
   }
   assert.equal(scrydexSellPriceCents(1000, { game: "Ríftbound: League of Legends Trading Card Game", productType: "Single" }), 1110);
   for (const game of ["Unknown", "Riftbound-like", "Riftbound singles", "Pokémon-like", "Pokémon singles", ""]) {
     assert.equal(scrydexSellPriceCents(1000, { game, productType: "Single" }), 1000);
+    assert.equal(scrydexSellPriceCents(8, { game, productType: "Single" }), 8);
   }
 });
 

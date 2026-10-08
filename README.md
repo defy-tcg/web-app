@@ -135,7 +135,8 @@ Vercel. Inventory's **Refresh Scrydex prices** action processes small resumable
 batches. Successful matches store the unmarked market price. **Riftbound singles**
 sell at **market × 1.11 from $2.00 through $10.00 raw market, inclusive**,
 **market × 1.08 below $2.00 or above $10.00 but below $40.00**, or
-**market × 1.065 at $40.00 and above**, rounded half-up to the nearest USD cent:
+**market × 1.065 at $40.00 and above**, rounded half-up to the nearest USD cent
+with a **$0.50 minimum final selling price**:
 a $10.00 market price produces a $11.10 selling price, while $40.00 produces
 $42.60. Pokémon singles (including Japanese)
 use a 1.7% markup. Other games and product types, including Riftbound sealed

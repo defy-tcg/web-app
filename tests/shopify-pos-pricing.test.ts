@@ -69,7 +69,7 @@ test("POS scan updates only the exact Riftbound single price in the $2–$10 ban
 });
 
 test("POS scans share the inclusive $2–$10 Riftbound band and raw-market $40 threshold", async () => {
-  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
+  for (const [market, expected] of [[1, 50], [8, 50], [45, 50], [46, 50], [47, 51], [49, 53], [50, 54], [51, 55], [199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const f = fixture(); f.state.marketCents = market;
     const result = await refreshPosPrice("0123456789", f.dependencies);
     assert.equal(result.priceCents, expected);

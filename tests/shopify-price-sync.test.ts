@@ -46,13 +46,31 @@ test("Shopify singles preserve exact printing, condition and finish, using Scryd
 });
 
 test("scheduled Riftbound pricing shares the inclusive $2–$10 band and raw-market $40 threshold", async () => {
-  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
+  for (const [market, expected] of [[1, 50], [8, 50], [45, 50], [46, 50], [47, 51], [49, 53], [50, 54], [51, 55], [199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const variant = single(); const client = shopify(variant);
     const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client, now: "2026-09-26T12:00:00Z", resolve: async () => ({ ...quote, cents: market }) });
     assert.equal(result.marketCents, market);
     assert.equal(result.priceCents, expected);
     assert.equal((client.writes[0].variants as { price: string }[])[0].price, (expected / 100).toFixed(2));
     assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+  }
+});
+
+test("scheduled sync repairs an old sub-floor listing and retains its raw quote on repeat", async () => {
+  const variant = single(); variant.price = "0.09";
+  for (const outcome of ["updated", "unchanged"]) {
+    const client = shopify(variant);
+    const result = await updateVariantPrice({ variant, legacy: [], catalog, ...client,
+      now: "2026-10-08T16:00:00Z", resolve: async () => ({ ...quote, cents: 8 }) });
+    assert.equal(result.priceCents, 50);
+    assert.equal(result.marketCents, 8);
+    assert.equal(result.outcome, outcome);
+    const written = (client.writes[0].variants as { price: string; metafields: { value: string }[] }[])[0];
+    assert.equal(written.price, "0.50");
+    assert.deepEqual(JSON.parse(written.metafields[0].value), { source: "scrydex", scrydexId: quote.scrydexId,
+      marketCents: 8, priceCents: 50, syncedAt: "2026-10-08T16:00:00Z" });
+    assert.doesNotMatch(JSON.stringify(client.writes), /inventory|quantity|cost|sku|barcode|publication|options/i);
+    variant.price = written.price;
   }
 });
 

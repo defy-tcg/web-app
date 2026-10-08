@@ -1,5 +1,6 @@
 // Server module: imported only by API routes and the Node-only intake service.
 import { isGeneratedSku } from "../sku-labels.ts";
+import { RIFTBOUND_SINGLE_MIN_PRICE_CENTS } from "../pricing-policy.ts";
 import { digest, SinglesError, type PlannedSingle, type ReceiptRow, type SingleProduct, type SinglesAdapter, type SinglesConnectionStatus, type SinglesContext, type Snapshot } from "./intake.ts";
 
 const API_VERSION = "2026-07";
@@ -154,6 +155,9 @@ function fullSizeImage(row: PlannedSingle) {
   return `https://tcgplayer-cdn.tcgplayer.com/product/${row.card.productId}_in_1000x1000.jpg`;
 }
 const money = (cents: number) => (cents / 100).toFixed(2);
+// Pending receipts keep their frozen final price and fingerprint. Enforce the
+// current floor only on positive outgoing prices, without applying markup again.
+const sellingPrice = (row: PlannedSingle) => money(row.priceCents > 0 ? Math.max(RIFTBOUND_SINGLE_MIN_PRICE_CENTS, row.priceCents) : row.priceCents);
 const html = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 
 export class ShopifySinglesAdapter implements SinglesAdapter {
@@ -401,7 +405,7 @@ export class ShopifySinglesAdapter implements SinglesAdapter {
     const initial = optionMatches.length === 1 && product.variants.nodes.length === 1 && product.status === "DRAFT" && product.catalogId?.value === printingId(row) && !optionMatches[0].sku && optionMatches[0].inventoryQuantity === 0 ? optionMatches[0] : null;
     if (optionMatches.length && !initial) throw identityConflict("The intended condition and finish already exist with a different SKU.");
     this.catalogCache.delete(row.card.productId);
-    const variantInput = { barcode: canonicalSku(row), price: money(row.priceCents), inventoryPolicy: "DENY", inventoryItem: { sku: canonicalSku(row), tracked: true, cost: money(row.costCents), requiresShipping: true } };
+    const variantInput = { barcode: canonicalSku(row), price: sellingPrice(row), inventoryPolicy: "DENY", inventoryItem: { sku: canonicalSku(row), tracked: true, cost: money(row.costCents), requiresShipping: true } };
     if (initial) {
       const data = await this.graphql<{ productVariantsBulkUpdate: Payload }>(`mutation SinglesInitializeVariant($id: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $id, variants: $variants) { userErrors { code message } } }`, { id: product.id, variants: [{ ...variantInput, id: initial.id }] });
       check(data.productVariantsBulkUpdate, "Preparing the new single variant");
@@ -427,7 +431,7 @@ export class ShopifySinglesAdapter implements SinglesAdapter {
     if (metadata.productUpdate.product?.id !== item.productId) throw new SinglesError("PRODUCT_UNCERTAIN", "The storefront metadata could not be confirmed. Retry this receipt.", true, true);
     const data = await this.graphql<{ productVariantsBulkUpdate: Payload & { productVariants: { id: string }[] } }>(`mutation SinglesPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
       productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { code message } }
-    }`, { productId: item.productId, variants: [{ id: item.variantId, price: money(row.priceCents), inventoryItem: { cost: money(row.costCents) } }] });
+    }`, { productId: item.productId, variants: [{ id: item.variantId, price: sellingPrice(row), inventoryItem: { cost: money(row.costCents) } }] });
     check(data.productVariantsBulkUpdate, "Saving the single's sale price and unit cost");
     if (!data.productVariantsBulkUpdate.productVariants.some(variant => variant.id === item.variantId)) throw new SinglesError("PRODUCT_UNCERTAIN", "The card's price could not be confirmed. Retry its receipt.", true, true);
   }

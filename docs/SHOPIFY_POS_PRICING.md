@@ -8,7 +8,8 @@ Shopify's standard search/scanner does not call this integration.
 Pokémon singles, including Japanese cards, receive a 1.7% increase over raw
 market. Riftbound singles receive 11% from $2.00 through $10.00 raw market,
 inclusive, 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00
-and above. Both round half-up to the nearest cent.
+and above. Both round half-up to the nearest cent; Riftbound singles then have
+a $0.50 USD minimum selling price.
 Other supported games and sealed products use the raw USD market price. The
 singles intake Review screen continues to show the raw market price. POS shows
 only the final customer price. The Shopify variant price is shared with its

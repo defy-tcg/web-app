@@ -66,7 +66,8 @@ Price refreshes and singles intake use Scrydex's raw USD market prices.
 Pokémon singles (including Japanese) receive a 1.7% customer selling-price markup,
 and Riftbound singles receive 11% from $2.00 through $10.00 raw market, inclusive,
 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00 and above,
-rounded half-up to cents. Other games and
+rounded half-up to cents with a $0.50 USD minimum final selling price for Riftbound
+singles. Raw market quotes are preserved. Other games and
 product types, including Riftbound sealed products, sell at the raw market price.
 Intake review shows unmarked market prices. Both Scrydex credentials are required;
 never expose them through client props, logs, or `NEXT_PUBLIC_` variables. Requests cache price

@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { products } from "../db/schema";
-import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS, RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT, RIFTBOUND_SINGLE_BAND_MIN_CENTS, RIFTBOUND_SINGLE_BAND_MAX_CENTS, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
+import { POKEMON_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_PERCENT, RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT, RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS, RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT, RIFTBOUND_SINGLE_BAND_MIN_CENTS, RIFTBOUND_SINGLE_BAND_MAX_CENTS, RIFTBOUND_SINGLE_MIN_PRICE_CENTS, SCRYDEX_PRICE_SOURCE, scrydexSellPriceCents, type PricingIdentity, type StoredPricing } from "./pricing-policy";
 import { TCG_GAME_REGISTRY, type TcgGameKey } from "./tcg-games";
 
 // PostgreSQL btrim defaults to spaces; this is the whitespace set used by JS trim.
@@ -76,16 +76,20 @@ export function protectedPricingColumns(incoming: StoredPricing) {
   // Imports may race a refresh and must not apply an incoming game's pricing rule.
   const gameKey = sql<string>`btrim(regexp_replace(replace(lower(regexp_replace(normalize(${products.game}, NFKD), '[\u0300-\u036f]', '', 'g')), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
   const isSingle = sql`lower(btrim(${products.productType}, ${JS_TRIM_CHARACTERS})) = 'single'`;
+  const isRiftbound = inArray(gameKey, normalizedGameAliases(["riftbound"]));
   const markupBasisPoints = sql<number>`CASE
-    WHEN ${inArray(gameKey, normalizedGameAliases(["riftbound"]))} THEN CASE
+    WHEN ${isRiftbound} THEN CASE
       WHEN ${products.marketPriceCents} BETWEEN ${RIFTBOUND_SINGLE_BAND_MIN_CENTS} AND ${RIFTBOUND_SINGLE_BAND_MAX_CENTS} THEN ${RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT * 100}::integer
       WHEN ${products.marketPriceCents} < ${RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS} THEN ${RIFTBOUND_SINGLE_LOW_PRICE_MARKUP_PERCENT * 100}::integer
       ELSE ${RIFTBOUND_SINGLE_MARKUP_PERCENT * 100}::integer END
     WHEN ${inArray(gameKey, normalizedGameAliases(["pokemon", "pokemon-japanese"]))} THEN ${POKEMON_SINGLE_MARKUP_PERCENT * 100}
     ELSE 0 END`;
+  const roundedCents = sql<number>`round(${products.marketPriceCents}::numeric * (10000 + ${markupBasisPoints}) / 10000)::integer`;
+  // Mirror scrydexSellPriceCents at write time so a racing import cannot undo the floor.
+  const singlePriceCents = sql<number>`CASE WHEN ${isRiftbound} AND ${products.marketPriceCents} > 0 THEN greatest(${RIFTBOUND_SINGLE_MIN_PRICE_CENTS}::integer, ${roundedCents}) ELSE ${roundedCents} END`;
   return {
     marketPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.marketPriceCents} ELSE ${incoming.marketPriceCents} END`,
-    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${isSingle} THEN round(${products.marketPriceCents}::numeric * (10000 + ${markupBasisPoints}) / 10000)::integer ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
+    listPriceCents: sql<number>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN CASE WHEN ${isSingle} THEN ${singlePriceCents} ELSE ${products.marketPriceCents} END ELSE ${incoming.listPriceCents} END`,
     priceSource: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceSource} ELSE ${incoming.priceSource} END`,
     priceUpdatedAt: sql<string>`CASE WHEN ${products.priceSource} = ${SCRYDEX_PRICE_SOURCE} THEN ${products.priceUpdatedAt} ELSE ${incoming.priceUpdatedAt} END`,
   };

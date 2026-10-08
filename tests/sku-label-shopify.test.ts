@@ -216,7 +216,7 @@ test("QR registration creates one exact card, publishes only POS, and caches con
 });
 test("QR linking shares the inclusive $2–$10 Riftbound band and raw-market $40 threshold", async () => {
   const riftboundCard = { ...card, game: "Riftbound" };
-  for (const [market, expected] of [[199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
+  for (const [market, expected] of [[1, 50], [8, 50], [45, 50], [46, 50], [47, 51], [48, 52], [50, 54], [199, 215], [200, 222], [201, 223], [950, 1055], [999, 1109], [1000, 1110], [1001, 1081], [3999, 4319], [4000, 4260], [4001, 4261]]) {
     const f = fixture();
     f.deps.resolvePrice = async () => ({ cents: market, matchedName: riftboundCard.name, groupName: riftboundCard.setName,
       variation: riftboundCard.finish, scrydexId: "fixture-riftbound", url: "https://example.com" });

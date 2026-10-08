@@ -10,7 +10,8 @@ Sync the POS device and remove/re-add an already-carted item to use a new price.
 Pokémon singles, including Japanese cards, use Scrydex raw market plus 1.7%.
 Riftbound singles use raw market plus 11% from $2.00 through $10.00 raw market,
 inclusive, 8% below $2.00 or above $10.00 but below $40.00, and 6.5% at $40.00
-and above. Both round half-up to cents.
+and above. Both round half-up to cents; Riftbound singles then have a $0.50 USD
+minimum selling price. Raw market quotes are preserved.
 Other supported products, including Riftbound sealed, use raw market without
 markup. Exact English printings and positive USD quotes are required. Scrydex
 responses retain the existing 24-hour cache; repeated scans do not consume a

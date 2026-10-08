@@ -7,6 +7,7 @@ export const RIFTBOUND_SINGLE_MARKUP_THRESHOLD_CENTS = 4_000;
 export const RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT = 11;
 export const RIFTBOUND_SINGLE_BAND_MIN_CENTS = 200;
 export const RIFTBOUND_SINGLE_BAND_MAX_CENTS = 1_000;
+export const RIFTBOUND_SINGLE_MIN_PRICE_CENTS = 50;
 export const POKEMON_SINGLE_MARKUP_PERCENT = 1.7;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
@@ -17,7 +18,7 @@ export function isRiftboundSinglePricingProduct(product: PricingProduct): boolea
     && product.productType.trim().toLowerCase() === "single";
 }
 
-/** Apply each game's singles markup to raw market cents, rounded half-up. */
+/** Apply each game's singles markup, round half-up, then enforce its sale-price floor. */
 export function scrydexSellPriceCents(marketCents: number, product: PricingProduct): number {
   if (!Number.isSafeInteger(marketCents) || marketCents <= 0 || marketCents > 100_000_000) {
     throw new Error("Scrydex must provide a positive USD market price within the supported range.");
@@ -32,7 +33,9 @@ export function scrydexSellPriceCents(marketCents: number, product: PricingProdu
   const markupPercent = game === "riftbound" ? riftboundMarkup
     : game === "pokemon" || game === "pokemon-japanese" ? POKEMON_SINGLE_MARKUP_PERCENT : 0;
   // Integer basis points keep fractional percentages and half-cent ties exact.
-  return Math.floor((marketCents * (10_000 + markupPercent * 100) + 5_000) / 10_000);
+  const roundedCents = Math.floor((marketCents * (10_000 + markupPercent * 100) + 5_000) / 10_000);
+  // This is a final selling-price minimum, never a replacement market quote.
+  return game === "riftbound" ? Math.max(RIFTBOUND_SINGLE_MIN_PRICE_CENTS, roundedCents) : roundedCents;
 }
 
 export type StoredPricing = {
