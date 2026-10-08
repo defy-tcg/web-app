@@ -85,6 +85,66 @@ test("real Postgres signed stock events preserve arrivals through sales, repeate
     if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
   }
 });
+test("real Postgres product snapshots retain the pre-receipt baseline before inventory webhooks arrive", { skip: !enabled }, async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;
+  const sql = neon(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL!);
+  const store = new ShopifySyncRepository();
+  const shop = `restock-snapshot-first-${randomUUID()}.invalid`, locationId = "gid://shopify/Location/1";
+  const productId = "gid://shopify/Product/1", items = ["gid://shopify/InventoryItem/1", "gid://shopify/InventoryItem/2"];
+  const baseline = "2026-10-08T12:00:00.000Z", arrival = "2026-10-08T12:01:00.000Z", sale = "2026-10-08T12:02:00.000Z";
+  const row = async (item: string) => (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, `${item}@${locationId}`]))[0].data;
+  const count = (item: string, available: number, time: string) => store.enqueue(shop,
+    { id: `${item}:${time}`, topic: "inventory_levels/update", resourceId: item, locationId, triggeredAt: time },
+    { available, eventAt: time, triggeredAt: time });
+  const refresh = async (id: string, available: number, time: string) => {
+    const delivery: Delivery = { id, topic: "products/update", resourceId: productId, triggeredAt: time };
+    const graphql: ReadGraphQL = async <T>() => ({ product: { id: productId, title: "Received cards", handle: "received-cards", status: "ACTIVE", updatedAt: time,
+      variants: { nodes: items.map((item, index) => ({ id: `gid://shopify/ProductVariant/${index + 1}`, title: "Default Title", sku: `CARD-${index + 1}`, barcode: "", price: "3.50", updatedAt: time,
+        product: { id: productId, title: "Received cards", handle: "received-cards", status: "ACTIVE", updatedAt: time },
+        inventoryItem: { id: item, tracked: true, inventoryLevel: { updatedAt: time,
+          quantities: [{ name: "available", quantity: available }, { name: "on_hand", quantity: available }, { name: "committed", quantity: 0 }] } } })),
+      pageInfo: { hasNextPage: false, endCursor: null } } } }) as T;
+    await store.enqueue(shop, delivery);
+    const lease = await store.acquire(shop, id, false);
+    assert.ok(lease);
+    assert.equal(await store.apply(shop, delivery, await fetchDeliverySnapshot(graphql, delivery, locationId, false), lease.leaseToken), true);
+  };
+  try {
+    await refresh("bootstrap", 2, baseline);
+    assert.equal((await row(items[0])).stockBaseline.available, 2);
+    assert.equal((await row(items[0])).stockAddedAt, undefined);
+    // The second row represents verified inventory from before arrival tracking.
+    await sql.query("UPDATE shopify_inventory SET data=data-'stockBaseline' WHERE shop=$1 AND id=$2", [shop, `${items[1]}@${locationId}`]);
+    await refresh("product-refresh-before-receipt", 5, arrival);
+    for (const item of items) {
+      const snapshot = await row(item);
+      assert.equal(snapshot.available, 5);
+      assert.equal(snapshot.stockBaseline.available, 2);
+      assert.equal(snapshot.stockBaseline.eventAt, baseline);
+      assert.equal(snapshot.stockAddedAt, undefined); // A price/product refresh itself is not a receipt.
+      await count(item, 5, arrival);
+      assert.equal((await row(item)).stockAddedAt, arrival);
+    }
+    await refresh("product-refresh-before-sale", 1, sale);
+    for (const item of items) {
+      const snapshot = await row(item);
+      assert.equal(snapshot.available, 1);
+      assert.equal(snapshot.stockBaseline.available, 2);
+      assert.equal(snapshot.stockEvents.length, 1);
+      assert.equal(snapshot.stockAddedAt, arrival);
+      await count(item, 1, sale);
+      const result = await row(item);
+      assert.equal(result.stockEventAvailable, 1);
+      assert.equal(result.stockAddedAt, arrival);
+      assert.deepEqual(result.stockEvents.map((entry: { available: number }) => entry.available), [5, 1]);
+    }
+    assert.deepEqual(await store.publicRestocks(shop, locationId), [{ productId, lastRestockedAt: arrival }]);
+  } finally {
+    for (const table of ["shopify_webhook_inbox", "shopify_inventory", "shopify_variants", "shopify_products"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
+    if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
+  }
+});
 test("real Postgres count journal checkpoints preserve retained timestamp ties and prior arrivals", { skip: !enabled }, async () => {
   const previous = process.env.DATABASE_URL;
   process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;

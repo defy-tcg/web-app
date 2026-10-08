@@ -227,7 +227,11 @@ without treating a late sale as a new increase. Shopify's precise delivery time
 orders different changes within one update second. A positive transition supplies
 `stockAddedAt`; unchanged counts and duplicate deliveries cannot add a transition.
 Current inventory snapshots preserve the baseline and journal separately from
-the dashboard balance. No new tables or schema migration are needed.
+the dashboard balance. If an older row has no journal yet, its next snapshot pins
+the previous verified count as its baseline before advancing the live balance.
+This also protects the first receipt when a product refresh or reconciliation
+finishes before its inventory webhook arrives. No new tables or schema migration
+are needed.
 
 Each item retains its latest 1,000 signed count events. Older events are folded
 into a checkpoint retaining their final count and last positive transition.

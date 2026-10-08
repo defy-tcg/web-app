@@ -13,6 +13,13 @@ function deliveryModeSql(parameter: number) {
   return `($${parameter}::boolean OR topic = ANY($${parameter + 1}::text[]) OR (topic='reconcile' AND resource_id LIKE ANY($${parameter + 2}::text[])))`;
 }
 const modeParameters = (ordersEnabled: boolean) => [ordersEnabled, syncTopics(false), INVENTORY_RECONCILE_PATTERNS];
+// Only fixed SQL references from the inventory UPSERT call this helper.
+function stockBaselineSql(data: string, sourceUpdatedAt: string) {
+  return `jsonb_strip_nulls(jsonb_build_object(
+    'eventAt',to_char(${sourceUpdatedAt} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'triggeredAt',to_char(${sourceUpdatedAt} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'available',${data}->'available','stockAddedAt',${data}->'stockAddedAt'))`;
+}
 function connection() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not configured.");
   return neon(process.env.DATABASE_URL);
@@ -111,16 +118,21 @@ export class ShopifySyncRepository implements SyncStore {
       if (!items.length) continue;
       values.push(JSON.stringify(items));
       const argument = `$${values.length}`;
+      // Establish the initial count without a receipt. On an existing row, pin
+      // its previous verified count before any snapshot can advance the balance
+      // ahead of the first signed inventory delivery.
       ctes.push(`upsert_${table} AS (
         INSERT INTO ${table} (shop,id,parent_id,source_updated_at,observed_at,deleted,data)
-        SELECT $1,p.id,p."parentId",p."sourceUpdatedAt",p."observedAt",p.deleted,p.data
+        SELECT $1,p.id,p."parentId",p."sourceUpdatedAt",p."observedAt",p.deleted,${kind === "inventory"
+          ? `p.data || jsonb_build_object('stockBaseline',${stockBaselineSql("p.data", 'p."sourceUpdatedAt"')})` : "p.data"}
         FROM jsonb_to_recordset(${argument}::jsonb) AS p(id text,"parentId" text,"sourceUpdatedAt" timestamptz,"observedAt" timestamptz,deleted boolean,data jsonb)
         WHERE EXISTS (SELECT 1 FROM applied_delivery)
         ON CONFLICT (shop,id) DO UPDATE SET parent_id=COALESCE(EXCLUDED.parent_id,${table}.parent_id),source_updated_at=EXCLUDED.source_updated_at,
           observed_at=EXCLUDED.observed_at,deleted=EXCLUDED.deleted,data=${kind === "inventory" ? `EXCLUDED.data || jsonb_strip_nulls(jsonb_build_object(
             'stockEventAt', ${table}.data->'stockEventAt', 'stockEventTriggeredAt', ${table}.data->'stockEventTriggeredAt',
             'stockEventAvailable', ${table}.data->'stockEventAvailable', 'stockAddedAt', ${table}.data->'stockAddedAt',
-            'stockBaseline', ${table}.data->'stockBaseline', 'stockEvents', ${table}.data->'stockEvents'))` : "EXCLUDED.data"},synced_at=now()
+            'stockBaseline', COALESCE(${table}.data->'stockBaseline',${stockBaselineSql(`${table}.data`, `${table}.source_updated_at`)}),
+            'stockEvents', ${table}.data->'stockEvents'))` : "EXCLUDED.data"},synced_at=now()
         WHERE EXCLUDED.source_updated_at > ${table}.source_updated_at OR
           (EXCLUDED.source_updated_at = ${table}.source_updated_at AND NOT ${table}.deleted AND (EXCLUDED.deleted OR EXCLUDED.observed_at > ${table}.observed_at))
         RETURNING id
