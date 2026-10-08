@@ -9,6 +9,123 @@ import { encodeCursor, type Delivery, type Projection, type SyncBatch } from "..
 
 // Explicit opt-in only; root supplies the URL of an isolated development Neon branch.
 const enabled = process.env.SHOPIFY_SYNC_INTEGRATION === "1" && Boolean(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL);
+test("real Postgres signed stock events preserve arrivals through sales, repeated deliveries and later snapshots", { skip: !enabled }, async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;
+  const sql = neon(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL!);
+  const store = new ShopifySyncRepository();
+  const shop = `restock-events-${randomUUID()}.invalid`, locationId = "gid://shopify/Location/1";
+  const itemId = "gid://shopify/InventoryItem/1", variantId = "gid://shopify/ProductVariant/1", productId = "gid://shopify/Product/1";
+  const baseline = "2026-10-08T12:00:00.000Z", arrival = "2026-10-08T12:01:00.000Z", sale = "2026-10-08T12:02:00.000Z";
+  const event = (id: string, triggeredAt: string): Delivery => ({ id, topic: "inventory_levels/update", resourceId: itemId, locationId, triggeredAt });
+  const enqueueCount = (id: string, available: number, eventAt: string, triggeredAt = eventAt) => store.enqueue(shop, event(id, triggeredAt), { available, eventAt, triggeredAt });
+  const row = async () => (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, `${itemId}@${locationId}`]))[0].data;
+  try {
+    // The first snapshot is a baseline, never an invented receipt.
+    await enqueueCount("bootstrap", 2, baseline);
+    const lease = await store.acquire(shop, "bootstrap", false);
+    assert.ok(lease);
+    const projection = (kind: Projection["kind"], id: string, parentId: string | null, data: Record<string, unknown>, time = baseline): Projection =>
+      ({ kind, id, parentId, data, sourceUpdatedAt: time, observedAt: time, deleted: false });
+    assert.equal(await store.apply(shop, event("bootstrap", baseline), { projections: [
+      projection("products", productId, null, { status: "ACTIVE", title: "Private title" }),
+      projection("variants", variantId, productId, { tracked: true, sku: "PRIVATE-SKU", cost: 99 }),
+      projection("inventory", `${itemId}@${locationId}`, variantId, { locationId, available: 2, onHand: 2, committed: 0 }),
+    ], replaceChildren: [] }, lease.leaseToken), true);
+    assert.equal((await row()).stockAddedAt, undefined);
+    await enqueueCount("arrival", 5, arrival);
+    await enqueueCount("sale", 2, sale); // Both events arrive before snapshot hydration.
+    assert.equal((await row()).stockAddedAt, arrival);
+    assert.equal((await row()).stockEventAvailable, 2);
+    await enqueueCount("arrival", 999, "2026-10-08T12:03:00.000Z"); // Duplicate delivery cannot change metadata.
+    await enqueueCount("late-event", 999, baseline);
+    assert.equal((await row()).stockAddedAt, arrival);
+    const saleLease = await store.acquire(shop, "sale", false);
+    assert.ok(saleLease);
+    await store.apply(shop, event("sale", sale), { projections: [projection("inventory", `${itemId}@${locationId}`, variantId,
+      { locationId, available: 2, onHand: 2, committed: 0 }, sale)], replaceChildren: [] }, saleLease.leaseToken);
+    assert.equal((await row()).available, 2);
+    assert.equal((await row()).stockAddedAt, arrival);
+    assert.equal((await row()).stockBaseline.available, 2);
+    assert.equal((await row()).stockEvents.length, 2);
+    // Distinct events sharing updated_at are ordered by Shopify's delivery time.
+    await enqueueCount("same-second-increase", 4, sale, "2026-10-08T12:02:00.000123Z");
+    await enqueueCount("same-second-sale", 1, sale, "2026-10-08T12:02:00.000456Z");
+    assert.equal((await row()).stockAddedAt, sale);
+    assert.equal((await row()).stockEventAvailable, 1);
+    const publicRows = await store.publicRestocks(shop, locationId);
+    assert.deepEqual(publicRows, [{ productId, lastRestockedAt: sale }]);
+    assert.doesNotMatch(JSON.stringify(publicRows), /PRIVATE|sku|cost|available/);
+    // Late receipts are replayed in source order, even after a sale's snapshot.
+    const reorderedId = "gid://shopify/InventoryItem/2";
+    const declinedId = "gid://shopify/InventoryItem/3";
+    for (const [id, available] of [[reorderedId, 2], [declinedId, 10]] as const) {
+      await sql.query(`INSERT INTO shopify_inventory(shop,id,parent_id,source_updated_at,observed_at,data)
+        VALUES($1,$2,$3,$4,$4,$5::jsonb)`, [shop, `${id}@${locationId}`, variantId, baseline,
+        JSON.stringify({ locationId, available, onHand: available, committed: 0 })]);
+    }
+    const record = (item: string, id: string, available: number, eventAt: string) =>
+      store.enqueue(shop, { ...event(id, eventAt), resourceId: item }, { available, eventAt, triggeredAt: eventAt });
+    await record(reorderedId, "sale-delivered-first", 2, sale);
+    let reordered = (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, `${reorderedId}@${locationId}`]))[0].data;
+    assert.equal(reordered.stockAddedAt, undefined);
+    await record(reorderedId, "late-receipt", 5, arrival);
+    reordered = (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, `${reorderedId}@${locationId}`]))[0].data;
+    assert.equal(reordered.stockAddedAt, arrival);
+    assert.equal(reordered.stockEventAvailable, 2);
+    assert.deepEqual(reordered.stockEvents.map((entry: { available: number }) => entry.available), [5, 2]);
+    await record(declinedId, "newer-sale-first", 4, sale);
+    await record(declinedId, "older-sale-late", 6, arrival);
+    const declined = (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, `${declinedId}@${locationId}`]))[0].data;
+    assert.equal(declined.stockAddedAt, undefined);
+    assert.equal(declined.stockEventAvailable, 4);
+    assert.deepEqual(declined.stockEvents.map((entry: { available: number }) => entry.available), [6, 4]);
+  } finally {
+    for (const table of ["shopify_webhook_inbox", "shopify_inventory", "shopify_variants", "shopify_products"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
+    if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
+  }
+});
+test("real Postgres count journal checkpoints preserve retained timestamp ties and prior arrivals", { skip: !enabled }, async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;
+  const sql = neon(process.env.SHOPIFY_SYNC_TEST_DATABASE_URL!);
+  const store = new ShopifySyncRepository();
+  const shop = `restock-checkpoint-${randomUUID()}.invalid`, locationId = "gid://shopify/Location/1";
+  const itemId = "gid://shopify/InventoryItem/1", id = `${itemId}@${locationId}`;
+  const baseline = "2026-10-08T12:00:00.000Z", arrival = "2026-10-08T12:01:00.000Z";
+  const stockEvents = Array.from({ length: 1000 }, (_, index) => ({
+    id: `event-${String(index + 1).padStart(4, "0")}`, available: index === 0 ? 5 : 4, eventAt: arrival, triggeredAt: arrival,
+  }));
+  const row = async () => (await sql.query("SELECT data FROM shopify_inventory WHERE shop=$1 AND id=$2", [shop, id]))[0].data;
+  const record = (deliveryId: string, available: number) => store.enqueue(shop,
+    { id: deliveryId, topic: "inventory_levels/update", resourceId: itemId, locationId, triggeredAt: arrival },
+    { available, eventAt: arrival, triggeredAt: arrival });
+  try {
+    await sql.query(`INSERT INTO shopify_inventory(shop,id,parent_id,source_updated_at,observed_at,data)
+      VALUES($1,$2,$3,$4,$4,$5::jsonb)`, [shop, id, "variant1", baseline, JSON.stringify({ locationId, available: 2,
+      stockBaseline: { available: 2, eventAt: baseline, triggeredAt: baseline }, stockEvents })]);
+    await record("event-1001", 3);
+    let data = await row();
+    assert.equal(data.stockEvents.length, 1000);
+    assert.equal(data.stockBaseline.id, "event-0001");
+    assert.equal(data.stockBaseline.available, 5);
+    assert.equal(data.stockBaseline.stockAddedAt, arrival);
+    assert.equal(data.stockEvents[0].id, "event-0002");
+    assert.equal(data.stockAddedAt, arrival);
+    await record("event-1002", 2);
+    data = await row();
+    assert.equal(data.stockEvents.length, 1000);
+    assert.equal(data.stockBaseline.id, "event-0002");
+    assert.equal(data.stockEvents[0].id, "event-0003");
+    assert.equal(data.stockEventAvailable, 2);
+    assert.equal(data.stockAddedAt, arrival);
+    await record("event-0000", 999); // The folded prefix is outside the retained replay window.
+    assert.deepEqual(await row(), data);
+  } finally {
+    for (const table of ["shopify_webhook_inbox", "shopify_inventory"]) await sql.query(`DELETE FROM ${table} WHERE shop=$1`, [shop]);
+    if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
+  }
+});
 test("real Postgres inventory webhooks make previously unknown stock visible and update its absolute balance", { skip: !enabled }, async () => {
   const previous = process.env.DATABASE_URL;
   process.env.DATABASE_URL = process.env.SHOPIFY_SYNC_TEST_DATABASE_URL;

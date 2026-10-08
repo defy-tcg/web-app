@@ -194,8 +194,9 @@ Delete/disconnect payloads retain their identity fields only.
 The changing fields matter: Shopify can suppress consecutive identical reduced
 payloads, so subscriptions containing only IDs can miss later stock changes.
 See [Shopify webhook debouncing](https://shopify.dev/docs/apps/build/webhooks/delivery-structure#debouncing).
-The receiver still persists only event metadata and reads current quantities
-from Shopify rather than trusting a possibly delayed webhook count.
+The receiver still reads current quantities from Shopify for the inventory
+dashboard. Signed update counts are retained separately for the storefront's
+stock-arrival ordering; delayed counts never replace the dashboard balance.
 
 Repairs append missing change fields to the same subscription ID, preserving
 existing broader fields and all other settings. Full payload subscriptions need
@@ -209,3 +210,37 @@ change stock, reconcile orders, or verify webhook delivery by making test sales.
 
 [Shopify subscription creation](https://shopify.dev/docs/api/admin-graphql/latest/mutations/webhookSubscriptionCreate),
 [subscription listing limits](https://shopify.dev/docs/api/admin-graphql/latest/queries/webhookSubscriptions).
+
+## Public stock arrival dates
+
+`GET /api/public/restocks` is a fixed read-only projection for the existing Defy
+shop and Redmond location. It returns only `locationId` and `restocks` containing
+Shopify `productId` and `lastRestockedAt`. It accepts no query parameters and
+does not expose quantities, SKU, acquisition costs, supplier, notes, or customer
+data. The separate public Pokémon feed continues to verify current availability.
+
+After HMAC verification, an inventory update's `available` count and `updated_at`
+are recorded atomically with its first inbox insertion in the existing inventory
+JSON. The signed counts are replayed in their source-time order from a persistent
+verified baseline. This detects a late receipt delivered after its later sale,
+without treating a late sale as a new increase. Shopify's precise delivery time
+orders different changes within one update second. A positive transition supplies
+`stockAddedAt`; unchanged counts and duplicate deliveries cannot add a transition.
+Current inventory snapshots preserve the baseline and journal separately from
+the dashboard balance. No new tables or schema migration are needed.
+
+Each item retains its latest 1,000 signed count events. Older events are folded
+into a checkpoint retaining their final count and last positive transition.
+An event arriving before that checkpoint cannot reconstruct older history.
+Until all preceding events arrive, a positive net change can be provisional;
+replay corrects its date to the actual positive transition when late events arrive.
+
+Tracking starts from the existing verified inventory baseline. When no row exists,
+the normal snapshot worker establishes one without inventing a stock receipt.
+Older receipts are not reconstructed; the storefront falls back to a product's
+creation date. Old ID-only subscriptions continue syncing inventory but need the
+payload repair above before stock arrival tracking can work. A positive available
+change includes receiving, a stock-count increase, returns, and released stock;
+the date records stock becoming available, not proof of an acquisition receipt.
+The endpoint requires inventory sync enabled and fails closed on other shops or
+locations. Production availability is cached for at most 30 seconds at this bridge.

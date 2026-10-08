@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import type { Delivery, SyncBatch, SyncStore } from "./sync-core.ts";
 import { INVENTORY_RECONCILE_PATTERNS, syncTopics } from "./sync-core.ts";
+import type { InventoryStockEvent } from "./stock-events.ts";
+import { PUBLIC_RESTOCK_LIMIT } from "./public-restocks.ts";
 
 const TABLES = { products: "shopify_products", variants: "shopify_variants", inventory: "shopify_inventory", orders: "shopify_orders", orderLines: "shopify_order_lines" } as const;
 // Parameters are the enabled flag, inventory topics, and canonical cursor patterns.
@@ -18,9 +20,54 @@ function connection() {
 export interface InboxDelivery extends Delivery { leaseToken: string }
 export class ShopifySyncRepository implements SyncStore {
   private sql = connection();
-  async enqueue(shop: string, delivery: Delivery) {
-    await this.sql.query(`INSERT INTO shopify_webhook_inbox(shop,id,topic,resource_id,location_id,triggered_at)
-      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (shop,id) DO NOTHING`, [shop, delivery.id, delivery.topic, delivery.resourceId, delivery.locationId ?? null, delivery.triggeredAt]);
+  async enqueue(shop: string, delivery: Delivery, stockEvent?: InventoryStockEvent | null) {
+    if (!stockEvent) {
+      await this.sql.query(`INSERT INTO shopify_webhook_inbox(shop,id,topic,resource_id,location_id,triggered_at)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (shop,id) DO NOTHING`, [shop, delivery.id, delivery.topic, delivery.resourceId, delivery.locationId ?? null, delivery.triggeredAt]);
+      return;
+    }
+    // The delivery insertion and ordered count journal commit together. A retry
+    // cannot replay the count, and the row lock serializes concurrent events.
+    // A missing row is established by the existing snapshot worker, never a
+    // fabricated stock arrival. Event counts stay separate from live snapshots.
+    await this.sql.query(`WITH accepted_delivery AS (
+      INSERT INTO shopify_webhook_inbox(shop,id,topic,resource_id,location_id,triggered_at)
+      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (shop,id) DO NOTHING RETURNING id
+    ), locked_inventory AS MATERIALIZED (
+      SELECT i.shop,i.id,i.data,i.source_updated_at FROM shopify_inventory i
+      WHERE i.shop=$1 AND i.id=$4 || '@' || $5 AND NOT i.deleted
+        AND i.data->>'locationId'=$5 AND EXISTS (SELECT 1 FROM accepted_delivery)
+      FOR UPDATE
+    ), baseline AS (
+      SELECT l.*,COALESCE(l.data->'stockBaseline',jsonb_strip_nulls(jsonb_build_object(
+        'eventAt',to_char(l.source_updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        'triggeredAt',to_char(l.source_updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        'available',l.data->'available','stockAddedAt',l.data->'stockAddedAt'))) AS base FROM locked_inventory l
+    ), events AS (
+      SELECT e.value AS event,b.base FROM baseline b CROSS JOIN LATERAL jsonb_array_elements(
+        COALESCE(b.data->'stockEvents','[]'::jsonb) || jsonb_build_array($7::jsonb || jsonb_build_object('id',$2::text))) e
+      WHERE ((e.value->>'eventAt')::timestamptz,(e.value->>'triggeredAt')::timestamptz,e.value->>'id') >
+        ((b.base->>'eventAt')::timestamptz,(b.base->>'triggeredAt')::timestamptz,COALESCE(b.base->>'id',e.value->>'id'))
+    ), ordered AS (
+      SELECT event,(event->>'available')::integer AS available,
+        lag((event->>'available')::integer,1,(base->>'available')::integer) OVER sequence AS previous,
+        row_number() OVER sequence AS position,count(*) OVER () AS total
+      FROM events WINDOW sequence AS (ORDER BY (event->>'eventAt')::timestamptz,(event->>'triggeredAt')::timestamptz,event->>'id')
+    ), summary AS (
+      SELECT b.*,
+        COALESCE((SELECT jsonb_agg(event ORDER BY position) FROM ordered WHERE position>total-1000),'[]'::jsonb) AS stock_events,
+        COALESCE((SELECT event FROM ordered ORDER BY position DESC LIMIT 1),b.base) AS latest_event,
+        COALESCE((SELECT event->'eventAt' FROM ordered WHERE available>previous ORDER BY position DESC LIMIT 1),b.base->'stockAddedAt') AS stock_added_at,
+        COALESCE((SELECT event || jsonb_strip_nulls(jsonb_build_object('stockAddedAt',
+          COALESCE((SELECT earlier.event->'eventAt' FROM ordered earlier WHERE earlier.position<=earlier.total-1000
+            AND earlier.available>earlier.previous ORDER BY earlier.position DESC LIMIT 1),b.base->'stockAddedAt')))
+          FROM ordered WHERE position=total-1000),b.base) AS next_base
+      FROM baseline b
+    ) UPDATE shopify_inventory i SET data = (i.data-'stockAddedAt') || jsonb_strip_nulls(jsonb_build_object(
+      'stockBaseline',s.next_base,'stockEvents',s.stock_events,'stockAddedAt',s.stock_added_at,
+      'stockEventAt',s.latest_event->'eventAt','stockEventTriggeredAt',s.latest_event->'triggeredAt',
+      'stockEventAvailable',s.latest_event->'available')) FROM summary s WHERE i.shop=s.shop AND i.id=s.id`,
+    [shop, delivery.id, delivery.topic, delivery.resourceId, delivery.locationId ?? null, delivery.triggeredAt, JSON.stringify(stockEvent)]);
   }
   async hasDelivery(shop: string, id: string) {
     const rows = await this.sql.query("SELECT id FROM shopify_webhook_inbox WHERE shop=$1 AND id=$2 AND status='complete'", [shop, id]);
@@ -70,7 +117,10 @@ export class ShopifySyncRepository implements SyncStore {
         FROM jsonb_to_recordset(${argument}::jsonb) AS p(id text,"parentId" text,"sourceUpdatedAt" timestamptz,"observedAt" timestamptz,deleted boolean,data jsonb)
         WHERE EXISTS (SELECT 1 FROM applied_delivery)
         ON CONFLICT (shop,id) DO UPDATE SET parent_id=COALESCE(EXCLUDED.parent_id,${table}.parent_id),source_updated_at=EXCLUDED.source_updated_at,
-          observed_at=EXCLUDED.observed_at,deleted=EXCLUDED.deleted,data=EXCLUDED.data,synced_at=now()
+          observed_at=EXCLUDED.observed_at,deleted=EXCLUDED.deleted,data=${kind === "inventory" ? `EXCLUDED.data || jsonb_strip_nulls(jsonb_build_object(
+            'stockEventAt', ${table}.data->'stockEventAt', 'stockEventTriggeredAt', ${table}.data->'stockEventTriggeredAt',
+            'stockEventAvailable', ${table}.data->'stockEventAvailable', 'stockAddedAt', ${table}.data->'stockAddedAt',
+            'stockBaseline', ${table}.data->'stockBaseline', 'stockEvents', ${table}.data->'stockEvents'))` : "EXCLUDED.data"},synced_at=now()
         WHERE EXCLUDED.source_updated_at > ${table}.source_updated_at OR
           (EXCLUDED.source_updated_at = ${table}.source_updated_at AND NOT ${table}.deleted AND (EXCLUDED.deleted OR EXCLUDED.observed_at > ${table}.observed_at))
         RETURNING id
@@ -95,6 +145,16 @@ export class ShopifySyncRepository implements SyncStore {
       ${kind === "orders" ? "AND (data->>'createdAt')::timestamptz > now()-interval '59 days'" : ""} ORDER BY id LIMIT $3`, [shop, after, limit + 1]);
     const ids = rows.slice(0, limit).map(row => row.id as string);
     return { ids, hasNextPage: rows.length > limit, endCursor: ids.at(-1) ?? null };
+  }
+  async publicRestocks(shop: string, locationId: string) {
+    // This fixed projection deliberately does not select SKU, stock, costs,
+    // customer fields, or receiving receipt data.
+    return this.sql.query(`SELECT p.id AS "productId",max(i.data->>'stockAddedAt') AS "lastRestockedAt"
+      FROM shopify_inventory i JOIN shopify_variants v ON v.shop=i.shop AND v.id=i.parent_id
+      JOIN shopify_products p ON p.shop=v.shop AND p.id=v.parent_id
+      WHERE i.shop=$1 AND i.data->>'locationId'=$2 AND NOT i.deleted AND NOT v.deleted AND NOT p.deleted
+        AND p.data->>'status'='ACTIVE' AND (v.data->>'tracked')::boolean=true AND i.data->>'stockAddedAt' IS NOT NULL
+      GROUP BY p.id ORDER BY p.id LIMIT $3`, [shop, locationId, PUBLIC_RESTOCK_LIMIT + 1]);
   }
   async dashboard(shop: string, locationId: string, ordersEnabled = true) {
     const [inventory, orders, summaries, errors] = await Promise.all([
