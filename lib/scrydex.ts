@@ -169,6 +169,7 @@ function pokemonNameAliases(product: ScrydexProduct) {
   const rarities = new Set<"secret" | "rainbow" | "prime">();
   let pokemonCenterStamp = false;
   let metalCard151 = false;
+  let teamPlasma = false;
   const printedNumber = numberKey(product.cardNumber);
   // Visit newly added aliases too: TCGplayer can put the art description before
   // or after rarity and collector number. Each removal strictly shortens the
@@ -197,9 +198,14 @@ function pokemonNameAliases(product: ScrydexProduct) {
       metalCard151 = true;
       aliases.push(value.slice(0, metal.index));
     }
+    const plasma = /\s*\(Team Plasma\)\s*$/i.exec(value);
+    if (plasma && plasma.index > 0) {
+      teamPlasma = true;
+      aliases.push(value.slice(0, plasma.index));
+    }
     for (const alias of aliases) if (alias && alias.length < value.length) names.add(alias);
   }
-  return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp, metalCard151 };
+  return { names: [...names].filter(Boolean), rarities: [...rarities], pokemonCenterStamp, metalCard151, teamPlasma };
 }
 
 function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow" | "prime">, candidate: ObjectValue) {
@@ -283,6 +289,11 @@ function verifiedName(product: ScrydexProduct, candidate: ObjectValue, game: str
     || !array(candidate.variants).map(object).some(variant => finishKey(variant.name) === "metal"
       && marketplaceId(variant, 519481)))) return false;
   if (pokemonAliases?.rarities.length && (!verifiedPokemonRarities(pokemonAliases.rarities, candidate)
+    || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
+    || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)))) return false;
+  // TCGplayer includes Team Plasma in its name; Scrydex records the affiliation
+  // as a subtype. Keep that proof mandatory even for an exact annotated name.
+  if (pokemonAliases?.teamPlasma && (!array(candidate.subtypes).some(subtype => identity(subtype) === "team plasma")
     || !Number.isSafeInteger(product.tcgplayerId) || (product.tcgplayerId ?? 0) <= 0
     || !array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)))) return false;
   const gundamRarity = gundamRarityAnnotation(product, game);
@@ -472,6 +483,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const pokemonRarity = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).rarities.length > 0;
   const pokemonCenterStamp = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).pokemonCenterStamp;
   const metalCard151 = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).metalCard151;
+  const teamPlasma = spec.game === "pokemon" && !spec.sealed && pokemonNameAliases(product).teamPlasma;
   const variants = array(candidate.variants).map(object).filter((variant) => {
     if (metalCard151) {
       // TCGplayer catalogs the metal card as Normal. Keep that label confined
@@ -501,7 +513,7 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
       return ["normal", "foil"].includes(spec.finish) && finishKey(variant.name) === spec.finish;
     }
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (pokemonRarity || unnumberedPokemonPrinting(product) || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
+    if (pokemonRarity || teamPlasma || unnumberedPokemonPrinting(product) || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");

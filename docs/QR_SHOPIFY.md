@@ -150,6 +150,13 @@ identity is still checked. This keeps rainbow and gold cards distinct even when
 their base names are identical.
 Other parenthetical labels, such as Promo, First Edition, or stamped editions,
 remain part of the required identity instead of being removed indiscriminately.
+Pokémon's **Team Plasma** annotation can match a shorter Scrydex card name only
+when Scrydex explicitly lists **Team Plasma** in the card's subtypes and the
+selected finish owns the exact TCGplayer product ID. For example, **Giratina
+(Team Plasma)** can match Scrydex's **Giratina** for Plasma Storm **62/135** or
+the separate BW Black Star Promo **BW74**, with each printing's own set,
+collector number, language, finish, condition, and USD quote verified. Ordinary
+Giratina cards and special holofoil editions cannot supply a substitute price.
 English Pokémon set labels such as **SV: Black Bolt** match
 Scrydex's **Black Bolt** automatically when their exact set title, series prefix,
 and marketplace ID agree. Known series prefixes (SV, SWSH, SM, XY, BW, ME) and
