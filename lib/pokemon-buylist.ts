@@ -6,6 +6,10 @@ import { resolveScrydexPrice, type ScrydexProduct, type ScrydexPrice } from "./s
 export const POKEMON_BUYLIST_CARDS = [
   { name: "Mew ex", setName: "SV: Scarlet & Violet Promo Cards", cardNumber: "053", finish: "Foil", tcgplayerId: 518871 },
   { name: "Mewtwo", setName: "SV: Scarlet & Violet Promo Cards", cardNumber: "052", finish: "Foil", tcgplayerId: 518872 },
+  { name: "Charizard ex", setName: "SV: Scarlet & Violet 151", cardNumber: "183/165", finish: "Foil", tcgplayerId: 517017 },
+  { name: "Venusaur ex", setName: "SV: Scarlet & Violet 151", cardNumber: "182/165", finish: "Foil", tcgplayerId: 517037 },
+  { name: "Blastoise ex", setName: "SV: Scarlet & Violet 151", cardNumber: "184/165", finish: "Foil", tcgplayerId: 517015 },
+  { name: "Mew ex", setName: "SV: Scarlet & Violet 151", cardNumber: "193/165", finish: "Foil", tcgplayerId: 517027 },
 ] as const;
 
 export type PokemonBuylistOffer = (typeof POKEMON_BUYLIST_CARDS)[number] & {
