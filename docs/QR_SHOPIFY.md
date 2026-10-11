@@ -60,6 +60,10 @@ list and verifies the result. Shopify limits a variant to 20 barcodes; a full or
 incomplete barcode list requires review. An existing barcode is never silently
 replaced to make room for a QR.
 
+Label previews, browser prints, and PDFs include a separate bold condition line
+for conditions other than Mint and Near Mint. This line stays visible even when
+the card name is shortened to fit the 38 × 13 mm label.
+
 Printing, downloading a PDF, clearing a batch, or scanning does not regenerate
 the code. The saved-label library works across signed-in devices. Defy's barcode
 registration and POS catalog synchronization are separate stages: **ready** means

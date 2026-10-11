@@ -6,6 +6,7 @@ export type SkuInventoryDraft = {
 export type SkuDraftLabel = {
   sku: string;
   name: string;
+  condition?: string;
   inventory?: SkuInventoryDraft;
 };
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSkuLabelDocument, generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuQrSvg } from "../lib/sku-labels.ts";
+import { createSkuLabelDocument, generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition, skuQrSvg } from "../lib/sku-labels.ts";
 
 function randomSequence(candidates: number[][]) {
   let index = 0;
@@ -76,6 +76,21 @@ test("QR output has 21 modules and an unpainted four-module quiet zone on every 
   assert.throws(() => skuQrSvg("DEFY-123<script>"), /generated SKU/);
 });
 
+test("label conditions omit Mint and Near Mint aliases and retain other conditions", () => {
+  for (const condition of [undefined, "", " \n ", "Mint", " m ", "MINT", "Near Mint", " near-mint ", "N M", "nm"]) {
+    assert.equal(skuLabelCondition(condition), "", String(condition));
+  }
+  for (const [condition, expected] of [
+    ["lp", "Lightly Played"], [" Lightly-Played ", "Lightly Played"],
+    ["MP", "Moderately Played"], ["moderately  played", "Moderately Played"],
+    [" hp ", "Heavily Played"], ["Heavily-Played", "Heavily Played"],
+    ["dmg", "Damaged"], ["DAMAGED", "Damaged"],
+    ["  Other condition  ", "Other condition"],
+  ]) {
+    assert.equal(skuLabelCondition(condition), expected);
+  }
+});
+
 test("print document contains exact size pages, all copies, safe names and no trailing page break", () => {
   const html = createSkuLabelDocument([
     { sku: "DEFY-1234567890", name: '  <script>&"\' test  ' },
@@ -101,6 +116,34 @@ test("print document trims and limits names without splitting Unicode characters
   assert.ok(name.startsWith("A B "));
   assert.equal(Array.from(name).length, 48);
   assert.equal(Array.from(name).at(-1), "🃏");
+});
+
+test("print labels keep condition in its own row when card names are long", () => {
+  const conditions = ["LP", "MP", "HP", "Damaged", "Mint", "NM"];
+  const name = "A long card name ".repeat(10);
+  const html = createSkuLabelDocument(conditions.map((condition, index) => ({
+    sku: `DEFY-123456789${index}`, name, condition,
+  })), 2);
+  assert.equal((html.match(/class="condition"/g) ?? []).length, 8);
+  assert.equal((html.match(/class="details has-condition"/g) ?? []).length, 8);
+  for (const condition of ["Lightly Played", "Moderately Played", "Heavily Played", "Damaged"]) {
+    assert.equal((html.match(new RegExp(`<div class="condition">${condition}</div>`, "g")) ?? []).length, 2);
+  }
+  const names = [...html.matchAll(/<div class="name">([^<]*)<\/div>/g)].map((match) => match[1]);
+  assert.equal(names.length, 12);
+  assert.ok(names.every((displayName) => Array.from(displayName).length === 48));
+  assert.ok(names.every((displayName) => !/Played|Damaged/.test(displayName)));
+  assert.match(html, /\.has-condition \.name \{ -webkit-line-clamp: 1; max-height: 2mm; \}/);
+  assert.match(html, /\.condition \{ font: 700 5pt\/1\.75mm/);
+  assert.match(html, /@page \{ size: 38mm 13mm; margin: 0; \}/);
+  assert.match(html, /width: 11mm; height: 11mm/);
+  assert.ok(html.includes(skuQrSvg("DEFY-1234567890")), "condition does not change QR content");
+});
+
+test("custom condition text is escaped in print labels", () => {
+  const html = createSkuLabelDocument([{ sku: "DEFY-1234567890", name: "Card", condition: "<b>Custom & condition</b>" }], 1);
+  assert.match(html, /<div class="condition">&lt;b&gt;Custom &amp; condition&lt;\/b&gt;<\/div>/);
+  assert.doesNotMatch(html, /<b>/);
 });
 
 test("print document refuses invalid quantities and oversized jobs", () => {

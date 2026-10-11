@@ -79,12 +79,65 @@ test("PDF fits the longest details block with the Redmond heading and website fo
   assert.ok(Math.abs(Number(imagePositions[0][2]) - 5.5 * mm) < 0.00001, "two-line name fits between heading and SKU above the website");
 });
 
+test("PDF condition rows survive long names, remain bold, and do not change QR modules", async () => {
+  const conditions = ["LP", "MP", "HP", "DMG", "Mint", "NM"];
+  const name = "A long card name ".repeat(10);
+  const renderedNames: { name: string; maxLines?: number }[] = [];
+  const bytes = await createSkuLabelPdf(conditions.map((condition) => ({
+    sku: "DEFY-1234567890", name, condition,
+  })), 2, async (displayName, maxLines) => {
+    renderedNames.push({ name: displayName, maxLines });
+    return { png: pixel, heightMm: maxLines === 1 ? 2 : 4 };
+  });
+  assert.deepEqual(renderedNames, [
+    { name: name.slice(0, 48), maxLines: 1 },
+    { name: name.slice(0, 48), maxLines: 2 },
+  ], "the same card name gets separate one-line and two-line images");
+  const document = await PDFDocument.load(bytes);
+  assert.equal(document.getPageCount(), 12);
+  const encoded = (text: string) => Buffer.from(text).toString("hex").toUpperCase();
+  const expectedConditions = ["Lightly Played", "Moderately Played", "Heavily Played", "Damaged"];
+  const qrOperations = (content: string) => content.split("\nQ\n").filter((section) => section.includes("0 0 m\n") && section.includes("\nf"));
+  const unconditionedContent = await pageContent(bytes, 8);
+  for (let pageIndex = 0; pageIndex < 12; pageIndex++) {
+    const page = document.getPage(pageIndex);
+    assert.ok(Math.abs(page.getWidth() - 38 * mm) < 0.00001);
+    assert.ok(Math.abs(page.getHeight() - 13 * mm) < 0.00001);
+    const content = await pageContent(bytes, pageIndex);
+    assert.deepEqual(qrOperations(content), qrOperations(unconditionedContent));
+    assert.match(content, new RegExp(encoded("DEFY-1234567890")));
+    assert.match(content, new RegExp(encoded("Defy TCG - Redmond")));
+    assert.match(content, new RegExp(encoded("Buy singles at defytcg.com")));
+    if (pageIndex < 8) {
+      const condition = expectedConditions[Math.floor(pageIndex / 2)];
+      const conditionText = content.split("BT\n").find((section) => section.includes(`<${encoded(condition)}> Tj`));
+      assert.ok(conditionText, `${condition} remains visible independently of the long name`);
+      assert.match(conditionText, /\/Helvetica-Bold-[\d]+ 5 Tf/);
+      const image = content.split("\nQ\n").find((section) => section.includes(" Do"))!;
+      const position = /1 0 0 1 ([\d.]+) ([\d.]+) cm/.exec(image)!;
+      assert.ok(Math.abs(Number(position[2]) - 7.5 * mm) < 0.00001, "one-line name leaves the condition row above the SKU");
+    } else {
+      for (const condition of [...expectedConditions, "Mint", "Near Mint", "NM"]) {
+        assert.doesNotMatch(content, new RegExp(`<${encoded(condition)}> Tj`));
+      }
+    }
+  }
+});
+
 test("name wrapping handles words and long Unicode names with at most two fitting lines", () => {
   const measure = (value: string) => Array.from(value).length;
   assert.deepEqual(wrapSkuLabelName("Ahri Spirit Blossom", 12, measure), ["Ahri Spirit", "Blossom"]);
   assert.deepEqual(wrapSkuLabelName("🃏".repeat(30), 8, measure), ["🃏".repeat(8), `${"🃏".repeat(7)}…`]);
   assert.deepEqual(wrapSkuLabelName("A long name with many words", 8, measure), ["A long", "name wi…"]);
   assert.deepEqual(wrapSkuLabelName("Short", 8, measure), ["Short"]);
+  assert.deepEqual(wrapSkuLabelName("Ahri Spirit Blossom", 12, measure, 1), ["Ahri Spirit…"]);
+  assert.deepEqual(wrapSkuLabelName("🃏".repeat(30), 8, measure, 1), [`${"🃏".repeat(7)}…`]);
+  assert.deepEqual(wrapSkuLabelName("Short", 8, measure, 1), ["Short"]);
+});
+
+test("PDF condition layout rejects a name image that would occupy its condition row", async () => {
+  await assert.rejects(createSkuLabelPdf([{ sku: "DEFY-1234567890", name: "Long name", condition: "LP" }], 1,
+    async () => ({ png: pixel, heightMm: 4 })), /card name could not fit/);
 });
 
 test("PDF validates every label and job limit before rendering names", async () => {
