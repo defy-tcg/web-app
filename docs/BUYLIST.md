@@ -37,13 +37,17 @@ The Pokémon selection contains exactly these English Near Mint holofoil cards:
 | Venusaur ex — 182/165 | SV: Scarlet & Violet 151 | 517037 |
 | Blastoise ex — 184/165 | SV: Scarlet & Violet 151 | 517015 |
 | Mew ex — 193/165 | SV: Scarlet & Violet 151 | 517027 |
+| Misty's Psyduck — 193/182 | SV10: Destined Rivals | 632993 |
+| Gravity Mountain — 250/191 | SV08: Surging Sparks | 593857 |
+| Wartortle — 171/165 | SV: Scarlet & Violet 151 | 517038 |
+| Squirtle — 170/165 | SV: Scarlet & Violet 151 | 502549 |
 
 `GET /api/public/buylist?game=pokemon` returns only **80% cash** offers calculated
 from current verified Scrydex raw USD market cents, rounded half up. It does not
 use the website selling price or Pokémon's 1.7% retail markup, and it contains no
 store-credit offer. The storefront's `/api/buylist?game=pokemon` proxy passes this
 fixed selection through. Pokémon has its own 24-hour snapshot cache and makes at
-most six provider requests per refresh, at concurrency three. Its response
+most ten provider requests per refresh, at concurrency three. Its response
 includes the game, card identity, condition, language, freshness dates, and
 cash amounts; missing or expired quotes have `cashCents: null` and an unavailable
 status. It follows the same exact-printing verification and no-fallback policy

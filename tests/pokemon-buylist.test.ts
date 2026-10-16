@@ -17,7 +17,7 @@ test("Pokémon cash offers pay 80% of raw market cents with no retail markup or 
   for (const invalid of [0, -1, 1.5, NaN, Infinity, 100_000_001]) assert.throws(() => pokemonBuylistCash(invalid));
 });
 
-test("the fixed Pokémon cash-only list contains the approved English Near Mint promos and 151 printings", async () => {
+test("the fixed Pokémon cash-only list contains the approved English Near Mint printings", async () => {
   let active = 0, max = 0;
   const requests: ScrydexProduct[] = [];
   const result = await buildPokemonBuylistSnapshot(async product => {
@@ -32,6 +32,8 @@ test("the fixed Pokémon cash-only list contains the approved English Near Mint 
     ["Mew ex", "053", 518871], ["Mewtwo", "052", 518872],
     ["Charizard ex", "183/165", 517017], ["Venusaur ex", "182/165", 517037],
     ["Blastoise ex", "184/165", 517015], ["Mew ex", "193/165", 517027],
+    ["Misty's Psyduck", "193/182", 632993], ["Gravity Mountain", "250/191", 593857],
+    ["Wartortle", "171/165", 517038], ["Squirtle", "170/165", 502549],
   ]);
   for (const product of requests) {
     assert.equal(product.game, "Pokémon");
@@ -62,7 +64,7 @@ test("failed or invalid Pokémon quotes remain unavailable without substituting 
       }
       return price(4120);
     }, () => now);
-    assert.equal(result.cards.length, 6);
+    assert.equal(result.cards.length, 10);
     assert.equal(result.cards[0].cashCents, null);
     assert.equal(result.cards[0].status, "unavailable");
     assert.equal(result.cards[1].cashCents, 3296);
@@ -76,7 +78,7 @@ test("Pokémon snapshot expiry removes cash offers without mutating a fresh cach
   assert.equal(currentPokemonBuylist(snapshot, now + 86_399_999), snapshot);
   for (const time of [now - 1, now + 86_400_000, now + 172_800_000]) {
     const result = currentPokemonBuylist(snapshot, time);
-    assert.equal(result.cards.length, 6);
+    assert.equal(result.cards.length, 10);
     assert(result.cards.every(card => card.cashCents === null && card.status === "unavailable"));
     assert.equal(JSON.stringify(result).includes("creditCents"), false);
   }
@@ -85,15 +87,20 @@ test("Pokémon snapshot expiry removes cash offers without mutating a fresh cach
 });
 
 function candidate(card: typeof POKEMON_BUYLIST_CARDS[number]) {
-  const promo = card.cardNumber === "052" || card.cardNumber === "053";
+  const expansions = {
+    "SV: Scarlet & Violet Promo Cards": { id: "svp", name: "Scarlet & Violet Black Star Promos", code: "SVP", printed_total: null },
+    "SV: Scarlet & Violet 151": { id: "sv3pt5", name: "151", code: "MEW", printed_total: 165 },
+    "SV10: Destined Rivals": { id: "sv10", name: "Destined Rivals", code: "DRI", printed_total: 182 },
+    "SV08: Surging Sparks": { id: "sv8", name: "Surging Sparks", code: "SSP", printed_total: 191 },
+  };
+  const expansion = expansions[card.setName];
   const number = String(Number(card.cardNumber.split("/")[0]));
-  // Sanitized fixtures for the approved promo and 151 printing identities.
+  // Sanitized fixtures for the approved printings and their provider expansions.
   return {
-    id: `${promo ? "svp" : "sv3pt5"}-${number}`, name: card.name, number, printed_number: card.cardNumber,
+    id: `${expansion.id}-${number}`, name: card.name, number, printed_number: card.cardNumber,
     language: "English", language_code: "EN",
     expansion: {
-      id: promo ? "svp" : "sv3pt5", name: promo ? "Scarlet & Violet Black Star Promos" : "151",
-      series: "Scarlet & Violet", code: promo ? "SVP" : "MEW", printed_total: promo ? null : 165,
+      ...expansion, series: "Scarlet & Violet",
       language: "English", language_code: "EN",
     },
     variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: String(card.tcgplayerId) }], prices: [
@@ -117,6 +124,8 @@ test("each Pokémon buylist printing uses only its verified English holofoil raw
       (entry: typeof source) => { entry.language_code = "JA"; },
       (entry: typeof source) => { entry.printed_number = "999/165"; entry.number = "999"; },
       (entry: typeof source) => { entry.expansion.id = "another-set"; },
+      (entry: typeof source) => { entry.expansion.name = "Another Set"; },
+      (entry: typeof source) => { entry.expansion.series = "Sword & Shield"; },
       (entry: typeof source) => { entry.variants[0].name = "reverseHolofoil"; },
       (entry: typeof source) => { entry.variants[0].prices = entry.variants[0].prices.slice(1); },
     ]) {

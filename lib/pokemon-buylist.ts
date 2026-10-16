@@ -10,6 +10,10 @@ export const POKEMON_BUYLIST_CARDS = [
   { name: "Venusaur ex", setName: "SV: Scarlet & Violet 151", cardNumber: "182/165", finish: "Foil", tcgplayerId: 517037 },
   { name: "Blastoise ex", setName: "SV: Scarlet & Violet 151", cardNumber: "184/165", finish: "Foil", tcgplayerId: 517015 },
   { name: "Mew ex", setName: "SV: Scarlet & Violet 151", cardNumber: "193/165", finish: "Foil", tcgplayerId: 517027 },
+  { name: "Misty's Psyduck", setName: "SV10: Destined Rivals", cardNumber: "193/182", finish: "Foil", tcgplayerId: 632993 },
+  { name: "Gravity Mountain", setName: "SV08: Surging Sparks", cardNumber: "250/191", finish: "Foil", tcgplayerId: 593857 },
+  { name: "Wartortle", setName: "SV: Scarlet & Violet 151", cardNumber: "171/165", finish: "Foil", tcgplayerId: 517038 },
+  { name: "Squirtle", setName: "SV: Scarlet & Violet 151", cardNumber: "170/165", finish: "Foil", tcgplayerId: 502549 },
 ] as const;
 
 export type PokemonBuylistOffer = (typeof POKEMON_BUYLIST_CARDS)[number] & {
