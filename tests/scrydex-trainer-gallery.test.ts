@@ -20,6 +20,24 @@ function candidate() {
   };
 }
 
+const snorlax: ScrydexProduct = {
+  name: "Snorlax", game: "Pokémon", setName: "SWSH11: Lost Origin Trainer Gallery",
+  cardNumber: "TG10/TG30", productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 284270,
+};
+
+function snorlaxCandidate() {
+  // Sanitized identity and NM quote from the live swsh11tg-TG10 response verified 2026-10-16.
+  return {
+    id: "swsh11tg-TG10", name: "Snorlax", number: "TG10", printed_number: "TG10/TG30", language_code: "EN",
+    expansion: {
+      id: "swsh11tg", name: "Lost Origin Trainer Gallery", series: "Sword & Shield", code: "LOR",
+      total: 30, printed_total: 30, language: "English", language_code: "EN", is_online_only: false,
+    },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "284270" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 22.13 }] }],
+  };
+}
+
 const errorCode = (code: ScrydexErrorCode) => (error: unknown) => error instanceof ScrydexError && error.code === code;
 
 function config(t: TestContext) {
@@ -134,5 +152,80 @@ test("Trainer Gallery pricing still requires its physical language, condition, a
   assert.throws(() => selectScrydexPrice({ ...product, condition: "Lightly Played" }, [entry]), errorCode("price_unavailable"));
   for (const patch of [{ market: 0 }, { market: -1 }, { currency: "JPY" }, { type: "graded" }]) {
     assert.throws(() => selectScrydexPrice(product, [{ ...entry, variants: [{ ...foil, prices: [{ ...foil.prices[0], ...patch }] }] }]), errorCode("price_unavailable"));
+  }
+});
+
+test("Snorlax maps its numbered Lost Origin Trainer Gallery label to the exact printing", () => {
+  const result = selectScrydexPrice(snorlax, [snorlaxCandidate()]);
+  assert.equal(result.scrydexId, "swsh11tg-TG10");
+  assert.equal(result.matchedName, "Snorlax");
+  assert.equal(result.groupName, "Lost Origin Trainer Gallery");
+  assert.equal(result.variation, "holofoil / NM");
+  assert.equal(result.cents, 2213);
+});
+
+test("Snorlax retrieves its gallery printing with one bounded name, collector, and marketplace query", async t => {
+  config(t);
+  let calls = 0;
+  const result = await resolveScrydexPrice(snorlax, { fetch: async input => {
+    calls++;
+    const url = new URL(String(input)), query = url.searchParams.get("q")!;
+    assert.equal(url.origin + url.pathname, "https://api.scrydex.com/pokemon/v1/cards");
+    assert.equal(url.searchParams.get("include"), "prices");
+    assert.equal(url.searchParams.get("casing"), "snake");
+    assert.equal(url.searchParams.get("page"), "1");
+    assert.equal(url.searchParams.get("page_size"), "100");
+    assert.ok(query.includes('!name:"Snorlax"'));
+    assert.ok(query.includes('number:"TG10"'));
+    assert.ok(query.includes("AND language_code:EN"));
+    assert.ok(query.includes('variants.marketplaces.product_id:"284270"'));
+    return Response.json({ data: [snorlaxCandidate()], total_count: 1 });
+  } });
+  assert.equal(calls, 1);
+  assert.equal(result.scrydexId, "swsh11tg-TG10");
+  assert.equal(result.cents, 2213);
+});
+
+test("Lost Origin Trainer Gallery preserves every verified set field and cannot select the main set", () => {
+  const entry = snorlaxCandidate();
+  for (const expansion of [
+    { ...entry.expansion, id: "swsh11" }, { ...entry.expansion, id: "swsh12tg" },
+    { ...entry.expansion, id: "swsh11gg" }, { ...entry.expansion, id: "" },
+    { ...entry.expansion, name: "Lost Origin" }, { ...entry.expansion, name: "Silver Tempest Trainer Gallery" },
+    { ...entry.expansion, name: "Lost Origin Galarian Gallery" },
+    { ...entry.expansion, series: "Scarlet & Violet" }, { ...entry.expansion, series: "" },
+    { ...entry.expansion, code: "SIT" }, { ...entry.expansion, code: "" }, { ...entry.expansion, code: undefined },
+  ]) assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, expansion }]), errorCode("not_found"));
+  for (const setName of [
+    "SWSH11: Lost Origin", "SWSH12: Lost Origin Trainer Gallery", "SWSH11: Lost Origin Galarian Gallery",
+    "SWSH11: Lost Origin Bonus Gallery", "SWSH11: Silver Tempest Trainer Gallery",
+  ]) assert.throws(() => selectScrydexPrice({ ...snorlax, setName }, [entry]), errorCode("not_found"));
+});
+
+test("Snorlax gallery matching retains the exact card, collector denominator, language, and marketplace identity", () => {
+  const entry = snorlaxCandidate(), foil = entry.variants[0];
+  for (const patch of [
+    { name: "Snorlax VMAX" }, { cardNumber: "TG09/TG30" }, { cardNumber: "TG10/TG29" },
+    { cardNumber: "TG10/30" }, { tcgplayerId: undefined }, { tcgplayerId: 284271 },
+  ]) assert.throws(() => selectScrydexPrice({ ...snorlax, ...patch }, [entry]), errorCode("not_found"));
+  for (const patch of [
+    { printed_number: "TG10/TG29" }, { printed_number: "TG09/TG30" }, { printed_number: "TG10/30" },
+    { language_code: "JA" }, { expansion: { ...entry.expansion, language_code: "JA" } },
+  ]) assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, ...patch }]), errorCode("not_found"));
+  for (const marketplaces of [[], [{ name: "tcgplayer", product_id: "284271" }], [{ name: "other", product_id: "284270" }]]) {
+    assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, variants: [{ ...foil, marketplaces }] }]), errorCode("not_found"));
+  }
+});
+
+test("Snorlax gallery price requires the exact chosen finish and a positive raw NM USD quote", () => {
+  const entry = snorlaxCandidate(), foil = entry.variants[0];
+  const wrongFoil = { ...foil, marketplaces: [{ name: "tcgplayer", product_id: "284271" }] };
+  const correctOtherFinish = { ...foil, name: "reverseHolofoil" };
+  assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, variants: [wrongFoil, correctOtherFinish] }]), errorCode("price_unavailable"));
+  for (const patch of [{ finish: "Normal" }, { condition: "Lightly Played" }]) {
+    assert.throws(() => selectScrydexPrice({ ...snorlax, ...patch }, [entry]), errorCode("price_unavailable"));
+  }
+  for (const patch of [{ market: 0 }, { market: -1 }, { currency: "JPY" }, { type: "graded" }]) {
+    assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, variants: [{ ...foil, prices: [{ ...foil.prices[0], ...patch }] }] }]), errorCode("price_unavailable"));
   }
 });
