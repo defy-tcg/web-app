@@ -210,6 +210,13 @@ variants, and retains a recoverable correction intent across interrupted request
 After correction, retry the Shopify link using the same QR. An existing or
 uncertain Shopify product cannot be relabeled through this flow.
 
+Silver Tempest Trainer Gallery imports recognize TCGplayer's **SWSH12: Silver
+Tempest Trainer Gallery** label as Scrydex's **swsh12tg** expansion only when its
+full set name, Sword & Shield series, SIT code, and exact TCGplayer product ID
+agree. The full collector number, language, selected finish, condition, and USD
+market quote still have to match. This lets Blaziken VMAX **TG15/TG30** use its
+verified quote while keeping the original QR and starting-stock receipt.
+
 When the exact TCGplayer printing is missing from Scrydex, or lacks a verified
 positive market price, retry its Shopify link to check current availability.
 The blocked label offers **Set a manual selling price**. Confirm the physical

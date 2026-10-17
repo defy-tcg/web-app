@@ -328,6 +328,7 @@ const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: st
   "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
   "me: mega evolution promo": { id: "mep", name: "mega evolution black star promos", series: "mega evolution", code: "mep" },
   "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
+  "swsh12: silver tempest trainer gallery": { id: "swsh12tg", name: "silver tempest trainer gallery", series: "sword & shield", code: "sit" },
 };
 
 const POKEMON_JAPANESE_SET_ALIASES: Record<string, { id: string; name: string; translatedName: string; series: string; code: string }> = {
