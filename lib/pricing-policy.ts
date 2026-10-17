@@ -8,7 +8,7 @@ export const RIFTBOUND_SINGLE_BAND_MARKUP_PERCENT = 11;
 export const RIFTBOUND_SINGLE_BAND_MIN_CENTS = 200;
 export const RIFTBOUND_SINGLE_BAND_MAX_CENTS = 1_000;
 export const RIFTBOUND_SINGLE_MIN_PRICE_CENTS = 50;
-export const POKEMON_SINGLE_MARKUP_PERCENT = 1.7;
+export const POKEMON_SINGLE_MARKUP_PERCENT = 3;
 
 export type PricingProduct = Pick<PricingIdentity, "game" | "productType">;
 

@@ -139,10 +139,11 @@ sell at **market × 1.11 from $2.00 through $10.00 raw market, inclusive**,
 with a **$0.50 minimum final selling price**:
 a $10.00 market price produces a $11.10 selling price, while $40.00 produces
 $42.60. Pokémon singles (including Japanese)
-use a 1.7% markup. Other games and product types, including Riftbound sealed
-products, sell at the unmarked market price. Repeated
-refreshes do not compound the markup. Market and selling-price fields are
-read-only for Scrydex-managed items.
+use a 3% markup (market × 1.03). Other games and product types, including
+Riftbound sealed products, sell at the unmarked market price. Repeated
+refreshes do not compound the markup. Existing Shopify prices adopt the current
+rule on their next successful Defy Pricing lookup or catalog refresh. Market and
+selling-price fields are read-only for Scrydex-managed items.
 
 Matching requires a verified English product, exact printing/set, finish, raw
 condition, and a positive USD price. Singles also require a collector number.

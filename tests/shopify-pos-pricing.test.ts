@@ -77,13 +77,13 @@ test("POS scans share the inclusive $2–$10 Riftbound band and raw-market $40 t
   }
 });
 
-test("Japanese Pokémon POS pricing adds 1.7% while keeping its exact game and language", async () => {
+test("Japanese Pokémon POS pricing adds 3% while keeping its exact game and language", async () => {
   const item = japaneseVariant(); const f = fixture([item]); f.state.marketCents = 2773;
   const result = await refreshPosPrice(item.sku!, f.dependencies);
-  assert.equal(result.priceCents, 2820);
+  assert.equal(result.priceCents, 2856);
   assert.equal(f.state.quoted[0].game, "Pokémon (Japanese)");
   assert.equal(f.state.quoted[0].tcgplayerId, 566513);
-  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "28.20" }] }]);
+  assert.deepEqual(f.state.mutations, [{ productId: item.product.id, variants: [{ id: item.id, price: "28.56" }] }]);
   for (const change of [
     (v: Variant) => { v.selectedOptions[2].value = "English"; },
     (v: Variant) => { v.product.game = field("Pokémon"); v.product.productType = "Pokémon single"; },
@@ -127,8 +127,8 @@ test("secondary barcode duplicates, incomplete lists, and edits during pricing p
   assert.equal(edited.state.quoted.length, 1); assert.equal(edited.state.mutations.length, 0);
 });
 
-test("English Pokémon POS pricing adds 1.7% with half-up cents without a Riftbound catalog lookup", async () => {
-  for (const [market, expected] of [[29, 29], [30, 31], [500, 509], [1100, 1119]]) {
+test("English Pokémon POS pricing adds 3% with half-up cents without a Riftbound catalog lookup", async () => {
+  for (const [market, expected] of [[29, 30], [30, 31], [49, 50], [50, 52], [51, 53], [500, 515], [1100, 1133]]) {
     const item = variant(); item.sku = "PKM-PIKACHU-NM";
     Object.assign(item.product, { cardName: field("Pikachu"), game: field("Pokémon"), productType: "Pokémon single", set: field("Base Set"), number: field("58/102"), catalogId: null, receivingId: null });
     const f = fixture([item]); f.state.marketCents = market;

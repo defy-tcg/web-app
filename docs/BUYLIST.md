@@ -44,7 +44,7 @@ The Pokémon selection contains exactly these English Near Mint holofoil cards:
 
 `GET /api/public/buylist?game=pokemon` returns only **80% cash** offers calculated
 from current verified Scrydex raw USD market cents, rounded half up. It does not
-use the website selling price or Pokémon's 1.7% retail markup, and it contains no
+use the website selling price or Pokémon's 3% retail markup, and it contains no
 store-credit offer. The storefront's `/api/buylist?game=pokemon` proxy passes this
 fixed selection through. Pokémon has its own 24-hour snapshot cache and makes at
 most ten provider requests per refresh, at concurrency three. Its response
