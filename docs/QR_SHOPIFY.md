@@ -148,7 +148,12 @@ metadata as well as the exact selected-variant TCGplayer ID. Missing or
 conflicting rarity fields keep the card blocked; art and collector-number
 aliases cannot bypass that check.
 TCGplayer's Secret label covers both Scrydex **Rare Secret** and **Rare Rainbow**;
-an explicit Rainbow label accepts only the latter. Parenthetical collector
+an explicit Rainbow label accepts only the latter. Sword & Shield records may
+pair **Rare Rainbow** with the rarity code **HR**; this code is accepted only
+with the full matching rarity label and verified Sword & Shield series. It
+cannot establish a rarity on its own or stand in for a later-era Hyper Rare.
+For example, **Giratina VSTAR (201) (Secret)** retains its exact **201/196**
+printing and TCGplayer ID **284156**. Parenthetical collector
 numbers such as **(176)** must agree with the saved number, whose full printing
 identity is still checked. This keeps rainbow and gold cards distinct even when
 their base names are identical.

@@ -216,6 +216,10 @@ function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow" | "prime">
     if (["rare secret", "secret rare"].includes(identity(value))) return "secret";
     if (["rare rainbow", "rainbow rare"].includes(identity(value))) return "rainbow";
     if (identity(value) === "rare prime") return "prime";
+    // Sword & Shield rainbow cards use HR alongside the full rarity label.
+    // The code alone cannot identify a rarity or authorize a later-era Hyper Rare.
+    if (identity(value) === "hr" && ["rare rainbow", "rainbow rare"].includes(identity(candidate.rarity))
+      && identity(object(candidate.expansion).series) === "sword & shield") return "rainbow";
     return undefined;
   });
   if (!classes.length || !classes[0] || !classes.every(value => value === classes[0])) return false;
