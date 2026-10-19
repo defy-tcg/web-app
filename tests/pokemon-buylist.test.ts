@@ -97,7 +97,7 @@ function candidate(card: typeof POKEMON_BUYLIST_CARDS[number]) {
   const number = String(Number(card.cardNumber.split("/")[0]));
   // Sanitized fixtures for the approved printings and their provider expansions.
   return {
-    id: `${expansion.id}-${number}`, name: card.name, number, printed_number: card.cardNumber,
+    id: `${expansion.id}-${number}`, name: card.name, number, printed_number: String(card.cardNumber),
     language: "English", language_code: "EN",
     expansion: {
       ...expansion, series: "Scarlet & Violet",
