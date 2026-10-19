@@ -1,0 +1,4 @@
+.launcher { position: fixed; right: 16px; bottom: 16px; z-index: 30; padding: 9px 15px; border: 1px solid #87a494; border-radius: 24px; background: #173e32; color: white; font: 600 12px/1.4 system-ui; text-decoration: none; box-shadow: 0 3px 12px #0002; }
+.launcher:hover { background: #245440; }
+.launcher:focus-visible { outline: 3px solid #9dc5aa; outline-offset: 3px; }
+@media print { .launcher { display: none !important; } }
