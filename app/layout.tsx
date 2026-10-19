@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import WorkspaceLauncher from "./components/workspace-launcher";
 import "./globals.css";
 
 const themeScript = `
@@ -43,6 +44,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: themeScript }}
         />
         {children}
+        <WorkspaceLauncher />
       </body>
     </html>
   );
