@@ -4,5 +4,5 @@ import { getAuthorizedSession } from '@/lib/auth/authorization';
 import WarehouseClient from './warehouse-client';
 import './warehouse.css';
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Rift Warehouse OS · Defy TCG', description: 'Separate card intake, Mastersheet, storage and order-picking workspace.', robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: 'Rift Warehouse OS · Defy TCG', description: 'Separate intake, card reference, warehouse and picking workspace.', robots: { index: false, follow: false } };
 export default async function WarehousePage() { if (!await getAuthorizedSession()) redirect('/auth/sign-in'); return <WarehouseClient />; }
