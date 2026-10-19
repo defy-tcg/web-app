@@ -1,0 +1,5 @@
+.rw-shell .rw-index-status { padding: 12px 16px; margin: 0 0 18px; border: 1px solid #c9d8ce; border-radius: 12px; background: #f4f8f5; color: #24392c; }
+.rw-shell .rw-index-status strong { font-size: 13px; }
+.rw-shell .rw-index-status p { margin: 5px 0; font-size: 12px; line-height: 1.5; }
+@media print { .rw-index-status { display: none !important; } }
+.rw-shell label.rw-button:has(input:disabled) { opacity: .55; cursor: progress; }
