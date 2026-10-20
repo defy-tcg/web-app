@@ -216,6 +216,9 @@ function verifiedPokemonRarities(rarities: Array<"secret" | "rainbow" | "prime">
     if (["rare secret", "secret rare"].includes(identity(value))) return "secret";
     if (["rare rainbow", "rainbow rare"].includes(identity(value))) return "rainbow";
     if (identity(value) === "rare prime") return "prime";
+    // Live secret printings use SR beside their full Rare Secret label. The
+    // code alone must not authorize a rarity or conceal contradictory text.
+    if (identity(value) === "sr" && ["rare secret", "secret rare"].includes(identity(candidate.rarity))) return "secret";
     // Sword & Shield rainbow cards use HR alongside the full rarity label.
     // The code alone cannot identify a rarity or authorize a later-era Hyper Rare.
     if (identity(value) === "hr" && ["rare rainbow", "rainbow rare"].includes(identity(candidate.rarity))

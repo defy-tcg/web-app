@@ -10,7 +10,7 @@ function candidate() {
   // Sanitized identity and NM quote from Scrydex's live swsh12pt5gg-GG70 response.
   return {
     id: "swsh12pt5gg-GG70", name: "Arceus VSTAR", number: "GG70", printed_number: "GG70/GG70",
-    rarity: "Rare Secret", rarity_code: "Rare Secret", language: "English", language_code: "EN",
+    rarity: "Rare Secret", rarity_code: "SR", language: "English", language_code: "EN",
     expansion: {
       id: "swsh12pt5gg", name: "Crown Zenith Galarian Gallery", series: "Sword & Shield", code: "CRZ",
       printed_total: 70, language: "English", language_code: "EN",
@@ -125,6 +125,20 @@ test("missing or contradictory rarity metadata cannot be bypassed by an exact an
   const exact = { ...entry, name: product.name };
   for (const tcgplayerId of [undefined, 478102]) {
     assert.throws(() => selectScrydexPrice({ ...product, setName: entry.expansion.name, tcgplayerId }, [exact]), errorCode("not_found"));
+  }
+});
+
+test("live SR rarity codes require the full agreeing secret label and exact marketplace printing", () => {
+  const entry = candidate();
+  assert.equal(selectScrydexPrice(product, [entry]).scrydexId, "swsh12pt5gg-GG70");
+  for (const rarity of [undefined, "", "SR", "Rare Ultra", "Rare Rainbow", "Rare Prime"]) {
+    assert.throws(() => selectScrydexPrice(product, [{ ...entry, rarity }]), errorCode("not_found"));
+  }
+  for (const rarity_code of ["HR", "SAR", "PR", "unknown"]) {
+    assert.throws(() => selectScrydexPrice(product, [{ ...entry, rarity_code }]), errorCode("not_found"));
+  }
+  for (const patch of [{ tcgplayerId: undefined }, { tcgplayerId: 478102 }, { cardNumber: "GG70/GG69" }, { finish: "Reverse Holo" }]) {
+    assert.throws(() => selectScrydexPrice({ ...product, ...patch }, [entry]), error => error instanceof ScrydexError);
   }
 });
 
