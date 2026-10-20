@@ -225,6 +225,14 @@ condition, and positive USD market quote still have to match. This lets Eevee
 **TG11/TG30**, Snorlax **TG10/TG30**, and Blaziken VMAX **TG15/TG30** use their verified quotes while
 keeping each original QR and starting-stock receipt.
 
+Other numbered English Pokémon **Trainer Gallery** and **Galarian Gallery**
+labels can match automatically without adding a per-set exception. The complete
+gallery title, known series, and numbered base expansion must agree; Scrydex's
+expansion ID must be that base plus `tg` or `gg`. Both providers' full gallery
+collector numbers, gallery total, and the selected finish's exact TCGplayer ID
+must agree. Existing named exceptions retain their stricter metadata checks.
+This never changes the saved card identity or substitutes a main-set printing.
+
 When the exact TCGplayer printing is missing from Scrydex, or lacks a verified
 positive market price, retry its Shopify link to check current availability.
 The blocked label offers **Set a manual selling price**. Confirm the physical
@@ -302,12 +310,25 @@ names, error codes, and numeric request costs without credentials or payloads.
 - **Blocked:** Permissions, pricing, identity, or publication needs correction.
   Correct the reported issue and retry the saved QR; do not create another SKU.
 
-Saving triggers a background attempt. The label page can retry unfinished links,
-and a server cron provides nightly reconciliation, including blocked pricing
+Saving triggers a background attempt. If a cached Scrydex lookup lacks an exact
+printing or positive price, linking makes one fresh lookup with the same strict
+selector, bypassing the normal 24-hour cache. A missing price is never guessed;
+ambiguous matches, incomplete identities, permissions, and configuration failures
+remain review issues. Provider failures are left pending for delayed recovery.
+
+After saving, approving a manual price, or explicitly retrying, the open label
+page can make at most three delayed linking attempts per card within five minutes.
+The first is eligible after 15 seconds, followed by waits of at least 30 and 60
+seconds. This includes missing-printing and missing-price results, which retain
+their review controls while recovery is queued. Status reads neither grant a
+new retry window nor reset its limits. Loading the library stays read-only.
+Ready cards and human-review blockers stop the queue, including an unfinished
+reviewed catalog correction. Closing the page does not cancel the saved card.
+
+A server cron provides nightly reconciliation, including blocked pricing
 matches. Once matching or Scrydex data is corrected, these saved cards can link
 on a later pass without another SKU or receipt. Recovery processes at most 12
-cards per run, so larger backlogs can take multiple nights; Scrydex responses
-remain cached for up to 24 hours. The current Vercel team uses
+cards per run, so larger backlogs can take multiple nights. The current Vercel team uses
 the Hobby plan, which allows a cron job at most once daily and may invoke it
 within the scheduled hour. This recovery schedule does not promise immediate
 completion during an outage. All retry paths preserve the original QR and receipt.

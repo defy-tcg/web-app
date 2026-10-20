@@ -133,9 +133,11 @@ test("gallery colon matching preserves the full set title, series, and numbered 
   const future = { ...entry, expansion: { ...entry.expansion, id: "swsh99gg", name: "Future Set Bonus Gallery" } };
   assert.equal(selectScrydexPrice({ ...product, setName: "SWSH: Future Set: Bonus Gallery" }, [future]).cents, 21082);
   assert.equal(selectScrydexPrice({ ...product, setName: "SWSH99gg: Future Set: Bonus Gallery" }, [future]).cents, 21082);
+  assert.equal(selectScrydexPrice({ ...product, setName: "SWSH12pt5: Crown Zenith: Galarian Gallery" }, [entry]).cents, 21082);
+  assert.equal(selectScrydexPrice({ ...product, setName: "SWSH12pt5gg: Crown Zenith: Galarian Gallery" }, [entry]).cents, 21082);
   for (const setName of [
     "SWSH: Crown Zenith", "SWSH: Crown Zenith: Trainer Gallery", "SV: Crown Zenith: Galarian Gallery",
-    "SWSH: Crown Zenith-Galarian Gallery", "SWSH: Crown Zenith / Galarian Gallery", "SWSH12pt5: Crown Zenith: Galarian Gallery",
+    "SWSH: Crown Zenith-Galarian Gallery", "SWSH: Crown Zenith / Galarian Gallery", "SWSH11pt5: Crown Zenith: Galarian Gallery",
   ]) assert.throws(() => selectScrydexPrice({ ...product, setName }, [entry]), errorCode("not_found"));
   for (const expansion of [
     { ...entry.expansion, name: "Crown Zenith" }, { ...entry.expansion, name: "Crown Zenith Trainer Gallery" },

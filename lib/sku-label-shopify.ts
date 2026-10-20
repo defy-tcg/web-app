@@ -4,7 +4,8 @@ import type { SkuLabelCatalogDetails } from "./sku-label-catalog-types.ts";
 import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, SkuLabelInventoryError } from "./sku-label-inventory.ts";
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
-import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode, type ScrydexPrice, type ScrydexProduct } from "./scrydex.ts";
+import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode } from "./scrydex.ts";
+import { resolveSkuLinkPrice, type SkuLinkPriceResolver } from "./sku-label-link-price.ts";
 import { digest, SinglesError, type PlannedSingle } from "./singles/intake.ts";
 import { createShopifyGraphQL, LEGACY_DEFY_MAPPING, ShopifySinglesAdapter, type SinglesGraphQL } from "./singles/shopify.ts";
 import { canonicalSinglesCondition } from "./singles/types.ts";
@@ -17,13 +18,13 @@ export interface SkuLabelShopifyProduct {
 }
 export interface SkuLabelShopifyStatus {
   sku: string; status: "ready" | "pending" | "blocked"; message: string;
-  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean;
+  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean; automaticRetry?: boolean;
 }
 export interface SkuLabelShopifyDependencies {
   graphql: SinglesGraphQL;
   settings: { shop: string; locationId: string };
   clock: () => number;
-  resolvePrice?: (product: ScrydexProduct) => Promise<ScrydexPrice>;
+  resolvePrice?: SkuLinkPriceResolver;
 }
 export interface SkuLabelStockTarget {
   identity: string; productId: string; variantId: string; inventoryItemId: string;
@@ -161,7 +162,7 @@ function safeFailure(sku: string, error: unknown): SkuLabelShopifyStatus {
     // Log only the known error code and saved SKU, never provider errors or credentials.
     console.warn("[sku-label-shopify] Scrydex pricing blocked linking", { sku, code: error.code });
     return { sku, status: error.code === "upstream_error" ? "pending" : "blocked", message: `The QR is saved. ${pricingFailureMessages[error.code]}`,
-      ...(["not_found", "price_unavailable"].includes(error.code) ? { manualPriceAllowed: true } : {}) };
+      ...(["not_found", "price_unavailable"].includes(error.code) ? { manualPriceAllowed: true, automaticRetry: true } : {}) };
   }
   if (error instanceof SinglesError && ["QR_LINK_BLOCKED", "QR_LINK_PENDING", "PRODUCT_IDENTITY_CONFLICT"].includes(error.code)) return { sku, status: error.retryable ? "pending" : "blocked", message: error.message };
   console.warn("[sku-label-shopify] Link not confirmed", { sku,
@@ -716,7 +717,7 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     let manualPriceUsed = false;
     if (identity.source) {
       try {
-        const quote = await (deps.resolvePrice ?? resolveScrydexPrice)({ ...product, productType: "Single" });
+        const quote = await resolveSkuLinkPrice({ ...product, productType: "Single" }, deps.resolvePrice);
         cents = scrydexSellPriceCents(quote.cents, { game: product.game, productType: "Single" });
       } catch (error) {
         if (!(error instanceof ScrydexError) || !["not_found", "price_unavailable"].includes(error.code) || manualCents === null) throw error;

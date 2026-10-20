@@ -236,6 +236,26 @@ test("missing publication permission blocks before any mutation", async () => {
 test("unknown Scrydex price never publishes a zero-price linked card", async () => {
   const f = fixture({ priceError: true }); const result = await linkSkuLabelToShopify(card, f.deps);
   assert.equal(result.status, "blocked"); assert.doesNotMatch(result.message, /Private/); assert.equal(f.product(), null);
+  assert.equal(result.automaticRetry, true);
+});
+test("automatic fresh pricing links the original QR and an interrupted retry transfers starting stock once", async () => {
+  const f = fixture({ failAfterStock: true });
+  const saved = { ...card, initialQuantity: 1, quantity: 1 };
+  const requests: { fresh?: boolean }[] = [];
+  f.deps.resolvePrice = async (product, options) => {
+    assert.equal(product.tcgplayerId, card.tcgplayerId);
+    requests.push(options ?? {});
+    if (!options?.fresh) throw new ScrydexError("not_found", "Stale cached catalog");
+    return { cents: 4802, matchedName: card.name, groupName: card.setName, variation: card.finish, scrydexId: "card-1", url: "https://example.com" };
+  };
+  assert.equal((await linkSkuLabelToShopify(saved, f.deps)).status, "pending");
+  const result = await linkSkuLabelToShopify(saved, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.priceCents, 4802);
+  assert.equal(result.availableQuantity, 1);
+  assert.equal(f.product().variants.nodes[0].barcode, card.sku);
+  assert.equal(f.quantityAdded(), 1);
+  assert.deepEqual(requests, [{}, { fresh: true }, {}, { fresh: true }]);
 });
 test("pricing failures distinguish catalog, price, configuration, and service issues without exposing upstream details", async t => {
   const warning = t.mock.method(console, "warn", () => {});
@@ -255,8 +275,11 @@ test("pricing failures distinguish catalog, price, configuration, and service is
     assert.equal(f.product(), null);
     assert.equal(f.quantityAdded(), 0);
     assert.equal(result.manualPriceAllowed, ["not_found", "price_unavailable"].includes(code) ? true : undefined);
+    assert.equal(result.automaticRetry, ["not_found", "price_unavailable"].includes(code) ? true : undefined);
     assert.deepEqual(warning.mock.calls.at(-1)?.arguments, ["[sku-label-shopify] Scrydex pricing blocked linking", { sku: card.sku, code }]);
-    assert.equal((await getSkuLabelShopifyStatuses([card], f.deps))[0].message, result.message);
+    const polled = (await getSkuLabelShopifyStatuses([card], f.deps))[0];
+    assert.equal(polled.message, result.message);
+    assert.equal(polled.automaticRetry, result.automaticRetry);
   }
 });
 test("manual complete cards use their saved positive sale price without market lookup", async () => {

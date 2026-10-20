@@ -384,7 +384,8 @@ function numberedSetIdentity(value: unknown) {
   return identity(value).replace(/\d+/g, (digits) => digits.replace(/^0+(?=\d)/, ""));
 }
 
-function verifiedPokemonSetLabel(product: ScrydexProduct, expansion: ObjectValue) {
+function verifiedPokemonSetLabel(product: ScrydexProduct, candidate: ObjectValue) {
+  const expansion = object(candidate.expansion);
   const label = /^([^:]+):\s*(.+)$/.exec(identity(product.setName));
   // Providers punctuate sub-set names differently; retain every title word.
   const title = (value: unknown) => identity(value).replace(/\s*:\s*/g, " ").replace(/\s+/g, " ").trim();
@@ -397,7 +398,25 @@ function verifiedPokemonSetLabel(product: ScrydexProduct, expansion: ObjectValue
   if (!series || identity(expansion.series) !== series) return false;
   // An unnumbered series label covers new sets without a per-set whitelist.
   // Numbered labels must additionally identify the same expansion in full.
-  return !numberedPrefix || numberedSetIdentity(prefix) === numberedSetIdentity(expansion.id);
+  if (!numberedPrefix) return true;
+  // TCGplayer's numbered gallery label identifies its base expansion, while
+  // Scrydex appends tg/gg. Recover only that explicit convention, keeping the
+  // complete title, series, gallery number and selected marketplace ID checks.
+  const gallery = /\b(trainer|galarian) gallery$/.exec(title(label[2]));
+  if (!gallery) return numberedSetIdentity(prefix) === numberedSetIdentity(expansion.id);
+  const marker = gallery[1] === "trainer" ? "tg" : "gg";
+  // A caller may already supply Scrydex's complete gallery expansion ID.
+  if (prefix.endsWith(marker) && numberedSetIdentity(prefix) === numberedSetIdentity(expansion.id)) return true;
+  if (identity(product.productType) !== "single" || !/^[a-z]+\d+(?:pt\d+)?$/.test(prefix)) return false;
+  if (`${numberedSetIdentity(prefix)}${marker}` !== numberedSetIdentity(expansion.id)) return false;
+  const printed = numberKey(product.cardNumber);
+  const collector = new RegExp(`^${marker}(\\d+)/${marker}(\\d+)$`).exec(printed);
+  if (!collector) return false;
+  const numerator = Number(collector[1]), denominator = Number(collector[2]);
+  return Number.isSafeInteger(numerator) && numerator > 0 && Number.isSafeInteger(denominator) && denominator > 0
+    && expansion.printed_total === denominator
+    && numberKey(candidate.number) === printed.split("/")[0]
+    && numberKey(candidate.printed_number) === printed;
 }
 
 function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: string, language: "English" | "Japanese") {
@@ -426,7 +445,7 @@ function verifiedSetName(product: ScrydexProduct, candidate: ObjectValue, game: 
   // failed known alias must not fall through to the generic series-label path.
   if (alias) return identity(expansion.id) === alias.id && identity(expansion.name) === alias.name
     && identity(expansion.series) === alias.series && (alias.code === null ? expansion.code === null : identity(expansion.code) === alias.code);
-  return verifiedPokemonSetLabel(product, expansion);
+  return verifiedPokemonSetLabel(product, candidate);
 }
 
 function matchesNumber(number: string, candidate: ObjectValue) {
@@ -553,8 +572,8 @@ function queryLiteral(value: string) {
   return `"${value.trim().replace(/[+\-!(){}\[\]^"~*?:\\/|&]/g, "\\$&")}"`;
 }
 
-/** One request at most, no retries/fallback provider, a ten-second timeout, and no redirects. */
-export async function resolveScrydexPrice(product: ScrydexProduct, options: { fetch?: typeof fetch } = {}): Promise<ScrydexPrice> {
+/** One request at most, no retries/fallback provider, a ten-second timeout, and no redirects. Fresh lookups bypass the default 24-hour cache. */
+export async function resolveScrydexPrice(product: ScrydexProduct, options: { fetch?: typeof fetch; fresh?: boolean } = {}): Promise<ScrydexPrice> {
   const spec = productSpec(product);
   const { apiKey, teamId } = getScrydexConfig();
   const names = [...new Set([product.name.trim(), productNameWithoutGame(product)])];
@@ -609,9 +628,10 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   let response: Response;
   let payload: ObjectValue;
   try {
-    const requestOptions: RequestInit & { next: { revalidate: number } } = {
+    const requestOptions: RequestInit & { next?: { revalidate: number } } = {
       headers: { "X-Api-Key": apiKey, "X-Team-ID": teamId, Accept: "application/json" },
-      next: { revalidate: 86_400 }, redirect: "error", signal: AbortSignal.timeout(10_000),
+      ...(options.fresh ? { cache: "no-store" as const } : { next: { revalidate: 86_400 } }),
+      redirect: "error", signal: AbortSignal.timeout(10_000),
     };
     response = await (options.fetch ?? fetch)(url, requestOptions);
     if (!response.ok) throw new ScrydexError("upstream_error", `Scrydex request failed (HTTP ${response.status}); no price was changed.`);

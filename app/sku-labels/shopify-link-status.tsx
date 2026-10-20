@@ -8,13 +8,14 @@ export type ShopifyLabelLink = {
   variantId?: string;
   adminUrl?: string;
   priceCents?: number;
-  availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean;
+  availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean; automaticRetry?: boolean;
 };
 
 export function isShopifyLabelLink(value: unknown): value is ShopifyLabelLink {
   if (!value || typeof value !== "object") return false;
   const link = value as Record<string, unknown>;
-  return isGeneratedSku(link.sku) && ["ready", "pending", "blocked"].includes(String(link.status)) && typeof link.message === "string";
+  return isGeneratedSku(link.sku) && ["ready", "pending", "blocked"].includes(String(link.status)) && typeof link.message === "string"
+    && (link.automaticRetry === undefined || typeof link.automaticRetry === "boolean");
 }
 
 export function pendingShopifyLink(sku: string, message = "Your QR is saved in Defy. Retry the Shopify link before scanning in POS."): ShopifyLabelLink {
