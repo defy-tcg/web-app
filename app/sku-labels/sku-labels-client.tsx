@@ -186,6 +186,8 @@ export default function SkuLabelsClient() {
 
   const updateShopifyLinks = useCallback((links: ShopifyLabelLink[]) => {
     shopifySequence.current += 1;
+    automaticShopifyQueue.current.observe(links);
+    setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
     setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(links.map((link) => [link.sku, link])) }));
   }, []);
 
@@ -229,7 +231,11 @@ export default function SkuLabelsClient() {
     void (async () => {
       try {
         const links = await readShopifyLinks(products.map((product) => product.sku));
-        if (sequence === shopifySequence.current) setShopifyLinks(Object.fromEntries(links.map((link) => [link.sku, link])));
+        if (sequence === shopifySequence.current) {
+          automaticShopifyQueue.current.observe(links);
+          setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
+          setShopifyLinks(Object.fromEntries(links.map((link) => [link.sku, link])));
+        }
       } catch (caught) {
         if (sequence === shopifySequence.current) setShopifyLinks(Object.fromEntries(products.map((product) => [product.sku,
           pendingShopifyLink(product.sku, caught instanceof Error ? caught.message : undefined)])));
