@@ -1,9 +1,9 @@
 import type { Batch, Candidate, Card, Scan, Signature } from './model.ts';
 
 /** User-configured visual-similarity cutoff; not a calibrated probability. */
-export const AUTO_APPROVAL_THRESHOLD = 0.78;
+export const AUTO_APPROVAL_THRESHOLD = 0.90;
 export const AUTO_APPROVAL_ENABLED = true;
-export const APPROVAL_POLICY = 'user-cutoff-078-v1';
+export const APPROVAL_POLICY = 'user-cutoff-090-inclusive-v1';
 export const WAREHOUSE_TIMEZONE = 'America/Los_Angeles';
 export function warehouseDay(iso: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: WAREHOUSE_TIMEZONE,
@@ -34,7 +34,7 @@ export function automaticReviewReason(scan: Scan, batch: Batch, card: Card | und
   if (!hasVisualDetail(scan.signature)) return 'The scan has too little visual detail for automatic approval.';
   const best = candidates[0];
   if (!best) return 'No usable match. Select the correct printing.';
-  if (!Number.isFinite(best.score) || best.score > 1 || !(best.score > AUTO_APPROVAL_THRESHOLD)) return 'Match score is 0.78 or below.';
+  if (!Number.isFinite(best.score) || best.score > 1 || !(best.score >= AUTO_APPROVAL_THRESHOLD)) return 'Match score is below 0.90 or invalid.';
   if (!card || card.inventory_eligible !== '1' || card.inventory_count_weight !== '1' ||
     card.release_status !== 'released' || !card.physical_key || card.language !== batch.language ||
     (card.finish === 'Foil' ? 'Foil' : ['Nonfoil','Normal','Non-foil'].includes(card.finish) ? 'Nonfoil' : null) !== batch.finish)
