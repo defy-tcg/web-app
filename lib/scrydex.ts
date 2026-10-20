@@ -332,6 +332,7 @@ const POKEMON_SET_ALIASES: Record<string, { id: string; name: string; series: st
   "sv: scarlet & violet promo cards": { id: "svp", name: "scarlet & violet black star promos", series: "scarlet & violet", code: "svp" },
   "me: mega evolution promo": { id: "mep", name: "mega evolution black star promos", series: "mega evolution", code: "mep" },
   "me01: mega evolution": { id: "me1", name: "mega evolution", series: "mega evolution", code: "meg" },
+  "swsh09: brilliant stars trainer gallery": { id: "swsh9tg", name: "brilliant stars trainer gallery", series: "sword & shield", code: "brs" },
   "swsh11: lost origin trainer gallery": { id: "swsh11tg", name: "lost origin trainer gallery", series: "sword & shield", code: "lor" },
   "swsh12: silver tempest trainer gallery": { id: "swsh12tg", name: "silver tempest trainer gallery", series: "sword & shield", code: "sit" },
 };

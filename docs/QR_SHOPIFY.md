@@ -215,13 +215,14 @@ variants, and retains a recoverable correction intent across interrupted request
 After correction, retry the Shopify link using the same QR. An existing or
 uncertain Shopify product cannot be relabeled through this flow.
 
-Trainer Gallery imports recognize TCGplayer's **SWSH11: Lost Origin Trainer
-Gallery** label as Scrydex's **swsh11tg** expansion with code **LOR**, and
+Trainer Gallery imports recognize TCGplayer's **SWSH09: Brilliant Stars Trainer
+Gallery** label as Scrydex's **swsh9tg** expansion with code **BRS**,
+**SWSH11: Lost Origin Trainer Gallery** as **swsh11tg** with code **LOR**, and
 **SWSH12: Silver Tempest Trainer Gallery** as **swsh12tg** with code **SIT**.
 Each mapping requires its full set name, Sword & Shield series, set code, and
 exact TCGplayer product ID. The full collector number, language, selected finish,
-condition, and positive USD market quote still have to match. This lets Snorlax
-**TG10/TG30** and Blaziken VMAX **TG15/TG30** use their verified quotes while
+condition, and positive USD market quote still have to match. This lets Eevee
+**TG11/TG30**, Snorlax **TG10/TG30**, and Blaziken VMAX **TG15/TG30** use their verified quotes while
 keeping each original QR and starting-stock receipt.
 
 When the exact TCGplayer printing is missing from Scrydex, or lacks a verified

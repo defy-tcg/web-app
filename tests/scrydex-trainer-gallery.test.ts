@@ -40,6 +40,24 @@ function snorlaxCandidate() {
 
 const errorCode = (code: ScrydexErrorCode) => (error: unknown) => error instanceof ScrydexError && error.code === code;
 
+const eevee: ScrydexProduct = {
+  name: "Eevee", game: "Pokémon", setName: "SWSH09: Brilliant Stars Trainer Gallery",
+  cardNumber: "TG11/TG30", productType: "Single", condition: "Near Mint", finish: "Foil", tcgplayerId: 264218,
+};
+
+function eeveeCandidate() {
+  // Sanitized exact printing and NM quote verified against the live provider on 2026-10-19.
+  return {
+    id: "swsh9tg-TG11", name: "Eevee", number: "TG11", printed_number: "TG11/TG30", language_code: "EN",
+    expansion: {
+      id: "swsh9tg", name: "Brilliant Stars Trainer Gallery", series: "Sword & Shield", code: "BRS",
+      total: 30, printed_total: 30, language: "English", language_code: "EN", is_online_only: false,
+    },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "264218" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", market: 17.84 }] }],
+  };
+}
+
 function config(t: TestContext) {
   const key = process.env.SCRYDEX_API_KEY, team = process.env.SCRYDEX_TEAM_ID;
   process.env.SCRYDEX_API_KEY = "test-only-key"; process.env.SCRYDEX_TEAM_ID = "test-only-team";
@@ -228,4 +246,53 @@ test("Snorlax gallery price requires the exact chosen finish and a positive raw 
   for (const patch of [{ market: 0 }, { market: -1 }, { currency: "JPY" }, { type: "graded" }]) {
     assert.throws(() => selectScrydexPrice(snorlax, [{ ...entry, variants: [{ ...foil, prices: [{ ...foil.prices[0], ...patch }] }] }]), errorCode("price_unavailable"));
   }
+});
+
+test("Eevee resolves its exact Brilliant Stars Trainer Gallery printing with one bounded request", async t => {
+  config(t);
+  let calls = 0;
+  const result = await resolveScrydexPrice(eevee, { fetch: async input => {
+    calls++;
+    const url = new URL(String(input)), query = url.searchParams.get("q")!;
+    assert.equal(url.origin + url.pathname, "https://api.scrydex.com/pokemon/v1/cards");
+    assert.ok(query.includes('!name:"Eevee"'));
+    assert.ok(query.includes('number:"TG11"'));
+    assert.ok(query.includes("AND language_code:EN"));
+    assert.ok(query.includes('variants.marketplaces.product_id:"264218"'));
+    return Response.json({ data: [eeveeCandidate()], total_count: 1 });
+  } });
+  assert.equal(calls, 1);
+  assert.equal(result.scrydexId, "swsh9tg-TG11");
+  assert.equal(result.groupName, "Brilliant Stars Trainer Gallery");
+  assert.equal(result.variation, "holofoil / NM");
+  assert.equal(result.cents, 1784);
+});
+
+test("Brilliant Stars gallery matching rejects different sets, printings, and collector denominators", () => {
+  const entry = eeveeCandidate(), foil = entry.variants[0];
+  for (const expansion of [
+    { ...entry.expansion, id: "swsh9" }, { ...entry.expansion, id: "swsh11tg" },
+    { ...entry.expansion, name: "Brilliant Stars" }, { ...entry.expansion, code: "LOR" },
+    { ...entry.expansion, series: "Scarlet & Violet" },
+  ]) assert.throws(() => selectScrydexPrice(eevee, [{ ...entry, expansion }]), errorCode("not_found"));
+  for (const patch of [
+    { name: "Eevee V" }, { cardNumber: "TG11/TG29" }, { cardNumber: "TG11/30" },
+    { tcgplayerId: undefined }, { tcgplayerId: 264219 },
+  ]) assert.throws(() => selectScrydexPrice({ ...eevee, ...patch }, [entry]), errorCode("not_found"));
+  assert.throws(() => selectScrydexPrice(eevee, [{ ...entry, language_code: "JA" }]), errorCode("not_found"));
+  for (const marketplaces of [[], [{ name: "tcgplayer", product_id: "264219" }]]) {
+    assert.throws(() => selectScrydexPrice(eevee, [{ ...entry, variants: [{ ...foil, marketplaces }] }]), errorCode("not_found"));
+  }
+});
+
+test("Eevee uses only the selected foil's positive raw Near Mint USD quote", () => {
+  const entry = eeveeCandidate(), foil = entry.variants[0];
+  for (const patch of [{ finish: "Normal" }, { condition: "Lightly Played" }]) {
+    assert.throws(() => selectScrydexPrice({ ...eevee, ...patch }, [entry]), errorCode("price_unavailable"));
+  }
+  for (const patch of [{ market: 0 }, { currency: "JPY" }, { type: "graded" }]) {
+    assert.throws(() => selectScrydexPrice(eevee, [{ ...entry, variants: [{ ...foil, prices: [{ ...foil.prices[0], ...patch }] }] }]), errorCode("price_unavailable"));
+  }
+  const wrongFoil = { ...foil, marketplaces: [{ name: "tcgplayer", product_id: "264219" }] };
+  assert.throws(() => selectScrydexPrice(eevee, [{ ...entry, variants: [wrongFoil, { ...foil, name: "reverseHolofoil" }] }]), errorCode("price_unavailable"));
 });
