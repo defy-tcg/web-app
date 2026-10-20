@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { randomUUID, createHash } from 'node:crypto';
-import { applyOperation, emptyState, eligible, finish, rankCandidates, parseCatalog, signature, FEATURE_ALGORITHM, WAREHOUSE_VERSION, type Card, type Command, type Reference, type State } from './model.ts';
+import { applyOperation, emptyState, eligible, finish, parseCatalog, signature, FEATURE_ALGORITHM, WAREHOUSE_VERSION, type Card, type Command, type Reference, type State } from './model.ts';
 import { canIndex, referenceSourceKey, planReferenceWork, type ReferenceResult } from './reference-index.ts';
 
 function database() { const url = process.env.WAREHOUSE_DATABASE_URL || process.env.DATABASE_URL; if (!url) throw new Error('Warehouse database is not configured.'); return neon(url); }
@@ -53,11 +53,6 @@ export async function executeWarehouse(command: Command, expectedRevision: numbe
   if ((command.kind === 'uploadScan' || command.kind === 'matchScan') && batch && !readyIndexes.has(batch.catalogVersion)) { const plan = await readReferencePlan(batch.catalogVersion); if (!plan.ready) throw new Error('The one-time catalog image update is still running. Scanning unlocks automatically when ready.'); }
   if ((command.kind === 'matchScan' || command.kind === 'uploadScan') && batch) references = await readPool(batch.catalogVersion, batch.finish, batch.language, catalog.cards);
   const next = applyOperation(current.state, command, catalog.cards, actor, now, randomUUID, references);
-  if (command.kind === 'uploadScan' && batch) {
-    const scan = next.scans.find(item => item.id === command.scanId)!;
-    if (scan.signature) scan.candidates = rankCandidates(scan.signature, catalog.cards, references, batch, next.learned);
-    next.audit[next.audit.length - 1].detail += ` Automatically suggested ${scan.candidates.length} matches from the saved ${batch.finish}/${batch.language} index.`;
-  }
   let image: { id: string; base64: string } | undefined;
   if (command.kind === 'uploadScan') { if (typeof command.image !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(command.image) || command.image.length > 2_800_000) throw new Error('Use a JPEG scan preview below 2 MB.'); const base64 = command.image.split(',')[1]; const bytes = Buffer.from(base64, 'base64'); if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new Error('The scan preview is not a JPEG.'); image = { id: String(command.scanId), base64 }; }
   return saveState(current.revision, next, image);

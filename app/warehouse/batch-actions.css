@@ -1,0 +1,13 @@
+.rw-shell .rw-batch-name { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
+.rw-shell .rw-batch-name small { color:#586b60; font-size:12px; }
+.rw-shell .rw-putaway-photos { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-top:16px; }
+.rw-shell .rw-putaway-card { display:flex; flex-direction:column; align-items:flex-start; gap:7px; padding:14px; border:1px solid #cfdbd3; border-radius:12px; background:#fafcfb; min-width:0; }
+.rw-shell .rw-putaway-card code { font-size:11px; overflow-wrap:anywhere; white-space:normal; }
+.rw-shell .rw-putaway-card small { font-size:11px; line-height:1.5; }
+.rw-shell .rw-batch-photo { display:block; align-self:center; }
+.rw-shell .rw-batch-photo img { width:128px; height:179px; object-fit:contain; border-radius:6px; }
+.rw-shell .rw-unit-photo img { width:48px; height:67px; min-width:48px; object-fit:contain; border-radius:4px; }
+.rw-shell .rw-photo-unavailable { display:block; max-width:150px; font-size:11px; color:#7b4334; }
+.rw-shell .rw-auto-approval { border:1px solid #b7d3c1; padding:10px 14px; border-radius:10px; background:#edf7f0; margin:10px 0; font-size:13px; }
+@media(max-width:500px) { .rw-shell .rw-putaway-photos { grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; } .rw-shell .rw-putaway-card { padding:8px; } .rw-shell .rw-batch-photo img { max-width:100%;width:112px;height:157px; } }
+@media print { .rw-batch-putaway .rw-form, .rw-batch-name button { display:none !important; } .rw-putaway-card { break-inside:avoid; } }

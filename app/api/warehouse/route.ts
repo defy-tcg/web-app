@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/authorization';
 import { ConflictError, executeWarehouse, readReferencePlan, saveReferenceResults, retryUnavailableReferences, readCatalog, readImage, readSnapshot, referenceIds, release, saveReference } from '@/lib/warehouse/store';
-import { AUTO_APPROVAL_CALIBRATED, AUTO_APPROVAL_THRESHOLD, integer, text, type Command } from '@/lib/warehouse/model';
+import { AUTO_APPROVAL_ENABLED, AUTO_APPROVAL_CALIBRATED, AUTO_APPROVAL_THRESHOLD, integer, text, type Command } from '@/lib/warehouse/model';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   if(q.has('image')){const image=await readImage(q.get('image')!);if(!image)return new NextResponse(null,{status:404});return new NextResponse(new Uint8Array(image.bytes),{headers:{...headers,'Content-Type':image.mime,'X-Content-Type-Options':'nosniff'}});}
   if(q.has('catalog'))return NextResponse.json(await readCatalog(q.get('catalog')!),{headers});
   if(q.has('references'))return NextResponse.json({ids:await referenceIds(q.get('references')!)},{headers});
-  return NextResponse.json({...await readSnapshot(),release,policy:{threshold:AUTO_APPROVAL_THRESHOLD,calibrated:AUTO_APPROVAL_CALIBRATED,message:'Visual scores are advisory. Manual confirmation is required until this matcher is calibrated.'}},{headers});
+  return NextResponse.json({...await readSnapshot(),release,policy:{enabled:AUTO_APPROVAL_ENABLED,threshold:AUTO_APPROVAL_THRESHOLD,calibrated:AUTO_APPROVAL_CALIBRATED,message:'User-configured visual score >0.78 auto-approves eligible, unambiguous scans. Not a calibrated probability.'}},{headers});
  }catch{console.error('Warehouse read failed.');return NextResponse.json({error:'Warehouse data could not be loaded. Retry or check the isolated warehouse database setup.'},{status:500,headers});}
 }
 export async function POST(request: NextRequest) {
