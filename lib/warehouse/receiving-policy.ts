@@ -30,6 +30,7 @@ export function hasVisualDetail(value: Signature | null): boolean {
 }
 export function automaticReviewReason(scan: Scan, batch: Batch, card: Card | undefined,
   candidates: Candidate[], scans: Scan[]): string | null {
+  if (scan.vision && (!scan.vision.complete || scan.vision.reviewReason)) return scan.vision.reviewReason || 'Detailed matching did not complete. Manual review required.';
   if (scan.manualReviewRequired) return 'Approval was withdrawn. Confirm this copy manually.';
   if (!hasVisualDetail(scan.signature)) return 'The scan has too little visual detail for automatic approval.';
   const best = candidates[0];

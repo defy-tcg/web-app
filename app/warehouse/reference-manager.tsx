@@ -5,6 +5,7 @@ import { features } from '@/lib/warehouse/image-features';
 import type { State } from '@/lib/warehouse/model';
 import type { ReferencePlan, ReferenceResult } from '@/lib/warehouse/reference-index';
 
+type DetailedPlan = {version:string;algorithm:string;prepared:number;failed:number;manualOnly:number;pending:number;learnedPending:number;ready:boolean};
 type Snapshot = { revision: number; state: State };
 async function request<T>(query: string, body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await fetch('/api/warehouse' + query, { method: body ? 'POST' : 'GET',
@@ -22,6 +23,7 @@ export default function ReferenceManager({ version, pending, details, onActivate
 }) {
   const [plan, setPlan] = useState<ReferencePlan | null>(null);
   const [progress, setProgress] = useState(''); const [error, setError] = useState('');
+  const [detailPlan, setDetailPlan] = useState<DetailedPlan | null>(null);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!version) return;
@@ -50,7 +52,21 @@ export default function ReferenceManager({ version, pending, details, onActivate
         await request('', { kind: 'saveReferenceResults', catalogVersion: version, results }, signal);
       }
       if (total > 0) next = await request<ReferencePlan>('?index=' + version, undefined, signal);
-      if (signal.aborted) return; setPlan(next); setProgress(''); if (next.ready) onReady(version!);
+      if (signal.aborted) return; setPlan(next); setProgress('');
+      if (next.ready) {
+        let detail = await request<DetailedPlan>('?detailIndex=' + version, undefined, signal);
+        setDetailPlan(detail);
+        while (detail.pending > 0 || detail.learnedPending > 0) {
+          if (signal.aborted) return;
+          setProgress(`Building detailed features once: ${detail.prepared} printings ready, ${detail.pending} source images and ${detail.learnedPending} confirmed examples remaining. Progress is saved for all devices.`);
+          const previous = detail.pending + detail.learnedPending;
+          detail = await request<DetailedPlan>('', {kind:'prepareDetailedIndex', catalogVersion:version}, signal);
+          if (signal.aborted) return; setDetailPlan(detail);
+          if (detail.pending + detail.learnedPending >= previous && !detail.ready) throw new Error('Detailed preparation made no progress. Saved work is retained; retry from Mastersheet.');
+        }
+        if (!detail.ready) throw new Error('No usable detailed reference images. Review image sources in Mastersheet.');
+        setProgress(''); onReady(version!);
+      }
       if (pending && next.ready) {
         // Re-read the revision: other devices may have received cards while images were prepared.
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -72,14 +88,14 @@ export default function ReferenceManager({ version, pending, details, onActivate
   if (!version) return null;
   if (plan?.version !== version && !error) return <p className="rw-index-status" role="status">Loading the saved recognition index…</p>;
   return <section className="rw-index-status" aria-label="Saved recognition index">
-    <strong>{progress ? 'Catalog update preparing' : plan?.ready ? 'Recognition index ready' : 'Catalog preparation needs attention'}</strong>
-    <p>{progress || (plan ? `${plan.prepared.toLocaleString()} exact-printing references saved · ${plan.manualOnly.toLocaleString()} eligible printings require manual image review. Uploads are matched automatically using the saved index.` : '')}</p>
+    <strong>{progress ? 'Catalog update preparing' : plan?.ready && detailPlan?.ready ? 'Recognition index ready' : 'Catalog preparation needs attention'}</strong>
+    <p>{progress || (plan ? `${(detailPlan?.prepared || 0).toLocaleString()} detailed references saved · ${(detailPlan?.manualOnly ?? plan.manualOnly).toLocaleString()} eligible printings need manual image review. AKAZE features and geometry verify uploaded cards.` : '')}</p>
     {pending && <p>The previous active catalog stays in use until this update is prepared. Existing batches keep their original catalog.</p>}
     {error && <p role="alert">{error} Saved work is retained.</p>}
     {details && <><p>Catalog maintenance only. Keep this page open during a new catalog update; returning resumes saved work. No preparation is required for normal batches.</p>
       {error && <button onClick={() => setRetry(n => n + 1)}>Resume catalog update</button>}
-      {!progress && (plan?.failed || 0) > 0 && <button onClick={() => {
-        void request('', { kind: 'retryUnavailableReferences', catalogVersion: version }).then(() => setRetry(n => n + 1)).catch(e => setError(e.message));
+      {!progress && ((plan?.failed || 0) > 0 || (detailPlan?.failed || 0) > 0) && <button onClick={() => {
+        void Promise.all([request('', { kind: 'retryUnavailableReferences', catalogVersion: version }),request('', { kind: 'retryDetailedIndex', catalogVersion: version })]).then(() => setRetry(n => n + 1)).catch(e => setError(e.message));
       }}>Retry unavailable source images</button>}
     </>}
   </section>;

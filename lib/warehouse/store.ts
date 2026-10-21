@@ -1,3 +1,5 @@
+import { recognizeDetailed, detailedPlan, publicPlan, prepareDetailedStep, retryDetailedFailures } from './vision/store.ts';
+import { VISION_VERSION, type VisionDecision } from './vision/policy.ts';
 import { neon } from '@neondatabase/serverless';
 import { randomUUID, createHash } from 'node:crypto';
 import { applyOperation, emptyState, eligible, finish, parseCatalog, signature, FEATURE_ALGORITHM, WAREHOUSE_VERSION, type Card, type Command, type Reference, type State } from './model.ts';
@@ -40,7 +42,7 @@ export async function executeWarehouse(command: Command, expectedRevision: numbe
     if (current.state.activeCatalog === version && !current.state.pendingCatalog) return current;
     if (current.state.pendingCatalog !== version) throw new Error('This is not the staged catalog. Refresh the Mastersheet.');
     const plan = await readReferencePlan(version);
-    if (!plan.ready) throw new Error('The staged catalog is still preparing. The previous catalog remains active.');
+    if (!plan.ready || !(await detailedPlan(version,(await readCatalog(version)).cards,current.state)).ready) throw new Error('The staged catalog is still preparing its detailed index. The previous catalog remains active.');
     const next = structuredClone(current.state); next.activeCatalog = version; next.pendingCatalog = null;
     next.audit.push({ id: randomUUID(), at: now, actor, action: 'activateCatalog', detail: `Activated ${plan.total} references with ${plan.prepared} indexed printings; ${plan.manualOnly} eligible printings need manual image review. Previous catalog and inventory retained.` });
     next.operationIds.push(command.operationId); return saveState(current.revision, next);
@@ -52,9 +54,22 @@ export async function executeWarehouse(command: Command, expectedRevision: numbe
   let references: Reference[] = [];
   if ((command.kind === 'uploadScan' || command.kind === 'matchScan') && batch && !readyIndexes.has(batch.catalogVersion)) { const plan = await readReferencePlan(batch.catalogVersion); if (!plan.ready) throw new Error('The one-time catalog image update is still running. Scanning unlocks automatically when ready.'); }
   if ((command.kind === 'matchScan' || command.kind === 'uploadScan') && batch) references = await readPool(batch.catalogVersion, batch.finish, batch.language, catalog.cards);
-  const next = applyOperation(current.state, command, catalog.cards, actor, now, randomUUID, references);
   let image: { id: string; base64: string } | undefined;
   if (command.kind === 'uploadScan') { if (typeof command.image !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(command.image) || command.image.length > 2_800_000) throw new Error('Use a JPEG scan preview below 2 MB.'); const base64 = command.image.split(',')[1]; const bytes = Buffer.from(base64, 'base64'); if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new Error('The scan preview is not a JPEG.'); image = { id: String(command.scanId), base64 }; }
+  let vision: VisionDecision | undefined;
+  if ((command.kind === 'uploadScan' || command.kind === 'matchScan') && batch) {
+    // Validate domain inputs without generating real serials or saving a state change.
+    const checked = applyOperation(current.state, command, catalog.cards, actor, now, randomUUID, []);
+    const scan = checked.scans.find(item => item.id === command.scanId)!;
+    if (!scan || batch.status !== 'draft') throw new Error('Select an editable scan in a draft batch.');
+    try {
+      vision = await recognizeDetailed(batch.catalogVersion, catalog.cards, current.state, batch, scan, references, readCatalog, image ? Buffer.from(image.base64, 'base64') : undefined);
+    } catch {
+      // Fail closed. The receipt is retained, but a failed verifier cannot approve stock.
+      vision = { version: VISION_VERSION, candidates: [], reviewReason: 'Detailed recognition could not complete. The scan is saved; retry or select the printing manually.', complete: false, examined: 0, elapsedMs: 0 };
+    }
+  }
+  const next = applyOperation(current.state, command, catalog.cards, actor, now, randomUUID, references, vision);
   return saveState(current.revision, next, image);
 }
 export async function readImage(id: string) { await initializeWarehouse(); if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw new Error('Invalid scan image ID.'); const sql = database(); const rows = await sql`SELECT mime, encode(bytes, 'base64') AS data FROM rift_warehouse.images WHERE id = ${id}`; if (!rows.length) return null; return { mime: String(rows[0].mime), bytes: Buffer.from(String(rows[0].data), 'base64') }; }
@@ -123,3 +138,7 @@ export async function retryUnavailableReferences(version: string) {
   await sql`UPDATE rift_warehouse.reference_attempts SET status = 'pending', updated_at = now() WHERE catalog_version = ${version} AND status = 'failed'`;
   return { scheduled: true };
 }
+
+export async function readDetailedIndex(version: string) { const snapshot=await readSnapshot();return publicPlan(await detailedPlan(version,(await readCatalog(version)).cards,snapshot.state)); }
+export async function prepareDetailedIndex(version: string) { const snapshot=await readSnapshot();return prepareDetailedStep(version,(await readCatalog(version)).cards,snapshot.state); }
+export async function retryDetailedIndex(version: string) { await readSnapshot();return retryDetailedFailures((await readCatalog(version)).cards); }

@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: { "/api/warehouse": ["./lib/warehouse/vision/runtime/package.json", "./lib/warehouse/vision/runtime/node_modules/**/*"] },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "tcgplayer-cdn.tcgplayer.com", pathname: "/product/**" },

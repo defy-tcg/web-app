@@ -1,0 +1,10 @@
+{
+  "name": "rift-warehouse-vision-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated, version-pinned image matching runtime; does not change Store OS dependency versions.",
+  "dependencies": {
+    "@techstark/opencv-js": "4.12.0-release.1",
+    "sharp": "0.34.5"
+  }
+}

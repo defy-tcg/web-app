@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthorizedSession } from '@/lib/auth/authorization';
-import { ConflictError, executeWarehouse, readReferencePlan, saveReferenceResults, retryUnavailableReferences, readCatalog, readImage, readSnapshot, referenceIds, release, saveReference } from '@/lib/warehouse/store';
+import { ConflictError, executeWarehouse, readDetailedIndex, prepareDetailedIndex, retryDetailedIndex, readReferencePlan, saveReferenceResults, retryUnavailableReferences, readCatalog, readImage, readSnapshot, referenceIds, release, saveReference } from '@/lib/warehouse/store';
 import { AUTO_APPROVAL_ENABLED, AUTO_APPROVAL_CALIBRATED, AUTO_APPROVAL_THRESHOLD, integer, text, type Command } from '@/lib/warehouse/model';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300;
 const headers = { 'Cache-Control': 'private, no-store' };
 export async function GET(request: NextRequest) {
  if (!await getAuthorizedSession()) return NextResponse.json({ error: 'Sign in with an authorized Defy account.' }, { status: 401, headers });
  try { const q=request.nextUrl.searchParams;
+  if(q.has('detailIndex')) return NextResponse.json(await readDetailedIndex(q.get('detailIndex')!), {headers});
   if(q.has('index')) return NextResponse.json(await readReferencePlan(q.get('index')!), {headers});
   if(q.has('image')){const image=await readImage(q.get('image')!);if(!image)return new NextResponse(null,{status:404});return new NextResponse(new Uint8Array(image.bytes),{headers:{...headers,'Content-Type':image.mime,'X-Content-Type-Options':'nosniff'}});}
   if(q.has('catalog'))return NextResponse.json(await readCatalog(q.get('catalog')!),{headers});
   if(q.has('references'))return NextResponse.json({ids:await referenceIds(q.get('references')!)},{headers});
-  return NextResponse.json({...await readSnapshot(),release,policy:{enabled:AUTO_APPROVAL_ENABLED,threshold:AUTO_APPROVAL_THRESHOLD,calibrated:AUTO_APPROVAL_CALIBRATED,message:'User-configured visual score >=0.90 auto-approves eligible, unambiguous scans. Not a calibrated probability.'}},{headers});
+  return NextResponse.json({...await readSnapshot(),release,policy:{enabled:AUTO_APPROVAL_ENABLED,threshold:AUTO_APPROVAL_THRESHOLD,calibrated:AUTO_APPROVAL_CALIBRATED,message:'Automatic approval requires the legacy score >=0.90 plus aligned AKAZE artwork, printing details and ambiguity checks. No calibrated probability is claimed.'}},{headers});
  }catch{console.error('Warehouse read failed.');return NextResponse.json({error:'Warehouse data could not be loaded. Retry or check the isolated warehouse database setup.'},{status:500,headers});}
 }
 export async function POST(request: NextRequest) {
@@ -21,6 +22,8 @@ export async function POST(request: NextRequest) {
  const origin=request.headers.get('origin');if((origin&&origin!==request.nextUrl.origin)||request.headers.get('sec-fetch-site')==='cross-site')return NextResponse.json({error:'Cross-site write rejected.'},{status:403,headers});
  if(!request.headers.get('content-type')?.startsWith('application/json'))return NextResponse.json({error:'Expected JSON.'},{status:415,headers});
  try{if(Number(request.headers.get('content-length')||'0')>4000000)return NextResponse.json({error:'Request is too large.'},{status:413,headers});const raw=await request.text();if(Buffer.byteLength(raw)>4000000)return NextResponse.json({error:'Use the compact Sorting Catalog CSV or a smaller scan.'},{status:413,headers});const body=JSON.parse(raw);if(!body||typeof body!=='object'||Array.isArray(body))throw new Error('Invalid request.');
+  if(body.kind==='prepareDetailedIndex')return NextResponse.json(await prepareDetailedIndex(text(body.catalogVersion,64)),{headers});
+  if(body.kind==='retryDetailedIndex')return NextResponse.json(await retryDetailedIndex(text(body.catalogVersion,64)),{headers});
   if(body.kind==='saveReferenceResults')return NextResponse.json(await saveReferenceResults(text(body.catalogVersion,64),body.results),{headers});
     if(body.kind==='retryUnavailableReferences')return NextResponse.json(await retryUnavailableReferences(text(body.catalogVersion,64)),{headers});
     if(body.kind==='saveReference')return NextResponse.json(await saveReference(text(body.catalogVersion,64),text(body.masterId,200),body.signature),{headers});
