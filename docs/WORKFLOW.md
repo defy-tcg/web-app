@@ -290,6 +290,13 @@ Mac Chrome can normalize custom paper sizes to short-edge-first, turning a nativ
 38 × 13 mm stock size into 13 × 38 mm. Changing the artwork or printing the PDF in
 Chrome does not correct that printer-media setting. The macOS system dialog with
 the **Defy 38x13 Upright** preset has been physically verified on the store printer.
+Blank output can also result when Chrome's system print dialog uses **Default
+Settings** with **8.5 × 11 inch / Letter** paper: the spooled job places the small
+label in the middle of a full sheet, outside the thermal stock's printable area.
+Printer queue defaults alone do not override this dialog selection. Select
+**Defy 38x13 Upright** in **Presets**, confirm **38 × 13 mm**, **Portrait**, and
+**100%**, and verify the next print dialog retains that preset. A clear printer
+test does not verify the browser's paper selection.
 Chrome's supported `DisablePrintPreview` preference can make Print open that
 dialog directly; it affects Chrome printing generally and requires a browser
 restart, so obtain the operator's agreement before changing that local preference.

@@ -528,7 +528,7 @@ export default function SkuLabelsClient() {
   function print() {
     if (!canPrint || busy || pdfBusy || inventoryBusy || shopifyBusy) return;
     setError("");
-    setMessage("Print requested. If no dialog opens, download the PDF and open it in Preview to print.");
+    setMessage("Print requested. On the store Mac, choose the Defy 38x13 Upright preset and confirm 38 × 13 mm paper, Portrait, and 100% scale. Letter-size paper can feed blank labels. If no dialog opens, download the PDF and open it in Preview.");
     try {
       // Keep the print request in the click event and avoid unsupported popup windows.
       window.print();
@@ -618,7 +618,7 @@ export default function SkuLabelsClient() {
             {labels.some((label) => !savedSkus.has(label.sku)) && <p className="sku-print-help">This batch contains drafts. Use <strong>Save to Inventory &amp; Print</strong> below to add their stock before printing.</p>}
             {unreadyForPos > 0 && <p className="sku-pos-warning" role="status"><strong>{unreadyForPos} label{unreadyForPos === 1 ? " is" : "s are"} not ready for Shopify POS.</strong> You can print now, but finish the Shopify link below before scanning. The QR will stay the same.</p>}
             <p className="sku-print-help">Paper: <strong>38 mm wide across the roll × 13 mm high in the feed direction</strong>. Print at <strong>100% / actual size</strong> with no margins, headers, or footers. Scan one test label with a QR-capable scanner first.</p>
-            <p className="sku-print-help"><strong>Sideways or split across labels?</strong> In Mac Chrome, choose <strong>More settings → Print using system dialog</strong> (Option + Command + P). Select your <strong>38 × 13 mm</strong> paper, <strong>Portrait</strong>, no additional rotation, and <strong>100%</strong> scale. The browser cannot force the printer’s orientation.</p>
+            <p className="sku-print-help"><strong>Blank, sideways, or split labels?</strong> In Mac Chrome, choose <strong>More settings → Print using system dialog</strong> (Option + Command + P). On the store Mac, select the <strong>Defy 38x13 Upright</strong> preset. Confirm <strong>38 × 13 mm</strong> paper, <strong>Portrait</strong>, no additional rotation, and <strong>100%</strong> scale. If Paper Size shows <strong>8.5 × 11 inches / Letter</strong>, the artwork can fall outside the label and print blank. The browser cannot override the printer’s selected paper size or orientation.</p>
           </section>
         </div>
 
