@@ -1,0 +1,5 @@
+# Native wheels; deliberately pinned separately from the cloud WASM runtime.
+opencv-python-headless==4.12.0.88
+numpy==2.2.6
+Pillow==11.3.0
+keyring==25.6.0

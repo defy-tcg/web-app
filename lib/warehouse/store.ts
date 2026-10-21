@@ -142,3 +142,6 @@ export async function retryUnavailableReferences(version: string) {
 export async function readDetailedIndex(version: string) { const snapshot=await readSnapshot();return publicPlan(await detailedPlan(version,(await readCatalog(version)).cards,snapshot.state)); }
 export async function prepareDetailedIndex(version: string) { const snapshot=await readSnapshot();return prepareDetailedStep(version,(await readCatalog(version)).cards,snapshot.state); }
 export async function retryDetailedIndex(version: string) { await readSnapshot();return retryDetailedFailures((await readCatalog(version)).cards); }
+
+/** Internal scanner adapter only. No endpoint accepts caller-supplied workflow state. */
+export const saveScannerState = saveState;
