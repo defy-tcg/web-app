@@ -41,6 +41,12 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
 .sku-paper-brand { display: flex; align-items: center; height: 5.9211cqw; font: 700 6.0344cqw/1 Arial, sans-serif; white-space: nowrap; }
 .sku-paper-text strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 10.5263cqw; overflow: hidden; overflow-wrap: anywhere; font: 400 5.106cqw/5.2632cqw Arial, sans-serif; }
 .sku-paper-with-condition .sku-paper-text strong { -webkit-line-clamp: 1; max-height: 5.2632cqw; }
+.sku-paper-with-set .sku-paper-text strong { -webkit-line-clamp: 1; max-height: 5.2632cqw; }
+.sku-paper-set { font: 400 5.106cqw/5.2632cqw Arial, sans-serif; height: 5.2632cqw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sku-paper-with-set.sku-paper-with-condition .sku-paper-text { gap: .3947cqw; }
+.sku-paper-with-set.sku-paper-with-condition .sku-paper-brand { height: 5.2632cqw; font-size: 5.5702cqw; }
+.sku-paper-with-set.sku-paper-with-condition .sku-paper-text strong { font-size: 4.6418cqw; line-height: 4.6053cqw; max-height: 4.6053cqw; }
+.sku-paper-with-set.sku-paper-with-condition .sku-paper-set { font-size: 4.6418cqw; line-height: 4.6053cqw; height: 4.6053cqw; }
 .sku-paper-condition { font: 700 4.6418cqw/4.6053cqw Arial, sans-serif; white-space: nowrap; }
 .sku-paper-text code { display: block; font: 700 6.4985cqw/6.5789cqw "Courier New", monospace; white-space: nowrap; color: #000; padding: 0; border: 0; border-radius: 0; background: none; }
 .sku-paper-website { font: 400 4.6418cqw/3.9474cqw Arial, sans-serif; white-space: nowrap; }
@@ -180,6 +186,12 @@ html[data-theme="dark"] .sku-shell .theme-copy-dark { display: block; }
   .sku-thermal-brand { display: flex; align-items: center; height: 2.25mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
   .sku-thermal-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
   .sku-thermal-with-condition .sku-thermal-name { -webkit-line-clamp: 1; max-height: 2mm; }
+  .sku-thermal-with-set .sku-thermal-name { -webkit-line-clamp: 1; max-height: 2mm; }
+  .sku-thermal-set { font: 400 5.5pt/2mm Arial, sans-serif; height: 2mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sku-thermal-with-set.sku-thermal-with-condition .sku-thermal-details { gap: .15mm; }
+  .sku-thermal-with-set.sku-thermal-with-condition .sku-thermal-brand { height: 2mm; font-size: 6pt; }
+  .sku-thermal-with-set.sku-thermal-with-condition .sku-thermal-name { font-size: 5pt; line-height: 1.75mm; max-height: 1.75mm; }
+  .sku-thermal-with-set.sku-thermal-with-condition .sku-thermal-set { font-size: 5pt; line-height: 1.75mm; height: 1.75mm; }
   .sku-thermal-condition { font: 700 5pt/1.75mm Arial, sans-serif; white-space: nowrap; }
   .sku-thermal-code { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
   .sku-thermal-website { font: 400 5pt/1.5mm Arial, sans-serif; white-space: nowrap; }

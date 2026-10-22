@@ -4,9 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition, skuQrSvg, SKU_LABEL_WEBSITE } from "@/lib/sku-labels";
+import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition, skuLabelSetName, skuQrSvg, SKU_LABEL_WEBSITE } from "@/lib/sku-labels";
 import { compareSavedSkuLabels, sameSkuLabelVariant } from "@/lib/sku-label-matching";
-import { EMPTY_SKU_INVENTORY_DRAFT, type SkuDraftLabel } from "@/lib/sku-label-draft";
+import { EMPTY_SKU_INVENTORY_DRAFT, skuLabelPrintDetails, type SkuDraftLabel } from "@/lib/sku-label-draft";
 import { skuLabelFeedbackText, type SkuLabelFeedback } from "@/lib/sku-label-feedback";
 import { canAutomaticallyRecoverSkuLink, SkuLinkRecoveryQueue } from "@/lib/sku-label-link-recovery";
 import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
@@ -30,6 +30,7 @@ function readSavedBatch(key = STORAGE_KEY): Label[] {
   if (saved.version !== 1 || !Array.isArray(saved.labels) || saved.labels.length > 100 ||
     saved.labels.some((label) => !label || !isGeneratedSku(label.sku) || typeof label.name !== "string" || label.name.length > 1000 ||
       (label.condition !== undefined && typeof label.condition !== "string") ||
+      (label.setName !== undefined && (typeof label.setName !== "string" || label.setName.length > 1000)) ||
       (label.inventory !== undefined && (!label.inventory || typeof label.inventory !== "object" ||
         Object.keys(EMPTY_SKU_INVENTORY_DRAFT).some((key) => typeof label.inventory?.[key as keyof typeof EMPTY_SKU_INVENTORY_DRAFT] !== "string")))) ||
     new Set(saved.labels.map((label) => label.sku)).size !== saved.labels.length) {
@@ -112,12 +113,14 @@ function QrLabel({ label }: { label: Label }) {
   const svg = useMemo(() => skuQrSvg(label.sku), [label.sku]);
   const displayName = Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
   const condition = skuLabelCondition(label.condition ?? label.inventory?.condition);
+  const setName = skuLabelSetName(label.setName ?? label.inventory?.setName);
   return (
-    <div className={`sku-paper${condition ? " sku-paper-with-condition" : ""}`}>
+    <div className={`sku-paper${condition ? " sku-paper-with-condition" : ""}${setName ? " sku-paper-with-set" : ""}`}>
       <div className="sku-qr" role="img" aria-label={`QR code for ${label.sku}`} dangerouslySetInnerHTML={{ __html: svg }} />
       <div className="sku-paper-text">
         <div className="sku-paper-brand">Defy TCG - Redmond</div>
         {displayName && <strong>{displayName}</strong>}
+        {setName && <div className="sku-paper-set">{setName}</div>}
         {condition && <div className="sku-paper-condition">{condition}</div>}
         <code>{label.sku}</code>
         <div className="sku-paper-website">{SKU_LABEL_WEBSITE}</div>
@@ -165,9 +168,8 @@ export default function SkuLabelsClient() {
   const labels = useMemo<Label[]>(() => {
     const selected = linkedSelection === null ? batch
       : linkedSelection.product && isGeneratedSku(linkedSelection.product.sku)
-        ? [{ sku: linkedSelection.product.sku, name: linkedSelection.product.name, condition: linkedSelection.product.condition }] : [];
-    return selected.map((label) => ({ ...label, condition: savedProducts.find((product) => product.sku === label.sku)?.condition
-      ?? label.inventory?.condition ?? label.condition }));
+        ? [{ sku: linkedSelection.product.sku, name: linkedSelection.product.name, condition: linkedSelection.product.condition, setName: linkedSelection.product.setName }] : [];
+    return selected.map((label) => skuLabelPrintDetails(label, savedProducts.find((product) => product.sku === label.sku)));
   }, [batch, linkedSelection, savedProducts]);
   const savedSkus = useMemo(() => new Set(savedProducts.map((product) => product.sku)), [savedProducts]);
   const total = labels.length * Number(copies);
@@ -182,7 +184,7 @@ export default function SkuLabelsClient() {
   const pendingShopifySkus = savedProducts.filter((product) => !shopifyLinks[product.sku] || shopifyLinks[product.sku].status === "pending"
     || (shopifyLinks[product.sku].automaticRetry === true && automaticRecoverySkus.includes(product.sku)))
     .map((product) => product.sku).sort().join(",");
-  const printLabels = useMemo(() => labels.map((label) => ({ ...label, condition: skuLabelCondition(label.condition), name: Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join(""), svg: skuQrSvg(label.sku) })), [labels]);
+  const printLabels = useMemo(() => labels.map((label) => ({ ...label, setName: skuLabelSetName(label.setName), condition: skuLabelCondition(label.condition), name: Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join(""), svg: skuQrSvg(label.sku) })), [labels]);
 
   const updateShopifyLinks = useCallback((links: ShopifyLabelLink[]) => {
     shopifySequence.current += 1;
@@ -224,7 +226,7 @@ export default function SkuLabelsClient() {
     });
     setLabels((current) => current.map((label) => {
       const saved = products.find((product) => product.sku === label.sku);
-      return saved ? { sku: saved.sku, name: saved.name, condition: saved.condition } : label;
+      return saved ? { sku: saved.sku, name: saved.name, condition: saved.condition, setName: saved.setName } : label;
     }));
     const sequence = ++shopifySequence.current;
     // Loading the library only reads stored link status. It never creates Shopify products.
@@ -463,7 +465,7 @@ export default function SkuLabelsClient() {
       queueAutomaticLinks([shopify]);
       generated.current.add(product.sku);
       setSavedProducts((current) => [...current.filter((saved) => saved.sku !== product.sku), product]);
-      saveBatch([{ sku: product.sku, name: product.name, condition: product.condition }]);
+      saveBatch([{ sku: product.sku, name: product.name, condition: product.condition, setName: product.setName }]);
       setCopies("1");
       pendingReservations.current = pendingReservations.current.filter((label) => !draftMatchesVariant(label, identity));
       try {
@@ -483,7 +485,7 @@ export default function SkuLabelsClient() {
   function savedForPrint(products: SavedSkuProduct[], createdCount: number, existingCount: number, links: ShopifyLabelLink[]) {
     updateShopifyLinks(links);
     queueAutomaticLinks(links);
-    saveBatch(products.map(({ sku, name, condition }) => ({ sku, name, condition })));
+    saveBatch(products.map(({ sku, name, condition, setName }) => ({ sku, name, condition, setName })));
     setError("");
     const savedConfirmation = createdCount === 0 ? "Your QR labels are already saved. Reprinting keeps their original SKUs and does not add stock."
       : `${createdCount} new single${createdCount === 1 ? "" : "s"} saved to inventory.${existingCount ? ` ${existingCount} already saved; stock and prices unchanged.` : ""}`;
@@ -493,7 +495,7 @@ export default function SkuLabelsClient() {
   }
 
   function loadSavedLabel(product: SavedSkuProduct) {
-    saveBatch([{ sku: product.sku, name: product.name, condition: product.condition }]);
+    saveBatch([{ sku: product.sku, name: product.name, condition: product.condition, setName: product.setName }]);
     setCopies("1");
     setError("");
     setMessage(`Loaded ${product.sku}. Print or download its label below. Reprinting does not change stock.`);
@@ -597,7 +599,7 @@ export default function SkuLabelsClient() {
           </section>
 
           <section className="sku-panel sku-preview-panel" aria-labelledby="sku-preview-title">
-            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Your permanent QR label.</h2><p>Defy TCG - Redmond + QR + card name + SKU + {SKU_LABEL_WEBSITE}</p></div></div>
+            <div className="sku-panel-heading"><span className="sku-step">02</span><div><h2 id="sku-preview-title">Your permanent QR label.</h2><p>Defy TCG - Redmond + QR + card name + set + SKU + {SKU_LABEL_WEBSITE}</p></div></div>
             <div className="sku-preview-stage"><div className="sku-dimension">← <span>38 mm</span> →</div>
               {linkedSelection && !labels.length ? <div role="status">
                 {linkedSelection.name && <h3>{linkedSelection.name}</h3>}
@@ -663,11 +665,12 @@ export default function SkuLabelsClient() {
     {ready && createPortal(
       <div className="sku-print-sheet" aria-hidden="true">
         {canPrint && printLabels.flatMap((label) => Array.from({ length: Number(copies) }, (_, copy) => (
-          <section className={`sku-thermal-label${label.condition ? " sku-thermal-with-condition" : ""}`} key={`${label.sku}-${copy}`}>
+          <section className={`sku-thermal-label${label.condition ? " sku-thermal-with-condition" : ""}${label.setName ? " sku-thermal-with-set" : ""}`} key={`${label.sku}-${copy}`}>
             <div className="sku-thermal-qr" dangerouslySetInnerHTML={{ __html: label.svg }} />
             <div className="sku-thermal-details">
               <div className="sku-thermal-brand">Defy TCG - Redmond</div>
               {label.name.trim() && <div className="sku-thermal-name">{label.name.trim()}</div>}
+              {label.setName && <div className="sku-thermal-set">{label.setName}</div>}
               {label.condition && <div className="sku-thermal-condition">{label.condition}</div>}
               <div className="sku-thermal-code">{label.sku}</div>
               <div className="sku-thermal-website">{SKU_LABEL_WEBSITE}</div>

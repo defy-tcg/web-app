@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSkuLabelDocument, generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition, skuQrSvg } from "../lib/sku-labels.ts";
+import { createSkuLabelDocument, generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition, skuLabelSetName, skuQrSvg } from "../lib/sku-labels.ts";
 
 function randomSequence(candidates: number[][]) {
   let index = 0;
@@ -144,6 +144,31 @@ test("custom condition text is escaped in print labels", () => {
   const html = createSkuLabelDocument([{ sku: "DEFY-1234567890", name: "Card", condition: "<b>Custom & condition</b>" }], 1);
   assert.match(html, /<div class="condition">&lt;b&gt;Custom &amp; condition&lt;\/b&gt;<\/div>/);
   assert.doesNotMatch(html, /<b>/);
+});
+
+test("set names print between the card and condition without changing the QR or copy count", () => {
+  const sku = "DEFY-5415615027";
+  const html = createSkuLabelDocument([{ sku, name: "Typhlosion", setName: "  Neo\n Premium File 1  ", condition: "LP" }], 2);
+  assert.equal((html.match(/<section class="label">/g) ?? []).length, 2);
+  assert.equal((html.match(/class="details has-condition has-set"/g) ?? []).length, 2);
+  assert.equal((html.match(/<div class="name">Typhlosion<\/div><div class="set">Neo Premium File 1<\/div><div class="condition">Lightly Played<\/div>/g) ?? []).length, 2);
+  assert.equal(html.split(skuQrSvg(sku)).length - 1, 2);
+  assert.match(html, /@page \{ size: 38mm 13mm; margin: 0; \}/);
+});
+
+test("set names preserve Unicode, escape markup, and omit blank rows for older labels", () => {
+  assert.equal(skuLabelSetName(undefined), "");
+  assert.equal(skuLabelSetName(" \n\t "), "");
+  assert.equal(skuLabelSetName(" プレミアム\n ファイル1 "), "プレミアム ファイル1");
+  const html = createSkuLabelDocument([
+    { sku: "DEFY-1234567890", name: "Card", setName: '<img src=x> プレミアム & "1"' },
+    { sku: "DEFY-1234567891", name: "Legacy" },
+    { sku: "DEFY-1234567892", name: "Blank", setName: " \n " },
+  ], 1);
+  assert.equal((html.match(/<div class="set">/g) ?? []).length, 1);
+  assert.match(html, /&lt;img src=x&gt; プレミアム &amp; &quot;1&quot;/);
+  assert.doesNotMatch(html, /<img/);
+  assert.equal((html.match(/class="details has-set"/g) ?? []).length, 1);
 });
 
 test("print document refuses invalid quantities and oversized jobs", () => {

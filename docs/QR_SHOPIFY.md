@@ -60,9 +60,12 @@ list and verifies the result. Shopify limits a variant to 20 barcodes; a full or
 incomplete barcode list requires review. An existing barcode is never silently
 replaced to make room for a QR.
 
-Label previews, browser prints, and PDFs include a separate bold condition line
-for conditions other than Mint and Near Mint. This line stays visible even when
-the card name is shortened to fit the 38 × 13 mm label.
+Label previews, browser prints, and PDFs include the saved set name on its own
+line below the card name. Existing browser batches load the current set from shared
+inventory. Labels without a set keep their previous layout. A separate bold
+condition line appears for conditions other than Mint and Near Mint. When both
+set and condition are present, the text uses compact rows within the same
+38 × 13 mm label; the 11 mm QR, quiet zone, and permanent SKU stay the same.
 
 Printing, downloading a PDF, clearing a batch, or scanning does not regenerate
 the code. The saved-label library works across signed-in devices. Defy's barcode
@@ -190,6 +193,13 @@ numbers. This mapping pins the exact card, Promo rarity, expansion metadata,
 English language, and selected-variant marketplace ID. Its search adds the known
 name and expansion in the same request. It does not relax number checks for
 other cards or combine the English promo with Japanese printings.
+Japanese **Typhlosion — Neo Premium File 1**, TCGplayer **607835**, is another
+reviewed printing: TCGplayer leaves its collector number blank, while Scrydex
+uses the printed Pokédex number **No.157** on **neo1pf_ja-157**. This exception
+requires the exact native and translated card and set names, Japanese language,
+complete expansion metadata, and the selected finish's marketplace ID and USD
+quote. The saved blank number, permanent QR, and starting-stock receipt are retained.
+Other blank-number cards still require review.
 Pokémon Center Exclusive promos retain their stamped edition when TCGplayer
 calls the finish Foil. The exact TCGplayer ID must belong to Scrydex's
 `pokemonCenterStamp` variant, with the same name, set, collector number,

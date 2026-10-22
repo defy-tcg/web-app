@@ -5,7 +5,11 @@ export const MAX_LABEL_COPIES = 100;
 export const MAX_LABELS_PER_PRINT = 1_000;
 export const SKU_LABEL_WEBSITE = "Buy singles at defytcg.com";
 
-export type SkuLabel = { sku: string; name: string; condition?: string };
+export type SkuLabel = { sku: string; name: string; condition?: string; setName?: string };
+
+export function skuLabelSetName(setName?: string): string {
+  return setName?.trim().replace(/\s+/g, " ") ?? "";
+}
 
 /** Mint and Near Mint need no condition row; retain every other condition. */
 export function skuLabelCondition(condition?: string): string {
@@ -93,11 +97,12 @@ export function createSkuLabelDocument(labels: readonly SkuLabel[], copies: numb
   if (labels.length * copies > MAX_LABELS_PER_PRINT) {
     throw new Error(`Print no more than ${MAX_LABELS_PER_PRINT.toLocaleString("en-US")} labels at a time.`);
   }
-  const pages = labels.flatMap(({ sku, name, condition }) => {
+  const pages = labels.flatMap(({ sku, name, condition, setName }) => {
     const svg = skuQrSvg(sku);
     const displayName = Array.from(name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
     const displayCondition = skuLabelCondition(condition);
-    const label = `<section class="label"><div class="qr">${svg}</div><div class="details${displayCondition ? " has-condition" : ""}"><div class="brand">Defy TCG - Redmond</div>${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}${displayCondition ? `<div class="condition">${escapeHtml(displayCondition)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div><div class="website">${SKU_LABEL_WEBSITE}</div></div></section>`;
+    const displaySet = skuLabelSetName(setName);
+    const label = `<section class="label"><div class="qr">${svg}</div><div class="details${displayCondition ? " has-condition" : ""}${displaySet ? " has-set" : ""}"><div class="brand">Defy TCG - Redmond</div>${displayName ? `<div class="name">${escapeHtml(displayName)}</div>` : ""}${displaySet ? `<div class="set">${escapeHtml(displaySet)}</div>` : ""}${displayCondition ? `<div class="condition">${escapeHtml(displayCondition)}</div>` : ""}<div class="sku">${escapeHtml(sku)}</div><div class="website">${SKU_LABEL_WEBSITE}</div></div></section>`;
     return Array<string>(copies).fill(label);
   }).join("\n");
   return `<!DOCTYPE html>
@@ -115,6 +120,12 @@ body { width: 38mm; -webkit-print-color-adjust: exact; print-color-adjust: exact
 .brand { display: flex; align-items: center; height: 2.25mm; font: 700 6.5pt/1 Arial, sans-serif; white-space: nowrap; }
 .name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 5.5pt; line-height: 2mm; max-height: 4mm; overflow: hidden; overflow-wrap: anywhere; }
 .has-condition .name { -webkit-line-clamp: 1; max-height: 2mm; }
+.has-set .name { -webkit-line-clamp: 1; max-height: 2mm; }
+.set { font: 400 5.5pt/2mm Arial, sans-serif; height: 2mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.has-set.has-condition { gap: .15mm; }
+.has-set.has-condition .brand { height: 2mm; font-size: 6pt; }
+.has-set.has-condition .name { font-size: 5pt; line-height: 1.75mm; max-height: 1.75mm; }
+.has-set.has-condition .set { font-size: 5pt; line-height: 1.75mm; height: 1.75mm; }
 .condition { font: 700 5pt/1.75mm Arial, sans-serif; height: 1.75mm; white-space: nowrap; }
 .sku { font: 700 7pt/2.5mm "Courier New", monospace; white-space: nowrap; }
 .website { font: 400 5pt/1.5mm Arial, sans-serif; white-space: nowrap; }

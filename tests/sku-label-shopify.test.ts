@@ -572,6 +572,70 @@ test("Ancient Mew's verified unnumbered promo repairs the existing QR and transf
   assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkInitialStock").length, 1);
 });
+test("reviewed Japanese Typhlosion retains its blank catalog identity and original QR through stock response recovery", async () => {
+  const input: SkuLabelShopifyProduct = {
+    ...card, id: 338, sku: "DEFY-5415615027", name: "Typhlosion", game: "Pokémon (Japanese)",
+    setName: "Neo Premium File 1", cardNumber: "", tcgplayerId: 607835, quantity: 1, initialQuantity: 1,
+  };
+  const original = structuredClone(input);
+  const f = fixture({ priceError: true, failAfterStock: true });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "blocked");
+  assert.equal(f.product(), null);
+  const before = JSON.parse(f.journals.get(qrJournalKey(input.sku))!.value);
+  f.deps.resolvePrice = async product => {
+    assert.equal(product.cardNumber, "", "The saved catalog number remains absent, as TCGplayer reports.");
+    return selectScrydexPrice(product, [{
+      id: "neo1pf_ja-157", name: "バクフーン", number: "157", printed_number: "No.157",
+      language: "Japanese", language_code: "JA", translation: { en: { name: "Typhlosion" } },
+      expansion: { id: "neo1pf_ja", name: "プレミアムファイル1", series: "Neo", code: null, total: 9, printed_total: 9,
+        language: "Japanese", language_code: "JA", translation: { en: { name: "Neo Premium File 1" } } },
+      variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "607835" }],
+        prices: [{ type: "raw", condition: "NM", currency: "USD", source_currency: "USD", market: 30.04 }] }],
+    }]);
+  };
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending");
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.priceCents, 3094);
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "ready");
+  assert.equal(f.quantityAdded(), 1);
+  const product = f.product(), variant = product.variants.nodes[0];
+  assert.equal(variant.barcode, input.sku);
+  assert.equal(variant.price, "30.94");
+  assert.equal(variant.selectedOptions.find(option => option.name === "Language")?.value, "Japanese");
+  assert.equal(variant.pos, true);
+  assert.equal(f.website.product, false);
+  const creates = f.calls.filter(call => call.name === "QrLinkCreate");
+  assert.equal(creates.length, 1);
+  const created = creates[0].variables.product as { title: string; metafields: { namespace: string; key: string; value: string }[] };
+  assert.equal(created.title, "Typhlosion — Neo Premium File 1");
+  assert.equal(created.metafields.some(field => field.namespace === "card" && field.key === "number"), false);
+  const stock = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(stock.length, 2);
+  assert.deepEqual(stock[0].variables, stock[1].variables, "A lost stock response reuses the exact initial receipt.");
+  const after = JSON.parse(f.journals.get(qrJournalKey(input.sku))!.value);
+  assert.equal(after.identity, before.identity);
+  assert.equal(after.initialQuantity, before.initialQuantity);
+  assert.deepEqual(input, original);
+});
+test("Typhlosion's reviewed catalog omission never permits generic blank-number Shopify cards", async () => {
+  const input: SkuLabelShopifyProduct = { ...card, name: "Typhlosion", game: "Pokémon (Japanese)",
+    setName: "Neo Premium File 1", cardNumber: "", tcgplayerId: 607835, quantity: 1, initialQuantity: 1 };
+  for (const patch of [
+    { tcgplayerId: null }, { tcgplayerId: 607836 }, { name: "Hisuian Typhlosion" },
+    { game: "Pokémon" }, { setName: "Neo Premium File 2" },
+  ]) {
+    const f = fixture();
+    let prices = 0;
+    f.deps.resolvePrice = async () => { prices++; throw new Error("No quote should be requested for an incomplete identity."); };
+    assert.equal((await linkSkuLabelToShopify({ ...input, ...patch }, f.deps)).status, "blocked");
+    assert.equal(prices, 0);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.product(), null);
+    assert.equal(f.quantityAdded(), 0);
+  }
+});
 test("a price-blocked Japanese card corrects only its unused language identity and retains the original QR stock receipt", async () => {
   const f = await blockedJapaneseFixture({ failAfterStock: true });
   const key = qrJournalKey(japaneseCard.sku);

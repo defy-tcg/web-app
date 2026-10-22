@@ -1,6 +1,6 @@
 import { PDFDocument, PrintScaling, StandardFonts, rgb } from "pdf-lib";
 import qrcode from "qrcode-generator";
-import { isGeneratedSku, MAX_LABEL_COPIES, MAX_LABELS_PER_PRINT, MAX_SKU_BATCH, skuLabelCondition, SKU_LABEL_WEBSITE, type SkuLabel } from "./sku-labels.ts";
+import { isGeneratedSku, MAX_LABEL_COPIES, MAX_LABELS_PER_PRINT, MAX_SKU_BATCH, skuLabelCondition, skuLabelSetName, SKU_LABEL_WEBSITE, type SkuLabel } from "./sku-labels.ts";
 
 const MM = 72 / 25.4;
 const WIDTH_MM = 38;
@@ -16,7 +16,8 @@ const CONDITION_MM = 1.75;
 const GAP_MM = 0.25;
 
 type NameImage = { png: Uint8Array | string; heightMm: number };
-type RasterizeName = (name: string, maxLines?: number) => Promise<NameImage>;
+type NameTypography = { fontPt: number; lineMm: number };
+type RasterizeName = (name: string, maxLines?: number, typography?: NameTypography) => Promise<NameImage>;
 
 /** Wrap at spaces when possible, without splitting Unicode code points. */
 export function wrapSkuLabelName(name: string, maxWidth: number, measure: (value: string) => number, maxLines = 2): string[] {
@@ -43,18 +44,18 @@ export function wrapSkuLabelName(name: string, maxWidth: number, measure: (value
   return lines;
 }
 
-async function rasterizeName(name: string, maxLines = 2): Promise<NameImage> {
+async function rasterizeName(name: string, maxLines = 2, typography: NameTypography = { fontPt: 5.5, lineMm: LINE_MM }): Promise<NameImage> {
   const canvas = document.createElement("canvas");
   const dotsPerMm = NAME_DPI / 25.4;
   canvas.width = Math.ceil(DETAILS_MM * dotsPerMm);
-  canvas.height = Math.ceil(maxLines * LINE_MM * dotsPerMm);
+  canvas.height = Math.ceil(maxLines * typography.lineMm * dotsPerMm);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("This browser cannot prepare card names for PDF. Try another browser.");
-  const font = `${5.5 * NAME_DPI / 72}px Arial, sans-serif`;
+  const font = `${typography.fontPt * NAME_DPI / 72}px Arial, sans-serif`;
   await document.fonts?.load(font, name);
   context.font = font;
   const lines = wrapSkuLabelName(name, canvas.width - 2, (value) => context.measureText(value).width, maxLines);
-  const heightMm = lines.length * LINE_MM;
+  const heightMm = lines.length * typography.lineMm;
   canvas.height = Math.ceil(heightMm * dotsPerMm);
   // Resizing resets the drawing state.
   context.font = font;
@@ -62,7 +63,7 @@ async function rasterizeName(name: string, maxLines = 2): Promise<NameImage> {
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = "black";
   context.textBaseline = "middle";
-  lines.forEach((line, index) => context.fillText(line, 0, (index + 0.5) * LINE_MM * dotsPerMm));
+  lines.forEach((line, index) => context.fillText(line, 0, (index + 0.5) * typography.lineMm * dotsPerMm));
   // Keep fallback emoji/font glyphs monochrome for thermal printers too.
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
   for (let index = 0; index < pixels.data.length; index += 4) {
@@ -88,7 +89,7 @@ export async function createSkuLabelPdf(
     throw new Error(`Print between 1 and ${MAX_SKU_BATCH} SKUs at a time.`);
   }
   if (labels.length * copies > MAX_LABELS_PER_PRINT) throw new Error("Print no more than 1,000 labels at a time.");
-  if (labels.some((label) => !isGeneratedSku(label.sku) || typeof label.name !== "string")) {
+  if (labels.some((label) => !isGeneratedSku(label.sku) || typeof label.name !== "string" || (label.setName !== undefined && typeof label.setName !== "string"))) {
     throw new Error("Use generated SKUs and valid card names for the PDF labels.");
   }
 
@@ -100,33 +101,41 @@ export async function createSkuLabelPdf(
   const brandFont = await pdf.embedFont(StandardFonts.HelveticaBold);
   const websiteFont = await pdf.embedFont(StandardFonts.Helvetica);
   const nameImages = new Map<string, Promise<{ image: Awaited<ReturnType<typeof pdf.embedPng>>; heightMm: number }>>();
+  const textImage = (value: string, maxLines: number, typography: NameTypography, field: "card" | "set") => {
+    const key = `${maxLines}:${typography.fontPt}:${typography.lineMm}:${value}`;
+    if (!nameImages.has(key)) nameImages.set(key, (async () => {
+      const rendered = await renderName(value, maxLines, typography);
+      if (!Number.isFinite(rendered.heightMm) || rendered.heightMm <= 0 || rendered.heightMm > maxLines * typography.lineMm) {
+        throw new Error(`The ${field} name could not fit the PDF label.`);
+      }
+      return { image: await pdf.embedPng(rendered.png), heightMm: rendered.heightMm };
+    })());
+    return nameImages.get(key)!;
+  };
 
   for (const label of labels) {
     const name = Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join("");
     const condition = skuLabelCondition(label.condition);
-    const maxNameLines = condition ? 1 : 2;
-    const nameKey = `${maxNameLines}:${name}`;
-    if (name && !nameImages.has(nameKey)) {
-      nameImages.set(nameKey, (async () => {
-        const rendered = await renderName(name, maxNameLines);
-        if (!Number.isFinite(rendered.heightMm) || rendered.heightMm <= 0 || rendered.heightMm > maxNameLines * LINE_MM) {
-          throw new Error("The card name could not fit the PDF label.");
-        }
-        return { image: await pdf.embedPng(rendered.png), heightMm: rendered.heightMm };
-      })());
-    }
-    const nameImage = name ? await nameImages.get(nameKey)! : undefined;
+    const setName = skuLabelSetName(label.setName);
+    const compact = Boolean(setName && condition);
+    const typography = compact ? { fontPt: 5, lineMm: 1.75 } : { fontPt: 5.5, lineMm: LINE_MM };
+    const brandMm = compact ? 2 : BRAND_MM;
+    const brandPt = compact ? 6 : 6.5;
+    const gapMm = compact ? 0.15 : GAP_MM;
+    const nameImage = name ? await textImage(name, condition || setName ? 1 : 2, typography, "card") : undefined;
+    const setImage = setName ? await textImage(setName, 1, typography, "set") : undefined;
     const qr = qrcode(1, "Q");
     qr.addData(label.sku, "Alphanumeric");
     qr.make();
     const moduleSize = QR_MM * MM / (qr.getModuleCount() + 8);
-    const textHeightMm = BRAND_MM + SKU_MM + WEBSITE_MM + 2 * GAP_MM +
-      (nameImage ? nameImage.heightMm + GAP_MM : 0) + (condition ? CONDITION_MM + GAP_MM : 0);
+    const textHeightMm = brandMm + SKU_MM + WEBSITE_MM + 2 * gapMm +
+      (nameImage ? nameImage.heightMm + gapMm : 0) + (setImage ? setImage.heightMm + gapMm : 0) + (condition ? CONDITION_MM + gapMm : 0);
     const textBottom = (HEIGHT_MM - textHeightMm) / 2;
-    const brandBottom = textBottom + textHeightMm - BRAND_MM;
-    const skuBottom = textBottom + WEBSITE_MM + GAP_MM;
-    const conditionBottom = skuBottom + SKU_MM + GAP_MM;
-    const nameBottom = conditionBottom + (condition ? CONDITION_MM + GAP_MM : 0);
+    const brandBottom = textBottom + textHeightMm - brandMm;
+    const skuBottom = textBottom + WEBSITE_MM + gapMm;
+    const conditionBottom = skuBottom + SKU_MM + gapMm;
+    const setBottom = conditionBottom + (condition ? CONDITION_MM + gapMm : 0);
+    const nameBottom = setBottom + (setImage ? setImage.heightMm + gapMm : 0);
 
     for (let copy = 0; copy < copies; copy++) {
       const page = pdf.addPage([WIDTH_MM * MM, HEIGHT_MM * MM]);
@@ -144,8 +153,8 @@ export async function createSkuLabelPdf(
       }
       page.drawText("Defy TCG - Redmond", {
         x: 13 * MM,
-        y: brandBottom * MM + (BRAND_MM * MM - brandFont.heightAtSize(6.5, { descender: false })) / 2,
-        size: 6.5,
+        y: brandBottom * MM + (brandMm * MM - brandFont.heightAtSize(brandPt, { descender: false })) / 2,
+        size: brandPt,
         font: brandFont,
         color: rgb(0, 0, 0),
       });
@@ -154,6 +163,12 @@ export async function createSkuLabelPdf(
         y: nameBottom * MM,
         width: DETAILS_MM * MM,
         height: nameImage.heightMm * MM,
+      });
+      if (setImage) page.drawImage(setImage.image, {
+        x: 13 * MM,
+        y: setBottom * MM,
+        width: DETAILS_MM * MM,
+        height: setImage.heightMm * MM,
       });
       if (condition) page.drawText(condition, {
         x: 13 * MM,

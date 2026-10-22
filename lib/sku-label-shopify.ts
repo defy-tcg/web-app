@@ -4,7 +4,7 @@ import type { SkuLabelCatalogDetails } from "./sku-label-catalog-types.ts";
 import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, SkuLabelInventoryError } from "./sku-label-inventory.ts";
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
-import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode } from "./scrydex.ts";
+import { hasReviewedJapaneseCatalogNumberException, resolveScrydexPrice, ScrydexError, type ScrydexErrorCode } from "./scrydex.ts";
 import { resolveSkuLinkPrice, type SkuLinkPriceResolver } from "./sku-label-link-price.ts";
 import { digest, SinglesError, type PlannedSingle } from "./singles/intake.ts";
 import { createShopifyGraphQL, LEGACY_DEFY_MAPPING, ShopifySinglesAdapter, type SinglesGraphQL } from "./singles/shopify.ts";
@@ -86,7 +86,8 @@ function check(payload: Payload | null | undefined) {
 function identityFor(product: SkuLabelShopifyProduct) {
   const condition = canonicalSinglesCondition(product.condition);
   const finish = canonicalInventoryLabelFinish(product.finish);
-  if (!isGeneratedSku(product.sku) || !product.id || !condition || !finish || !product.name.trim() || !product.game.trim() || !product.setName.trim() || !product.cardNumber.trim()) {
+  const catalogNumberVerified = product.cardNumber.trim() || hasReviewedJapaneseCatalogNumberException({ ...product, productType: "Single" });
+  if (!isGeneratedSku(product.sku) || !product.id || !condition || !finish || !product.name.trim() || !product.game.trim() || !product.setName.trim() || !catalogNumberVerified) {
     fail("Complete the saved card's name, game, set, collector number, condition, and finish before linking Shopify POS.");
   }
   const source = Number.isSafeInteger(product.tcgplayerId) && Number(product.tcgplayerId) > 0 ? Number(product.tcgplayerId) : null;
@@ -674,8 +675,9 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     }
     const saved = await adapter.read<Journal>(journalKey(product.sku));
     if (saved.value?.catalogCorrectionIntent) pending("Finish the reviewed catalog correction before linking this saved QR to Shopify POS.");
-    const manualIdentity = identityFor({ ...product, tcgplayerId: null, tcgplayerUrl: null });
-    const canAdoptManual = Boolean(identity.source && saved.value?.identity === manualIdentity.identity && !saved.value.previousIdentity);
+    // Unnumbered reviewed catalog cards have no valid number-based manual identity.
+    const manualIdentity = product.cardNumber.trim() ? identityFor({ ...product, tcgplayerId: null, tcgplayerUrl: null }) : null;
+    const canAdoptManual = Boolean(manualIdentity && identity.source && saved.value?.identity === manualIdentity.identity && !saved.value.previousIdentity);
     const canCorrectLanguage = canCorrectPrecreationLanguage(saved.value, product, identity);
     languageCorrectionPending = canCorrectLanguage;
     if (saved.value && (saved.value.version !== 1 || (saved.value.identity !== identity.identity && !canAdoptManual && !canCorrectLanguage) || saved.value.sku !== product.sku)) fail("This saved QR already has a different Shopify card identity. Review its mapping; no duplicate was created.");
@@ -683,7 +685,7 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     record = saved.value ?? { version: 1, identity: identity.identity, sku: product.sku, owner: null, expiresAt: 0, initialQuantity: product.initialQuantity };
     record.stockRequestKey ??= `defy-qr-${digest(JSON.stringify([deps.settings.shop, product.id, record.identity])).slice(0, 48)}`;
     if (canCorrectLanguage) record = { ...record, identity: identity.identity, status: { sku: product.sku, status: "pending", message: "Verifying the Japanese card before creating its Shopify link." } };
-    if (canAdoptManual && !record.productId) {
+    if (canAdoptManual && manualIdentity && !record.productId) {
       // A lost create response must be reconciled under its ORIGINAL unique ID.
       // Looking only under the new TCGplayer ID would create a second product.
       const original = await graphql<{ productByIdentifier: Product | null }>(`query QrLinkOriginalManual($identifier: ProductIdentifierInput!, $pos: ID!) { productByIdentifier(identifier: $identifier) { ${P_FIELDS} } }`, { identifier: { customId: { namespace: RECEIVING, key: "catalog_id", value: manualIdentity.printing } }, pos });
@@ -808,13 +810,13 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
     if (!target) {
       await renew();
       if (!record.creationStartedAt) { record.creationStartedAt = deps.clock(); await save(); }
-      const title = `${product.name} — ${product.setName} (${product.cardNumber})`;
+      const title = `${product.name} — ${product.setName}${product.cardNumber.trim() ? ` (${product.cardNumber})` : ""}`;
       const created = await graphql<{ productCreate: Payload & { product: { id: string } | null } }>(`mutation QrLinkCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) { productCreate(product: $product, media: $media) { product { id } userErrors { message } } }`, {
         product: { title, status: "DRAFT", productType: `${product.game} single`, tags: [product.game, "Singles", identity.language, ...(identity.source ? [`defy-catalog-${identity.source}`] : [])],
           productOptions: optionsFor(identity).map(option => ({ name: option.name, values: [{ name: option.value }] })),
           metafields: [{ namespace: receivingNamespace, key: "catalog_id", value: identity.printing },
             ...(identity.source ? [{ namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(identity.source) }] : []),
-            ...Object.entries({ name: product.name, game: product.game, set: product.setName, number: product.cardNumber }).map(([key, value]) => ({ namespace: "card", key, type: "single_line_text_field", value }))] },
+            ...Object.entries({ name: product.name, game: product.game, set: product.setName, number: product.cardNumber }).filter(([, value]) => value.trim()).map(([key, value]) => ({ namespace: "card", key, type: "single_line_text_field", value }))] },
         media: identity.source ? [{ originalSource: `https://tcgplayer-cdn.tcgplayer.com/product/${identity.source}_in_1000x1000.jpg`, mediaContentType: "IMAGE", alt: title }] : [],
       });
       // Unique app-owned identifier resolves a concurrent creator or response loss.
@@ -823,15 +825,15 @@ export async function linkSkuLabelToShopify(product: SkuLabelShopifyProduct, dep
       if (!target) { check(created.productCreate); pending("Shopify has not confirmed the new card. Retry this saved QR; no replacement SKU is needed."); }
     }
     if (record.adoptionPending) {
-      if (!record.previousIdentity || record.previousIdentity !== manualIdentity.identity || !target || target.id !== record.productId) fail("The original manual Shopify mapping could not be verified before linking its TCGplayer identity.");
+      if (!manualIdentity || !record.previousIdentity || record.previousIdentity !== manualIdentity.identity || !target || target.id !== record.productId) fail("The original manual Shopify mapping could not be verified before linking its TCGplayer identity.");
       const originalCandidates = record.variantId ? target!.variants.nodes.filter(item => item.id === record!.variantId) : target!.variants.nodes.filter(item => exactOptions(item, identity));
       const original = originalCandidates.length === 1 ? originalCandidates[0] : undefined;
       const blankInitial = original && !original.sku && original.barcodes.nodes.length === 0 && target!.status === "DRAFT" && target!.variants.nodes.length === 1 && original.inventoryQuantity === 0;
-      const allowedCatalogs = [manualIdentity.printing, identity.printing];
+      const allowedCatalogs = [manualIdentity!.printing, identity.printing];
       if (!original || (record.shopifySku !== undefined && (original.sku || "") !== record.shopifySku) || !exactOptions(original, identity) || (!blankInitial && (!original.inventoryItem.tracked || original.inventoryPolicy !== "DENY" || !original.barcodes.nodes.some(code => code.value === product.sku) || ![record.previousIdentity, identity.identity].includes(original.qrIdentity?.value || ""))) || !allowedCatalogs.includes(target!.catalogId?.value || "") || (target!.sourceId?.value && target!.sourceId.value !== String(identity.source))) fail("The manual card's Shopify identity changed. Review it before adopting the TCGplayer link.");
       if (!record.adjustmentId && record.adjustmentStartedAt && deps.clock() - record.adjustmentStartedAt >= 23 * 60 * 60 * 1000) fail("The original manual card stock receipt needs review before its TCGplayer link can be adopted. Stock was not added again.");
       await renew();
-      const adopted = await graphql<{ productUpdate: Payload }>(`mutation QrLinkAdoptCatalog($product: ProductUpdateInput!) { productUpdate(product: $product) { userErrors { message } } }`, { product: { id: target!.id, metafields: [{ namespace: receivingNamespace, key: "catalog_id", value: identity.printing }, { namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(identity.source) }, { namespace: NAMESPACE, key: "manual_origin", type: "single_line_text_field", value: manualIdentity.printing }] } });
+      const adopted = await graphql<{ productUpdate: Payload }>(`mutation QrLinkAdoptCatalog($product: ProductUpdateInput!) { productUpdate(product: $product) { userErrors { message } } }`, { product: { id: target!.id, metafields: [{ namespace: receivingNamespace, key: "catalog_id", value: identity.printing }, { namespace: "defy_intake", key: "catalog_id", type: "single_line_text_field", value: String(identity.source) }, { namespace: NAMESPACE, key: "manual_origin", type: "single_line_text_field", value: manualIdentity!.printing }] } });
       check(adopted.productUpdate);
       if (!blankInitial) {
       record.variantId = original!.id; record.shopifySku = original!.sku || ""; await save();

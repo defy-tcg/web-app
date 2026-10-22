@@ -89,7 +89,7 @@ function productSpec(product: ScrydexProduct) {
   if (language === "English" && /\b(?:Japanese|Chinese|Korean|French|German|Spanish|Italian|Portuguese|Simplified|Traditional)\b|[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/i.test(`${product.name} ${product.setName}`)) {
     throw new ScrydexError("unsupported", "Scrydex automatic pricing currently requires an English product and a USD price.");
   }
-  if (!text(product.name) || !text(product.setName) || (!sealed && !text(product.cardNumber))) {
+  if (!text(product.name) || !text(product.setName) || (!sealed && !text(product.cardNumber) && !japaneseCatalogNumberException(product))) {
     throw new ScrydexError("incomplete_identity", "Scrydex matching requires an exact name and set, plus the collector number for singles.");
   }
   const condition = sealed
@@ -345,6 +345,40 @@ const POKEMON_JAPANESE_SET_ALIASES: Record<string, { id: string; name: string; t
   "sv9: battle partners": { id: "sv9_ja", name: "バトルパートナーズ", translatedName: "battle partners", series: "scarlet & violet", code: "sv9" },
 };
 
+// TCGplayer explicitly has no collector number for this reviewed printing.
+// Scrydex uses its printed Pokédex number instead. Preserve the saved blank
+// catalog number and pin the complete printing rather than inventing a number.
+const JAPANESE_TYPHLOSION_PREMIUM_FILE = {
+  tcgplayerId: 607835, name: "Typhlosion", nativeName: "バクフーン", setName: "Neo Premium File 1",
+  id: "neo1pf_ja-157", number: "157", printedNumber: "No.157",
+  expansion: { id: "neo1pf_ja", name: "プレミアムファイル1", series: "Neo", translatedName: "Neo Premium File 1", total: 9 },
+} as const;
+
+function japaneseCatalogNumberException(product: ScrydexProduct) {
+  const printing = JAPANESE_TYPHLOSION_PREMIUM_FILE;
+  return gameFromAlias(product.game)?.key === "pokemon-japanese" && identity(product.productType) === "single"
+    && product.tcgplayerId === printing.tcgplayerId && !text(product.cardNumber)
+    && identity(productNameWithoutGame(product)) === identity(printing.name) && identity(product.setName) === identity(printing.setName)
+    ? printing : undefined;
+}
+
+/** Identity-only gate; linking must still verify the exact provider printing and price. */
+export function hasReviewedJapaneseCatalogNumberException(product: ScrydexProduct) {
+  return Boolean(japaneseCatalogNumberException(product));
+}
+
+function verifiedJapaneseCatalogNumberException(product: ScrydexProduct, candidate: ObjectValue) {
+  const printing = japaneseCatalogNumberException(product), expansion = object(candidate.expansion);
+  return Boolean(printing && text(candidate.id) === printing.id && identity(candidate.name) === identity(printing.nativeName)
+    && identity(translatedName(candidate)) === identity(printing.name)
+    && text(candidate.number) === printing.number && text(candidate.printed_number) === printing.printedNumber
+    && identity(expansion.id) === printing.expansion.id && identity(expansion.name) === identity(printing.expansion.name)
+    && identity(expansion.series) === identity(printing.expansion.series) && expansion.code === null
+    && identity(translatedName(expansion)) === identity(printing.expansion.translatedName)
+    && expansion.total === printing.expansion.total && expansion.printed_total === printing.expansion.total
+    && japanese(candidate) && array(candidate.variants).map(object).some(variant => marketplaceId(variant, printing.tcgplayerId)));
+}
+
 // TCGplayer assigns some unnumbered promos a catalog number. Each exception
 // pins both providers' complete printing identity; missing numbers alone never
 // authorize a match or map the whole Miscellaneous bucket to one expansion.
@@ -498,12 +532,13 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
   const matches = candidates.map(object).filter((candidate) => {
     const expansion = object(candidate.expansion);
     const unnumbered = verifiedUnnumberedPokemonPrinting(product, candidate);
+    const catalogNumberException = verifiedJapaneseCatalogNumberException(product, candidate);
     return text(candidate.id) && (spec.language === "Japanese" ? japanese(candidate) : english(candidate))
       && candidate.is_online_only !== true && expansion.is_online_only !== true
       && expansion.is_foreign_only !== true
       && verifiedName(product, candidate, spec.game, spec.language)
-      && (verifiedSetName(product, candidate, spec.game, spec.language) || unnumbered)
-      && (spec.sealed || matchesNumber(product.cardNumber, candidate) || unnumbered);
+      && (verifiedSetName(product, candidate, spec.game, spec.language) || unnumbered || catalogNumberException)
+      && (spec.sealed || matchesNumber(product.cardNumber, candidate) || unnumbered || catalogNumberException);
   });
   if (!matches.length) throw new ScrydexError("not_found", `No exact ${spec.language} Scrydex match for this name, set, and collector number.`);
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
@@ -599,8 +634,11 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   // Popular Pokémon names exceed a full page. Bound their name fallback to this
   // collector number; marketplace ID, set, language and finish are still verified.
   const englishPokemon = spec.game === "pokemon" && spec.resource === "cards" && spec.language === "English" && hasMarketplaceId;
+  const japaneseNumberException = japaneseCatalogNumberException(product);
   const clauses = spec.language === "Japanese"
-    ? [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
+    ? japaneseNumberException
+      ? [`(!name:${queryLiteral(japaneseNumberException.nativeName)} AND number:${queryLiteral(japaneseNumberException.number)} AND expansion.id:${queryLiteral(japaneseNumberException.expansion.id)} AND language_code:JA)`]
+      : [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
     : englishPokemon || englishRiftbound ? [`((${namesQuery}) AND (${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:EN)`]
       : names.map((name) => `!name:${queryLiteral(name)}`);
   if (englishRiftbound) {

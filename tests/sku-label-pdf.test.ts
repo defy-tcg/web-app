@@ -124,6 +124,66 @@ test("PDF condition rows survive long names, remain bold, and do not change QR m
   }
 });
 
+test("PDF includes a normalized Unicode set line once per card and preserves copies and QR modules", async () => {
+  const calls: { value: string; maxLines?: number; typography?: { fontPt: number; lineMm: number } }[] = [];
+  const label = { sku: "DEFY-1234567890", name: "バクフーン", setName: "  Neo Premium\n File 1  日本語 🃏 ", condition: "NM" };
+  const bytes = await createSkuLabelPdf([label, { ...label, sku: "DEFY-1234567891" }], 2, async (value, maxLines, typography) => {
+    calls.push({ value, maxLines, typography });
+    return { png: pixel, heightMm: 2 };
+  });
+  assert.deepEqual(calls, [
+    { value: "バクフーン", maxLines: 1, typography: { fontPt: 5.5, lineMm: 2 } },
+    { value: "Neo Premium File 1 日本語 🃏", maxLines: 1, typography: { fontPt: 5.5, lineMm: 2 } },
+  ]);
+  const document = await PDFDocument.load(bytes);
+  assert.equal(document.getPageCount(), 4);
+  const content = await pageContent(bytes);
+  const images = content.split("\nQ\n").filter(section => section.includes(" Do"));
+  assert.equal(images.length, 2, "name and set each have a Unicode-safe image, independent of standard PDF fonts");
+  const y = images.map(image => Number(/1 0 0 1 ([\d.]+) ([\d.]+) cm/.exec(image)![2]) / mm);
+  assert.ok(Math.abs(y[0] - 7.625) < 0.00001);
+  assert.ok(Math.abs(y[1] - 5.375) < 0.00001);
+  const plain = await createSkuLabelPdf([{ sku: label.sku, name: "" }], 1);
+  const qrOperations = (value: string) => value.split("\nQ\n").filter(section => section.includes("0 0 m\n") && section.includes("\nf"));
+  assert.deepEqual(qrOperations(content), qrOperations(await pageContent(plain)));
+  const encoded = (value: string) => Buffer.from(value).toString("hex").toUpperCase();
+  assert.match(content, new RegExp(encoded(label.sku)));
+  assert.doesNotMatch(content, new RegExp(`<${encoded("Near Mint")}> Tj`));
+});
+
+test("long set and card names leave separate compact rows for bold condition, SKU, brand and footer", async () => {
+  const name = "長いカードの名前🃏 ".repeat(20), setName = "とても長いセットの名前🃏 ".repeat(20);
+  const calls: { value: string; maxLines?: number; typography?: { fontPt: number; lineMm: number } }[] = [];
+  const bytes = await createSkuLabelPdf([{ sku: "DEFY-1234567890", name, setName, condition: "LP" }], 1,
+    async (value, maxLines, typography) => {
+      calls.push({ value, maxLines, typography });
+      return { png: pixel, heightMm: typography!.lineMm };
+    });
+  assert.deepEqual(calls, [
+    { value: Array.from(name.trim()).slice(0, 48).join(""), maxLines: 1, typography: { fontPt: 5, lineMm: 1.75 } },
+    { value: setName.trim(), maxLines: 1, typography: { fontPt: 5, lineMm: 1.75 } },
+  ]);
+  const content = await pageContent(bytes);
+  const images = content.split("\nQ\n").filter(section => section.includes(" Do"));
+  assert.equal(images.length, 2);
+  const positions = images.map(image => Number(/1 0 0 1 ([\d.]+) ([\d.]+) cm/.exec(image)![2]) / mm);
+  assert.ok(Math.abs(positions[0] - 8.6) < 0.00001, "card name remains above the set row");
+  assert.ok(Math.abs(positions[1] - 6.7) < 0.00001, "set remains above the condition row");
+  assert.ok(positions[1] + 1.75 + 0.15 <= positions[0] + 0.00001, "name and set do not overlap");
+  const encoded = (value: string) => Buffer.from(value).toString("hex").toUpperCase();
+  const condition = content.split("BT\n").find(section => section.includes(`<${encoded("Lightly Played")}> Tj`))!;
+  assert.match(condition, /\/Helvetica-Bold-[\d]+ 5 Tf/);
+  const conditionY = Number(/1 0 0 1 ([\d.]+) ([\d.]+) Tm/.exec(condition)![2]) / mm;
+  assert.ok(conditionY >= 4.8 && conditionY < 6.55, "condition stays in its own row below the set");
+  const sku = content.split("BT\n").find(section => section.includes(`<${encoded("DEFY-1234567890")}> Tj`))!;
+  assert.match(sku, /\/Courier-Bold-[\d]+ 7 Tf/);
+  const brand = content.split("BT\n").find(section => section.includes(`<${encoded("Defy TCG - Redmond")}> Tj`))!;
+  assert.match(brand, /\/Helvetica-Bold-[\d]+ 6 Tf/);
+  const brandY = Number(/1 0 0 1 ([\d.]+) ([\d.]+) Tm/.exec(brand)![2]) / mm;
+  assert.ok(brandY >= 10.5 && brandY < 12.5, "all details fit inside the 13 mm page with a half-millimeter margin");
+  assert.match(content, new RegExp(encoded("Buy singles at defytcg.com")));
+});
+
 test("name wrapping handles words and long Unicode names with at most two fitting lines", () => {
   const measure = (value: string) => Array.from(value).length;
   assert.deepEqual(wrapSkuLabelName("Ahri Spirit Blossom", 12, measure), ["Ahri Spirit", "Blossom"]);
@@ -138,6 +198,14 @@ test("name wrapping handles words and long Unicode names with at most two fittin
 test("PDF condition layout rejects a name image that would occupy its condition row", async () => {
   await assert.rejects(createSkuLabelPdf([{ sku: "DEFY-1234567890", name: "Long name", condition: "LP" }], 1,
     async () => ({ png: pixel, heightMm: 4 })), /card name could not fit/);
+});
+
+test("set-name PDF rows reject oversized images and malformed set data before rendering", async () => {
+  const label = { sku: "DEFY-1234567890", name: "", setName: "Neo Premium File 1" };
+  await assert.rejects(createSkuLabelPdf([label], 1, async () => ({ png: pixel, heightMm: 4 })), /set name could not fit/);
+  await assert.rejects(createSkuLabelPdf([{ ...label, condition: "LP" }], 1, async () => ({ png: pixel, heightMm: 2 })), /set name could not fit/);
+  await assert.rejects(createSkuLabelPdf([{ ...label, setName: 42 as unknown as string }], 1,
+    async () => { assert.fail("invalid set names must not render"); }), /valid card names/);
 });
 
 test("PDF validates every label and job limit before rendering names", async () => {
