@@ -4,7 +4,7 @@ import type { SkuLabelCatalogDetails } from "./sku-label-catalog-types.ts";
 import { canonicalInventoryLabelFinish, inventoryLabelIdentityText, SkuLabelInventoryError } from "./sku-label-inventory.ts";
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
 import { scrydexSellPriceCents } from "./pricing-policy.ts";
-import { hasReviewedJapaneseCatalogNumberException, resolveScrydexPrice, ScrydexError, type ScrydexErrorCode } from "./scrydex.ts";
+import { resolveScrydexPrice, ScrydexError, type ScrydexErrorCode } from "./scrydex.ts";
 import { resolveSkuLinkPrice, type SkuLinkPriceResolver } from "./sku-label-link-price.ts";
 import { digest, SinglesError, type PlannedSingle } from "./singles/intake.ts";
 import { createShopifyGraphQL, LEGACY_DEFY_MAPPING, ShopifySinglesAdapter, type SinglesGraphQL } from "./singles/shopify.ts";
@@ -18,7 +18,7 @@ export interface SkuLabelShopifyProduct {
 }
 export interface SkuLabelShopifyStatus {
   sku: string; status: "ready" | "pending" | "blocked"; message: string;
-  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean; automaticRetry?: boolean;
+  productId?: string; variantId?: string; adminUrl?: string; priceCents?: number; checkedAt?: string; transferredQuantity?: number; availableQuantity?: number; catalogCorrectionPending?: boolean; manualPriceAllowed?: boolean; automaticRetry?: boolean; verificationPending?: boolean;
 }
 export interface SkuLabelShopifyDependencies {
   graphql: SinglesGraphQL;
@@ -86,7 +86,9 @@ function check(payload: Payload | null | undefined) {
 function identityFor(product: SkuLabelShopifyProduct) {
   const condition = canonicalSinglesCondition(product.condition);
   const finish = canonicalInventoryLabelFinish(product.finish);
-  const catalogNumberVerified = product.cardNumber.trim() || hasReviewedJapaneseCatalogNumberException({ ...product, productType: "Single" });
+  // A source ID identifies unnumbered catalog cards. Pricing still requires a
+  // verified provider printing and quote before any product or stock is created.
+  const catalogNumberVerified = product.cardNumber.trim() || (Number.isSafeInteger(product.tcgplayerId) && Number(product.tcgplayerId) > 0);
   if (!isGeneratedSku(product.sku) || !product.id || !condition || !finish || !product.name.trim() || !product.game.trim() || !product.setName.trim() || !catalogNumberVerified) {
     fail("Complete the saved card's name, game, set, collector number, condition, and finish before linking Shopify POS.");
   }
@@ -517,9 +519,9 @@ export async function correctSkuLabelCatalog<T extends SkuLabelCatalogProduct>(p
 }
 
 /** Read-only status: persisted progress plus live barcode, POS, price, and location stock verification. */
-export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShopifyProduct[], dependencies?: SkuLabelShopifyDependencies): Promise<SkuLabelShopifyStatus[]> {
+export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShopifyProduct[], dependencies?: SkuLabelShopifyDependencies, options: { verifyLive?: boolean } = {}): Promise<SkuLabelShopifyStatus[]> {
   if (!products.length) return [];
-  const unavailable = (sku: string): SkuLabelShopifyStatus => ({ sku, status: "pending", message: "Shopify POS status is temporarily unavailable. The QR remains saved." });
+  const unavailable = (sku: string): SkuLabelShopifyStatus => ({ sku, status: "pending", verificationPending: true, message: "Shopify POS status is temporarily unavailable. The QR remains saved; its live status will be checked again." });
   const unverified = (status: SkuLabelShopifyStatus): SkuLabelShopifyStatus => ({ ...status,
     availableQuantity: undefined, checkedAt: undefined, priceCents: undefined, transferredQuantity: undefined });
   let deps: SkuLabelShopifyDependencies;
@@ -557,9 +559,13 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
             message: "Finish the reviewed catalog correction before linking this saved QR to Shopify POS." };
         } else if (valid && stored && stored.status?.status === "ready") {
           // A saved ready status is only a candidate until every live check succeeds.
-          results[results.length - 1] = unverified({ ...stored.status, ...unavailable(product.sku) });
-          if (stored.variantId && stored.productId && stored.publicationId && (stored.initialQuantity === 0 || stored.adjustmentId)) ready.push({ index: results.length - 1, record: stored, product });
-          else results[results.length - 1].message = "Shopify POS needs to reverify this saved QR link.";
+          results[results.length - 1] = unverified({ ...stored.status, ...unavailable(product.sku),
+            ...(options.verifyLive === false ? { message: "Shopify link saved. Select this label to verify its current POS readiness, price, and stock." } : {}) });
+          if (stored.variantId && stored.productId && stored.publicationId && stored.shopifySku !== undefined && !stored.adoptionPending && (stored.initialQuantity === 0 || stored.adjustmentId)) {
+            if (options.verifyLive !== false) ready.push({ index: results.length - 1, record: stored, product });
+          }
+          else results[results.length - 1] = { ...results[results.length - 1], verificationPending: undefined,
+            message: "Shopify POS needs to reconcile this saved QR link. Automatic recovery will reuse its original receipt." };
         }
       } catch (error) { results.push(safeFailure(product.sku, error)); }
     });
@@ -584,20 +590,24 @@ export async function getSkuLabelShopifyStatuses(products: readonly SkuLabelShop
         try {
           const variant = live[`v${offset}`];
           if (!variant || variant.id !== record.variantId || variant.product.id !== record.productId || variant.qrIdentity?.value !== record.identity || !matchesSavedVariant(variant, variant.product, identityFor(product), deps.settings.shop) || (variant.sku || "") !== record.shopifySku || variant.barcodes.pageInfo.hasNextPage || !variant.barcodes.nodes.some(code => code.value === record.sku)) {
-            results[index] = { ...current, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling." }; continue;
+            results[index] = { ...current, verificationPending: undefined, status: "blocked", message: "The saved Shopify variant or QR barcode changed. Review its existing link before printing or selling." }; continue;
           }
           const available = variant.inventoryItem.inventoryLevel?.quantities.find(quantity => quantity.name === "available")?.quantity;
           if (variant.product.status !== "ACTIVE" || !variant.product.pos || !variant.pos || !Number.isSafeInteger(available) || priceCents(variant.price) <= 0) {
-            results[index] = { ...current, status: "pending", message: "Shopify POS availability changed. Retry the saved link to verify its price and sales channel." }; continue;
+            results[index] = { ...current, verificationPending: undefined, status: "pending", automaticRetry: true, message: "Shopify POS availability changed. Automatic recovery will verify its price and restore its sales channel." }; continue;
           }
-          if (inStoreOnly(product) && (await nonPosPublications(product, record, deps)).length) fail("This Pokémon single is available outside POS. Retry its saved link to restore in-store-only sales.");
+          if (inStoreOnly(product) && (await nonPosPublications(product, record, deps)).length) {
+            results[index] = { ...current, verificationPending: undefined, status: "pending", automaticRetry: true,
+              message: "This Pokémon single needs its in-store-only sales policy restored. Automatic recovery will reuse its saved link." }; continue;
+          }
           if (onWebsite(product)) {
             website ??= websitePublication(deps);
             if (!await websiteAvailable(product, record, deps, await website)) pending("This Riftbound card is linked to POS but is not available on the Defy website. Retry its saved link to restore website availability.");
           }
           results[index] = { ...record.status!, priceCents: priceCents(variant.price), availableQuantity: available, transferredQuantity: record.adjustmentId ? record.initialQuantity : 0, checkedAt: new Date(deps.clock()).toISOString() };
         } catch (error) {
-          results[index] = { ...current, ...safeFailure(product.sku, error) };
+          results[index] = { ...current, verificationPending: undefined, ...safeFailure(product.sku, error),
+            ...(!(error instanceof SinglesError) || ["THROTTLED", "SHOPIFY_UNAVAILABLE", "INTERNAL_SERVER_ERROR"].includes(error.code) ? { verificationPending: true } : {}) };
         }
       }
     }

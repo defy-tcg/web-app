@@ -7,6 +7,7 @@ export type TcgplayerCardLookup = {
   game: TcgGameName;
   setName: string;
   cardNumber: string;
+  catalogNumberAbsent?: true;
   imageUrl: string;
   productUrl: string;
   finishes: string[];
@@ -63,12 +64,12 @@ function sourceText(value: unknown, maximum: number): string | null {
   return clean && Array.from(clean).length <= maximum && !/[\u0000-\u001f\u007f]/u.test(clean) ? clean : null;
 }
 
-async function fetchJson(url: string, fetcher: typeof fetch): Promise<unknown> {
+async function fetchJson(url: string, fetcher: typeof fetch, fresh = false): Promise<unknown> {
   const response = await fetcher(url, {
     headers: { accept: "application/json", "user-agent": "DefyTCGStoreOS/1.0 (single card lookup)" },
     redirect: "error",
     signal: AbortSignal.timeout(8_000),
-    next: { revalidate: 86_400 },
+    ...(fresh ? { cache: "no-store" as const } : { next: { revalidate: 86_400 } }),
   });
   if (!response.ok) {
     if (response.status === 404) throw new TcgplayerCardLookupError(404, "That TCGplayer product was not found. Check the card link.");
@@ -91,14 +92,14 @@ function finishName(value: unknown): string | null {
 /** Reads catalog identity and finishes only. Prices and inventory remain unchanged. */
 export async function lookupTcgplayerCard(
   url: unknown,
-  options: { fetch?: typeof fetch } = {},
+  options: { fetch?: typeof fetch; fresh?: boolean } = {},
 ): Promise<TcgplayerCardLookup> {
   const productId = productIdFromUrl(url);
   const fetcher = options.fetch ?? fetch;
   let details: Record<string, unknown> | null;
   try {
     // Only trusted fixed hosts and validated integer IDs ever reach fetch.
-    details = record(await fetchJson(`https://mp-search-api.tcgplayer.com/v1/product/${productId}/details`, fetcher));
+    details = record(await fetchJson(`https://mp-search-api.tcgplayer.com/v1/product/${productId}/details`, fetcher, options.fresh));
   } catch (error) {
     if (error instanceof TcgplayerCardLookupError) throw error;
     if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) {
@@ -131,7 +132,7 @@ export async function lookupTcgplayerCard(
   const finishes: string[] = [];
   try {
     // TCGCSV publishes finishes in its prices collection; never consume its price fields.
-    const body = record(await fetchJson(`https://tcgcsv.com/tcgplayer/${details.productLineId}/${details.setId}/prices`, fetcher));
+    const body = record(await fetchJson(`https://tcgcsv.com/tcgplayer/${details.productLineId}/${details.setId}/prices`, fetcher, options.fresh));
     if (body?.success !== true || !Array.isArray(body.results)) throw new Error("Invalid finishes");
     const seen = new Set<string>();
     for (const value of body.results) {
@@ -149,6 +150,7 @@ export async function lookupTcgplayerCard(
 
   return {
     productId, categoryId: details.productLineId, name, game, setName, cardNumber,
+    ...(!cardNumber && (attributes?.number === null || (typeof attributes?.number === "string" && !attributes.number.trim())) ? { catalogNumberAbsent: true as const } : {}),
     imageUrl: `https://tcgplayer-cdn.tcgplayer.com/product/${productId}_in_1000x1000.jpg`,
     productUrl: `https://www.tcgplayer.com/product/${productId}`,
     finishes, warnings,

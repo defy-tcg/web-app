@@ -1,4 +1,5 @@
 import { cardLanguageForGame, gameFromAlias } from "./tcg-games.ts";
+import { scrydexCatalogProofHasAbsentNumber, scrydexCatalogProofMatches, type VerifiedScrydexCatalogProof } from "./scrydex-catalog-proof.ts";
 
 /** Server-side only. Credentials are read on demand and never returned with prices. */
 export function getScrydexConfig() {
@@ -75,7 +76,7 @@ function numberKey(value: unknown) {
   return identity(value).replace(/\s+/g, "").replace(/(^|[-/])0+(?=\d)/g, "$1");
 }
 
-function productSpec(product: ScrydexProduct) {
+function productSpec(product: ScrydexProduct, catalogProof?: VerifiedScrydexCatalogProof) {
   const game = GAME_PATHS[gameFromAlias(product.game)?.key ?? ""];
   const language = cardLanguageForGame(product.game);
   if (!game) throw new ScrydexError("unsupported", "Scrydex pricing does not support this game.");
@@ -89,7 +90,8 @@ function productSpec(product: ScrydexProduct) {
   if (language === "English" && /\b(?:Japanese|Chinese|Korean|French|German|Spanish|Italian|Portuguese|Simplified|Traditional)\b|[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/i.test(`${product.name} ${product.setName}`)) {
     throw new ScrydexError("unsupported", "Scrydex automatic pricing currently requires an English product and a USD price.");
   }
-  if (!text(product.name) || !text(product.setName) || (!sealed && !text(product.cardNumber) && !japaneseCatalogNumberException(product))) {
+  if (!text(product.name) || !text(product.setName) || (!sealed && !text(product.cardNumber)
+    && !japaneseCatalogNumberException(product) && !scrydexCatalogProofHasAbsentNumber(product, catalogProof))) {
     throw new ScrydexError("incomplete_identity", "Scrydex matching requires an exact name and set, plus the collector number for singles.");
   }
   const condition = sealed
@@ -410,6 +412,38 @@ function verifiedUnnumberedPokemonPrinting(product: ScrydexProduct, candidate: O
     && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)));
 }
 
+function coherentCatalogNumber(candidate: ObjectValue, expansion: ObjectValue) {
+  if (candidate.number === null && candidate.printed_number === null) return expansion.printed_total === null;
+  const number = numberKey(candidate.number), printed = numberKey(candidate.printed_number);
+  if (!number || !printed || numberKey(text(candidate.id).slice(text(expansion.id).length + 1)) !== number) return false;
+  if (printed === number || (/^no\.\d+$/.test(printed) && numberKey(printed.slice(3)) === number)) return true;
+  const parts = printed.split("/");
+  return parts.length === 2 && parts[0] === number && /^\d+$/.test(parts[1])
+    && Number.isSafeInteger(Number(parts[1])) && Number(parts[1]) > 0 && Number(parts[1]) === expansion.printed_total;
+}
+
+/** Independent source evidence may bridge labels, never contradict a reviewed exception. */
+function verifiedCatalogCandidate(product: ScrydexProduct, candidate: ObjectValue, catalogProof?: VerifiedScrydexCatalogProof) {
+  if (!scrydexCatalogProofMatches(product, catalogProof) || identity(product.productType) !== "single"
+    || POKEMON_SET_ALIASES[identity(product.setName)] || POKEMON_JAPANESE_SET_ALIASES[identity(product.setName)]
+    || product.tcgplayerId === JAPANESE_TYPHLOSION_PREMIUM_FILE.tcgplayerId
+    || (product.tcgplayerId && POKEMON_UNNUMBERED_PRINTINGS[product.tcgplayerId])) return false;
+  const expansion = object(candidate.expansion), language = cardLanguageForGame(product.game);
+  const validId = (value: unknown) => /^[a-z0-9][a-z0-9_-]{0,99}$/i.test(text(value));
+  const total = expansion.total, printedTotal = expansion.printed_total;
+  return validId(candidate.id) && validId(expansion.id) && text(candidate.id).startsWith(`${text(expansion.id)}-`)
+    && Boolean(text(candidate.name) && text(expansion.name) && text(expansion.series))
+    && (expansion.code === null || Boolean(text(expansion.code)))
+    && typeof total === "number" && Number.isSafeInteger(total) && total > 0
+    && (printedTotal === null || (typeof printedTotal === "number" && Number.isSafeInteger(printedTotal) && printedTotal > 0 && printedTotal <= total))
+    && (language === "Japanese" ? japanese(candidate) : english(candidate))
+    && identity(candidateName(candidate, "pokemon", language)) === identity(product.name)
+    && identity(language === "Japanese" ? translatedName(expansion) : expansion.name) === identity(product.setName)
+    && coherentCatalogNumber(candidate, expansion)
+    && (text(product.cardNumber) || scrydexCatalogProofHasAbsentNumber(product, catalogProof))
+    && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
+}
+
 const POKEMON_SERIES_PREFIXES: Record<string, string> = {
   sv: "scarlet & violet", swsh: "sword & shield", sm: "sun & moon",
   xy: "xy", bw: "black & white", me: "mega evolution",
@@ -523,22 +557,24 @@ function safeImage(images: unknown): string | undefined {
 
 /**
  * Pure, conservative matching against the documented snake-case Scrydex objects.
- * Marketplace IDs only disambiguate a printing; set, number, finish and condition remain mandatory.
+ * Marketplace IDs only disambiguate a printing; set, finish and condition remain mandatory.
+ * An absent source number needs independent catalog proof and coherent provider numbering.
  * Contracts: https://scrydex.com/docs/getting-started/prices and /docs/{game}/cards.
  * Sealed contracts: /docs/pokemon/sealed, /docs/onepiece/sealed, /docs/riftbound/sealed.
  */
-export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[]): ScrydexPrice {
-  const spec = productSpec(product);
+export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[], options: { catalogProof?: VerifiedScrydexCatalogProof } = {}): ScrydexPrice {
+  const spec = productSpec(product, options.catalogProof);
   const matches = candidates.map(object).filter((candidate) => {
     const expansion = object(candidate.expansion);
     const unnumbered = verifiedUnnumberedPokemonPrinting(product, candidate);
     const catalogNumberException = verifiedJapaneseCatalogNumberException(product, candidate);
+    const catalogMatch = verifiedCatalogCandidate(product, candidate, options.catalogProof);
     return text(candidate.id) && (spec.language === "Japanese" ? japanese(candidate) : english(candidate))
       && candidate.is_online_only !== true && expansion.is_online_only !== true
       && expansion.is_foreign_only !== true
       && verifiedName(product, candidate, spec.game, spec.language)
-      && (verifiedSetName(product, candidate, spec.game, spec.language) || unnumbered || catalogNumberException)
-      && (spec.sealed || matchesNumber(product.cardNumber, candidate) || unnumbered || catalogNumberException);
+      && (verifiedSetName(product, candidate, spec.game, spec.language) || unnumbered || catalogNumberException || catalogMatch)
+      && (spec.sealed || (text(product.cardNumber) && matchesNumber(product.cardNumber, candidate)) || unnumbered || catalogNumberException || catalogMatch && !text(product.cardNumber));
   });
   if (!matches.length) throw new ScrydexError("not_found", `No exact ${spec.language} Scrydex match for this name, set, and collector number.`);
   if (matches.length !== 1) throw new ScrydexError("ambiguous", "Multiple Scrydex products match; confirm the exact printing before pricing.");
@@ -577,7 +613,9 @@ export function selectScrydexPrice(product: ScrydexProduct, candidates: unknown[
       return ["normal", "foil"].includes(spec.finish) && finishKey(variant.name) === spec.finish;
     }
     if (finishKey(variant.name) !== spec.finish) return false;
-    if (pokemonRarity || teamPlasma || unnumberedPokemonPrinting(product) || spec.language === "Japanese" || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
+    if (pokemonRarity || teamPlasma || unnumberedPokemonPrinting(product) || spec.language === "Japanese"
+      || scrydexCatalogProofHasAbsentNumber(product, options.catalogProof)
+      || identity(candidateName(candidate, spec.game, spec.language)) !== identity(productNameWithoutGame(product)) || !exactSetName(product, candidate)) {
       return Boolean(product.tcgplayerId && marketplaceId(variant, product.tcgplayerId));
     }
     const marketplaces = array(variant.marketplaces).map(object).filter((marketplace) => identity(marketplace.name) === "tcgplayer");
@@ -611,8 +649,8 @@ function queryLiteral(value: string) {
 }
 
 /** One request at most, no retries/fallback provider, a ten-second timeout, and no redirects. Fresh lookups bypass the default 24-hour cache. */
-export async function resolveScrydexPrice(product: ScrydexProduct, options: { fetch?: typeof fetch; fresh?: boolean } = {}): Promise<ScrydexPrice> {
-  const spec = productSpec(product);
+export async function resolveScrydexPrice(product: ScrydexProduct, options: { fetch?: typeof fetch; fresh?: boolean; catalogProof?: VerifiedScrydexCatalogProof } = {}): Promise<ScrydexPrice> {
+  const spec = productSpec(product, options.catalogProof);
   const { apiKey, teamId } = getScrydexConfig();
   const names = [...new Set([product.name.trim(), productNameWithoutGame(product)])];
   if (spec.game === "lorcana" && names[0].includes(" - ")) names.push(names[0].split(" - ")[0]);
@@ -635,7 +673,13 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   // collector number; marketplace ID, set, language and finish are still verified.
   const englishPokemon = spec.game === "pokemon" && spec.resource === "cards" && spec.language === "English" && hasMarketplaceId;
   const japaneseNumberException = japaneseCatalogNumberException(product);
-  const clauses = spec.language === "Japanese"
+  const verifiedCatalog = scrydexCatalogProofMatches(product, options.catalogProof);
+  const clauses = verifiedCatalog && !text(product.cardNumber)
+    // Translated-name indexes can be incomplete. The complete set retrieval is
+    // bounded to one page; the selector verifies the full source identity and
+    // chosen variant's marketplace ID even when retrieval returns siblings.
+    ? [`((expansion.translation.en.name:${queryLiteral(product.setName)} OR expansion.name:${queryLiteral(product.setName)}) AND language_code:${spec.language === "Japanese" ? "JA" : "EN"})`]
+    : spec.language === "Japanese"
     ? japaneseNumberException
       ? [`(!name:${queryLiteral(japaneseNumberException.nativeName)} AND number:${queryLiteral(japaneseNumberException.number)} AND expansion.id:${queryLiteral(japaneseNumberException.expansion.id)} AND language_code:JA)`]
       : [`((${numbers.map(number => `number:${queryLiteral(number)}`).join(" OR ")}) AND language_code:JA)`]
@@ -692,5 +736,5 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
   if (total > payload.data.length) {
     throw new ScrydexError("ambiguous", "Scrydex search exceeds one complete page; refine the product name before pricing.");
   }
-  return selectScrydexPrice(product, payload.data);
+  return selectScrydexPrice(product, payload.data, { catalogProof: options.catalogProof });
 }

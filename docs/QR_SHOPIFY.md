@@ -22,8 +22,46 @@ described below; the source changes and Git deployment alone do not activate it.
    many stickers print; they never determine inventory quantity.
 3. Save the card. Defy keeps its QR immediately and starts Shopify linking in the
    background. Keep the saved card if Shopify is temporarily unavailable.
-4. Wait for **Shopify POS ready**, then sync or reopen POS before scanning. A
-   pending or blocked card keeps its original QR and offers a retry action.
+4. Wait for **Shopify POS ready**, then sync or reopen POS before scanning.
+   Recoverable cards retry automatically; the manual retry action remains available.
+
+## Automatic recovery
+
+Opening or returning to SKU labels resumes recoverable saved cards, including
+cards saved on another device or in a previous session. Work runs in small,
+serialized batches with three delayed attempts per card while the page is open.
+Cards waiting behind other cards retain their full retry window. A completed
+card does not prevent the remaining cards in its batch from being recovered.
+Hidden pages pause new work. Explicit retries can start another attempt window.
+
+The library first reads inexpensive saved journals. **Shopify link saved** means
+the mapping was confirmed previously; select the label for live verification of
+its barcode, price, stock, and sales channels. A failed or rate-limited status
+read does not enqueue a new registration or claim current POS readiness. GET
+status requests remain read-only; automatic linking uses the authenticated,
+same-origin POST and the existing per-card locks and original stock receipt.
+
+The daily repair job continues recovery when the page is closed, using the
+existing durable cursor and lease. It reads twelve journals at a time, skips
+completed links and review-only blockers, and attempts up to twelve recoverable
+cards within its work budget. Cursor checkpoints preserve progress across
+interruptions and give later cards their turn. Closed-page recovery follows the
+existing Vercel Hobby daily schedule; it is not an immediate background worker.
+
+For supported Pokémon catalog gaps, automatic recovery refreshes the exact
+TCGplayer product ID and verifies the unchanged saved card, full set, language,
+collector number, and source-listed finish. If TCGplayer explicitly omits the
+number, that absence can be verified without a per-card code exception. Scrydex
+must still supply the matching full translated identity, coherent printing
+metadata, exact selected-finish marketplace ID, condition, and positive raw USD
+quote. Search is bounded to one complete page. The saved identity is retained.
+Known special-printing rules remain stricter and cannot be bypassed by this path.
+
+Temporary failures, available catalog corrections, and confirmed sales-channel
+repairs can finish automatically. Missing trustworthy prices, ambiguous matches,
+conflicting identities or barcodes, missing permissions, and unfinished reviewed
+catalog corrections remain visible for staff review. Recovery never invents a
+price, accepts another printing, or receives the original stock twice.
 
 Pasting the same TCGplayer product link again loads the original saved QR/SKU.
 Once the card loads, its selected condition and finish automatically control the

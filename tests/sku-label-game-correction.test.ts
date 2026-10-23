@@ -46,6 +46,23 @@ test("canonical games and manual cards do not make correction lookups or writes"
   }
 });
 
+test("legacy Japanese cards can retain an explicitly verified blank catalog number", async () => {
+  const blank = { ...product, name: "Feraligatr", setName: "Neo Premium File 1", cardNumber: "", tcgplayerId: 607838 };
+  const source: TcgplayerCardLookup = { ...catalog, productId: 607838, name: blank.name, setName: blank.setName,
+    cardNumber: "", catalogNumberAbsent: true };
+  let writes = 0;
+  const persist = async (saved: ShopifyLinkableSkuProduct) => { writes++; return { ...saved, game: "Pokémon (Japanese)" }; };
+  const corrected = await verifySavedSkuLabelGame(blank, {
+    lookup: async (url, options) => { assert.equal(url, "https://www.tcgplayer.com/product/607838"); assert.equal(options?.fresh, true); return source; }, persist,
+  });
+  assert.deepEqual(corrected, { ...blank, game: "Pokémon (Japanese)" });
+  assert.equal(writes, 1);
+  for (const patch of [{ catalogNumberAbsent: undefined }, { cardNumber: "160" }, { name: "Typhlosion" }]) {
+    await assert.rejects(verifySavedSkuLabelGame(blank, { lookup: async () => ({ ...source, ...patch }), persist }), SkuLabelInventoryError);
+  }
+  assert.equal(writes, 1);
+});
+
 test("catalog failures and changed-row guards never fall through into unverified Shopify linking", async () => {
   await assert.rejects(verifySavedSkuLabelGame(product, {
     lookup: async () => { throw new Error("Catalog unavailable"); },

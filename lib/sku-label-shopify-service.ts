@@ -20,9 +20,9 @@ export function pendingSkuLink(sku: string): SkuLabelShopifyStatus {
 }
 
 /** Load authoritative identities and original receipts; clients never select Shopify IDs or stock deltas. */
-export async function readSavedSkuLinks(skus: readonly string[]): Promise<SkuLabelShopifyStatus[]> {
+export async function readSavedSkuLinks(skus: readonly string[], options: { verifyLive?: boolean } = {}): Promise<SkuLabelShopifyStatus[]> {
   const products = await loadSkuLabelProducts({ skus });
-  const statuses = await getSkuLabelShopifyStatuses(products);
+  const statuses = await getSkuLabelShopifyStatuses(products, undefined, options);
   return skus.map(sku => statuses.find(status => status.sku === sku) ?? {
     sku, status: "blocked", message: "Save this QR card in Defy before linking it to Shopify POS.",
   });
@@ -43,13 +43,15 @@ export async function linkSavedSkuLabels(skus: readonly string[], budgetMs = 240
   const products = await loadSkuLabelProducts({ skus });
   const deadline = Date.now() + budgetMs;
   const statuses = new Map<string, SkuLabelShopifyStatus>();
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(2, products.length) }, async () => {
-    while (next < products.length && Date.now() < deadline) {
-      const product = products[next++];
-      statuses.set(product.sku, await linkSavedSkuProduct(product));
+  // Share one rate-limit budget and serialize writes instead of competing clients.
+  if (products.length) {
+    const { createShopifyGraphQL } = await import("./singles/shopify.ts");
+    const client = await createShopifyGraphQL({ apiVersion: "2026-10" });
+    for (const product of products) {
+      if (Date.now() >= deadline) break;
+      statuses.set(product.sku, await linkSavedSkuProduct(product, client));
     }
-  }));
+  }
   const known = new Set(products.map(product => product.sku));
   return skus.map(sku => statuses.get(sku) ?? (known.has(sku) ? pendingSkuLink(sku) : {
     sku, status: "blocked", message: "Save this QR card in Defy before linking it to Shopify POS.",

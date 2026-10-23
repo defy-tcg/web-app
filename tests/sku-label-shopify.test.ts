@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { linkSkuLabelToShopify, getSkuLabelShopifyStatuses, readSkuLabelStockTarget, setSkuLabelManualPrice, type SkuLabelShopifyProduct, type SkuLabelShopifyDependencies } from "../lib/sku-label-shopify.ts";
 import { ScrydexError, selectScrydexPrice, type ScrydexErrorCode } from "../lib/scrydex.ts";
+import { verifyScrydexCatalog } from "../lib/scrydex-catalog-proof.ts";
 import { digest } from "../lib/singles/intake.ts";
 import { SkuLabelInventoryError } from "../lib/sku-label-inventory.ts";
 
@@ -619,19 +620,59 @@ test("reviewed Japanese Typhlosion retains its blank catalog identity and origin
   assert.equal(after.initialQuantity, before.initialQuantity);
   assert.deepEqual(input, original);
 });
-test("Typhlosion's reviewed catalog omission never permits generic blank-number Shopify cards", async () => {
+test("automatic source verification links an unnumbered sibling without a per-card exception or another stock receipt", async () => {
+  const input: SkuLabelShopifyProduct = { ...card, id: 339, sku: "DEFY-1388512356", name: "Feraligatr",
+    game: "Pokémon (Japanese)", setName: "Neo Premium File 1", cardNumber: "", tcgplayerId: 607838,
+    tcgplayerUrl: "https://www.tcgplayer.com/product/607838", quantity: 1, initialQuantity: 1 };
+  const before = structuredClone(input);
+  const proof = await verifyScrydexCatalog({ ...input, productType: "Single" }, { lookup: async () => ({
+    productId: 607838, categoryId: 85, name: input.name, game: "Pokémon (Japanese)", setName: input.setName,
+    cardNumber: "", catalogNumberAbsent: true, imageUrl: "", productUrl: input.tcgplayerUrl!, finishes: ["Foil"], warnings: [],
+  }) });
+  const f = fixture({ failAfterStock: true });
+  f.deps.resolvePrice = async product => selectScrydexPrice(product, [{
+    id: "neo1pf_ja-160", name: "オーダイル", number: "160", printed_number: "No.160",
+    language: "Japanese", language_code: "JA", translation: { en: { name: input.name } },
+    expansion: { id: "neo1pf_ja", name: "プレミアムファイル1", series: "Neo", code: null,
+      total: 9, printed_total: 9, language: "Japanese", language_code: "JA", translation: { en: { name: input.setName } } },
+    variants: [{ name: "holofoil", marketplaces: [{ name: "tcgplayer", product_id: "607838" }],
+      prices: [{ type: "raw", condition: "NM", currency: "USD", source_currency: "USD", market: 20 }] }],
+  }], { catalogProof: proof });
+  assert.equal((await linkSkuLabelToShopify(input, f.deps)).status, "pending");
+  const result = await linkSkuLabelToShopify(input, f.deps);
+  assert.equal(result.status, "ready");
+  assert.equal(result.priceCents, 2060);
+  assert.equal(result.availableQuantity, 1);
+  assert.equal(result.transferredQuantity, 1);
+  assert.equal(f.quantityAdded(), 1);
+  assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
+  const receipts = f.calls.filter(call => call.name === "QrLinkInitialStock");
+  assert.equal(receipts.length, 2);
+  assert.deepEqual(receipts[0].variables, receipts[1].variables);
+  assert.equal(f.product().variants.nodes[0].barcode, input.sku);
+  assert.equal(f.product().variants.nodes[0].selectedOptions.find(option => option.name === "Language")?.value, "Japanese");
+  assert.equal(f.channels.size, 0);
+  assert.deepEqual(input, before);
+});
+test("blank manual cards require a number and blank catalog cards require a verified quote before creation", async () => {
   const input: SkuLabelShopifyProduct = { ...card, name: "Typhlosion", game: "Pokémon (Japanese)",
     setName: "Neo Premium File 1", cardNumber: "", tcgplayerId: 607835, quantity: 1, initialQuantity: 1 };
+  const manual = fixture();
+  let manualPrices = 0;
+  manual.deps.resolvePrice = async () => { manualPrices++; throw new Error("No manual source quote."); };
+  assert.equal((await linkSkuLabelToShopify({ ...input, tcgplayerId: null }, manual.deps)).status, "blocked");
+  assert.equal(manualPrices, 0);
+  assert.equal(manual.calls.length, 0);
   for (const patch of [
-    { tcgplayerId: null }, { tcgplayerId: 607836 }, { name: "Hisuian Typhlosion" },
+    { tcgplayerId: 607836 }, { name: "Hisuian Typhlosion" },
     { game: "Pokémon" }, { setName: "Neo Premium File 2" },
   ]) {
     const f = fixture();
     let prices = 0;
-    f.deps.resolvePrice = async () => { prices++; throw new Error("No quote should be requested for an incomplete identity."); };
+    f.deps.resolvePrice = async () => { prices++; throw new ScrydexError("incomplete_identity", "The catalog did not verify this identity."); };
     assert.equal((await linkSkuLabelToShopify({ ...input, ...patch }, f.deps)).status, "blocked");
-    assert.equal(prices, 0);
-    assert.equal(f.calls.length, 0);
+    assert.equal(prices, 1);
+    assert.equal(f.calls.some(call => ["QrLinkCreate", "QrLinkBarcode", "QrLinkVariant", "QrLinkInitialStock", "QrLinkPublish"].includes(call.name)), false);
     assert.equal(f.product(), null);
     assert.equal(f.quantityAdded(), 0);
   }
@@ -806,12 +847,13 @@ test("a lost Pokémon unpublish response reconciles the same product before rece
   assert.equal(f.calls.filter(call => call.name === "QrLinkInStoreOnly").length, 1);
   assert.equal(f.calls.filter(call => call.name === "QrLinkCreate").length, 1);
 });
-test("read-only readiness detects Pokémon republished or scheduled outside POS and requires an explicit relink", async () => {
+test("read-only readiness queues automatic recovery for Pokémon republished or scheduled outside POS", async () => {
   const f = fixture(); assert.equal((await linkSkuLabelToShopify(japaneseCard, f.deps)).status, "ready");
   f.channels.set("gid://shopify/Publication/3", "market");
   const count = f.calls.length;
   const status = (await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0];
-  assert.equal(status.status, "blocked"); assert.match(status.message, /outside POS/); assert.equal(status.availableQuantity, undefined);
+  assert.equal(status.status, "pending"); assert.equal(status.automaticRetry, true); assert.equal(status.verificationPending, undefined);
+  assert.match(status.message, /in-store-only/); assert.equal(status.availableQuantity, undefined);
   await assert.rejects(readSkuLabelStockTarget(japaneseCard, f.deps), /outside POS/);
   assert.ok(f.channels.has("gid://shopify/Publication/3"));
   assert.ok(!f.calls.slice(count).some(call => ["QrLinkInStoreOnly", "QrLinkInitialStock", "QrLinkPublish"].includes(call.name)));
@@ -997,6 +1039,47 @@ test("library status reads current Shopify price and stock and detects a removed
   assert.equal(current.status, "ready"); assert.equal(current.availableQuantity, 1); assert.equal(current.priceCents, 6200); assert.equal(current.transferredQuantity, 3);
   f.product().variants.nodes[0].barcodes.nodes = [];
   const [changed] = await getSkuLabelShopifyStatuses([{ ...card, initialQuantity: 3 }], f.deps); assert.equal(changed.status, "blocked"); assert.equal(changed.availableQuantity, undefined);
+});
+test("library summaries discover recovery work without live-checking or relinking completed cards", async () => {
+  const f = fixture();
+  await linkSkuLabelToShopify(japaneseCard, f.deps);
+  const before = f.calls.length;
+  const status = (await getSkuLabelShopifyStatuses([japaneseCard], f.deps, { verifyLive: false }))[0];
+  assert.equal(status.status, "pending", "A journal alone cannot claim current POS readiness.");
+  assert.equal(status.verificationPending, true, "A completed mapping needs a read, not a new registration.");
+  for (const key of ["priceCents", "availableQuantity", "transferredQuantity", "checkedAt"] as const) assert.equal(status[key], undefined);
+  assert.deepEqual(f.calls.slice(before).map(call => call.name), ["QrLinkStatusConnection", "QrLinkStatuses"]);
+  assert.equal((await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0].status, "ready");
+  assert.equal(f.quantityAdded(), 1);
+
+  const missing = fixture();
+  const unlinked = (await getSkuLabelShopifyStatuses([card], missing.deps, { verifyLive: false }))[0];
+  assert.equal(unlinked.status, "pending");
+  assert.equal(unlinked.verificationPending, undefined);
+  const blocked = fixture({ priceError: true });
+  await linkSkuLabelToShopify(card, blocked.deps);
+  const retry = (await getSkuLabelShopifyStatuses([card], blocked.deps, { verifyLive: false }))[0];
+  assert.equal(retry.status, "blocked");
+  assert.equal(retry.automaticRetry, true);
+});
+test("failed journal and live reads never enqueue a previously linked QR as new registration work", async () => {
+  for (const operation of ["QrLinkStatusConnection", "QrLinkStatuses", "QrLinkLiveStatuses", "QrLinkChannelPolicy"]) {
+    const f = fixture();
+    await linkSkuLabelToShopify(japaneseCard, f.deps);
+    const original = f.deps.graphql;
+    f.deps.graphql = async (query, variables) => {
+      if (query.includes(`query ${operation}`)) throw new Error("Temporary read failure");
+      return original(query, variables);
+    };
+    const before = f.calls.length;
+    const status = (await getSkuLabelShopifyStatuses([japaneseCard], f.deps))[0];
+    assert.equal(status.status, "pending", operation);
+    assert.equal(status.verificationPending, true, operation);
+    assert.equal(status.priceCents, undefined);
+    assert.equal(status.availableQuantity, undefined);
+    assert.equal(f.calls.slice(before).some(call => /Create|InitialStock|Publish|Barcode/.test(call.name)), false);
+    assert.equal(f.quantityAdded(), 1);
+  }
 });
 test("library rejects a stale completed stock receipt if the immutable initial quantity differs", async () => {
   const f = fixture(); await linkSkuLabelToShopify({ ...card, initialQuantity: 3 }, f.deps);

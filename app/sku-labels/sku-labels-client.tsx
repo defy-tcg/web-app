@@ -8,7 +8,7 @@ import { generateSkuBatch, isGeneratedSku, normalizeSkuPrefix, skuLabelCondition
 import { compareSavedSkuLabels, sameSkuLabelVariant } from "@/lib/sku-label-matching";
 import { EMPTY_SKU_INVENTORY_DRAFT, skuLabelPrintDetails, type SkuDraftLabel } from "@/lib/sku-label-draft";
 import { skuLabelFeedbackText, type SkuLabelFeedback } from "@/lib/sku-label-feedback";
-import { canAutomaticallyRecoverSkuLink, SkuLinkRecoveryQueue } from "@/lib/sku-label-link-recovery";
+import { canAutomaticallyRecoverSkuLink, SkuLinkRecoveryQueue, SkuLinkVerificationQueue } from "@/lib/sku-label-link-recovery";
 import type { TcgplayerCardLookup } from "@/lib/tcgplayer-card";
 import ThemeToggle from "../theme-toggle";
 import SkuInventoryPanel, { type SavedSkuProduct } from "./sku-inventory-panel";
@@ -70,31 +70,23 @@ function isSavedProduct(value: unknown): value is SavedSkuProduct {
     Number(product.id) > 0 && (product.tcgplayerId === null || (typeof product.tcgplayerId === "number" && Number.isSafeInteger(product.tcgplayerId) && product.tcgplayerId > 0));
 }
 
-async function readShopifyLinks(skus: string[], signal?: AbortSignal): Promise<ShopifyLabelLink[]> {
+async function readShopifyLinks(skus: string[], signal?: AbortSignal, verification: "summary" | "live" = "live"): Promise<ShopifyLabelLink[]> {
   const unique = [...new Set(skus)];
-  const batches = Array.from({ length: Math.ceil(unique.length / 100) }, (_, index) => unique.slice(index * 100, (index + 1) * 100));
-  const results: ShopifyLabelLink[][] = new Array(batches.length);
-  let next = 0;
-  let failed = false;
-  let failure: unknown;
-  await Promise.all(Array.from({ length: Math.min(2, batches.length) }, async () => {
-    while (!failed && next < batches.length) {
-      const index = next++;
-      const batch = batches[index];
-      try {
-        const response = await fetch(`/api/sku-labels/shopify?${new URLSearchParams({ skus: batch.join(",") })}`, { cache: "no-store", signal });
-        if (response.redirected || !response.ok) throw new Error("Shopify link status could not be checked. Retry the link before scanning in POS.");
-        const result = await response.json() as { links?: unknown[] };
-        if (!Array.isArray(result.links) || !result.links.every(isShopifyLabelLink)) throw new Error("Shopify link status could not be confirmed. Retry the link before scanning in POS.");
-        results[index] = result.links.filter((link) => batch.includes(link.sku));
-      } catch (error) {
-        if (!failed) failure = error;
-        failed = true;
-      }
-    }
-  }));
-  if (failed) throw failure;
-  return results.flat();
+  const size = verification === "summary" ? 100 : 3;
+  const links: ShopifyLabelLink[] = [];
+  // Serialize batches: live checks are intentionally limited to a few Shopify products.
+  for (let index = 0; index < unique.length; index += size) {
+    if (signal?.aborted || document.visibilityState === "hidden") throw new DOMException("The request was aborted.", "AbortError");
+    const batch = unique.slice(index, index + size);
+    const response = await fetch(`/api/sku-labels/shopify?${new URLSearchParams({ skus: batch.join(","), verification })}`, { cache: "no-store", signal });
+    if (response.redirected || !response.ok) throw new Error("Shopify link status could not be checked. Retry the link before scanning in POS.");
+    const result = await response.json() as { links?: unknown[] };
+    if (!Array.isArray(result.links) || !result.links.every(isShopifyLabelLink)) throw new Error("Shopify link status could not be confirmed. Retry the link before scanning in POS.");
+    const confirmed = result.links.filter((link) => batch.includes(link.sku));
+    if (batch.some(sku => !confirmed.some(link => link.sku === sku))) throw new Error("Shopify did not return a status for every selected QR. POS readiness will be checked again automatically.");
+    links.push(...confirmed);
+  }
+  return links;
 }
 
 async function linkSavedSkus(skus: string[], signal?: AbortSignal): Promise<ShopifyLabelLink[]> {
@@ -158,9 +150,11 @@ export default function SkuLabelsClient() {
   const generating = useRef(false);
   const downloadingPdf = useRef(false);
   const printDialog = useRef<HTMLDialogElement>(null);
-  const shopifySequence = useRef(0);
+  const shopifyLinkVersions = useRef(new Map<string, number>());
+  const shopifyReadRequest = useRef(false);
   const retryingShopify = useRef(false);
   const automaticShopifyQueue = useRef(new SkuLinkRecoveryQueue());
+  const shopifyVerificationQueue = useRef(new SkuLinkVerificationQueue());
   const automaticShopifyRequest = useRef(false);
   const busy = generatingBusy || lookupBusy || stockBusy;
   // Looking up a link temporarily selects one saved QR without replacing manual drafts.
@@ -180,41 +174,59 @@ export default function SkuLabelsClient() {
   const manualShopifyBusy = linkingSkus.length > 0;
   const shopifyBusy = manualShopifyBusy || automaticLinkingSkus.length > 0;
   const allLinkingSkus = [...linkingSkus, ...automaticLinkingSkus];
-  const unreadyForPos = labels.filter((label) => !savedSkus.has(label.sku) || shopifyLinks[label.sku]?.status !== "ready").length;
-  const pendingShopifySkus = savedProducts.filter((product) => !shopifyLinks[product.sku] || shopifyLinks[product.sku].status === "pending"
-    || (shopifyLinks[product.sku].automaticRetry === true && automaticRecoverySkus.includes(product.sku)))
-    .map((product) => product.sku).sort().join(",");
+  const unreadyForPos = labels.filter((label) => !savedSkus.has(label.sku) || shopifyLinks[label.sku]?.status !== "ready" || shopifyLinks[label.sku]?.verificationPending).length;
+  const libraryShopifySkus = savedProducts.map((product) => product.sku).sort().join(",");
+  const selectedShopifySkus = labels.filter((label) => savedSkus.has(label.sku)).map((label) => label.sku).sort().join(",");
+  const displayShopifyLinks = useMemo(() => {
+    const selected = new Set(selectedShopifySkus.split(","));
+    return Object.fromEntries(Object.entries(shopifyLinks).map(([sku, link]) => [sku, { ...link, verificationSelected: selected.has(sku) }]));
+  }, [shopifyLinks, selectedShopifySkus]);
   const printLabels = useMemo(() => labels.map((label) => ({ ...label, setName: skuLabelSetName(label.setName), condition: skuLabelCondition(label.condition), name: Array.from(label.name.trim().replace(/\s+/g, " ")).slice(0, 48).join(""), svg: skuQrSvg(label.sku) })), [labels]);
 
-  const updateShopifyLinks = useCallback((links: ShopifyLabelLink[]) => {
-    shopifySequence.current += 1;
-    automaticShopifyQueue.current.observe(links);
-    setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-    setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(links.map((link) => [link.sku, link])) }));
+  const updateAutomaticRecoverySkus = useCallback(() => {
+    const next = automaticShopifyQueue.current.skus();
+    setAutomaticRecoverySkus((current) => current.length === next.length && current.every((sku, index) => sku === next[index]) ? current : next);
   }, []);
+
+  const updateShopifyLinks = useCallback((links: ShopifyLabelLink[], summary = false) => {
+    if (!links.length) return;
+    if (!summary) {
+      for (const link of links) shopifyLinkVersions.current.set(link.sku, (shopifyLinkVersions.current.get(link.sku) ?? 0) + 1);
+    }
+    automaticShopifyQueue.current.observe(links);
+    updateAutomaticRecoverySkus();
+    setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(links.map((link) => [link.sku, link])) }));
+  }, [updateAutomaticRecoverySkus]);
+
+  const readCurrentShopifyLinks = useCallback(async (skus: string[], signal?: AbortSignal, verification: "summary" | "live" = "live") => {
+    const versions = new Map(skus.map((sku) => [sku, shopifyLinkVersions.current.get(sku) ?? 0]));
+    const links = await readShopifyLinks(skus, signal, verification);
+    if (signal?.aborted) return [];
+    // A summary must not overwrite a newer save, receipt, recovery, or live check.
+    // Summary reads do not invalidate a live check already in flight.
+    const current = links.filter((link) => versions.get(link.sku) === (shopifyLinkVersions.current.get(link.sku) ?? 0));
+    updateShopifyLinks(current, verification === "summary");
+    return current;
+  }, [updateShopifyLinks]);
 
   const stockReceived = useCallback((sku: string, availableQuantity?: number) => {
-    shopifySequence.current += 1;
+    shopifyLinkVersions.current.set(sku, (shopifyLinkVersions.current.get(sku) ?? 0) + 1);
     setShopifyLinks((current) => current[sku] ? { ...current, [sku]: { ...current[sku], availableQuantity } } : current);
     if (availableQuantity === undefined) {
-      const sequence = shopifySequence.current;
-      void readShopifyLinks([sku]).then((links) => {
-        if (sequence === shopifySequence.current) updateShopifyLinks(links);
-      }).catch(() => { /* A confirmed receipt remains complete even if the live count is unavailable. */ });
+      void readCurrentShopifyLinks([sku]).catch(() => { /* A confirmed receipt remains complete even if the live count is unavailable. */ });
     }
-  }, [updateShopifyLinks]);
+  }, [readCurrentShopifyLinks]);
 
   const refreshStock = useCallback(async (sku: string) => {
-    const sequence = ++shopifySequence.current;
+    shopifyLinkVersions.current.set(sku, (shopifyLinkVersions.current.get(sku) ?? 0) + 1);
     setShopifyLinks((current) => current[sku] ? { ...current, [sku]: { ...current[sku], availableQuantity: undefined } } : current);
-    const links = await readShopifyLinks([sku]);
-    if (sequence === shopifySequence.current) updateShopifyLinks(links);
-  }, [updateShopifyLinks]);
+    await readCurrentShopifyLinks([sku]);
+  }, [readCurrentShopifyLinks]);
 
   const queueAutomaticLinks = useCallback((links: ShopifyLabelLink[]) => {
-    automaticShopifyQueue.current.grant(links, Date.now());
-    setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-  }, []);
+    automaticShopifyQueue.current.grant(links, Date.now(), { reset: true });
+    updateAutomaticRecoverySkus();
+  }, [updateAutomaticRecoverySkus]);
 
   const inventoryLoaded = useCallback((products: SavedSkuProduct[]) => {
     setInventoryHydrated(true);
@@ -228,89 +240,166 @@ export default function SkuLabelsClient() {
       const saved = products.find((product) => product.sku === label.sku);
       return saved ? { sku: saved.sku, name: saved.name, condition: saved.condition, setName: saved.setName } : label;
     }));
-    const sequence = ++shopifySequence.current;
-    // Loading the library only reads stored link status. It never creates Shopify products.
-    void (async () => {
-      try {
-        const links = await readShopifyLinks(products.map((product) => product.sku));
-        if (sequence === shopifySequence.current) {
-          automaticShopifyQueue.current.observe(links);
-          setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-          setShopifyLinks(Object.fromEntries(links.map((link) => [link.sku, link])));
-        }
-      } catch (caught) {
-        if (sequence === shopifySequence.current) setShopifyLinks(Object.fromEntries(products.map((product) => [product.sku,
-          pendingShopifyLink(product.sku, caught instanceof Error ? caught.message : undefined)])));
-      }
-    })();
   }, []);
 
   useEffect(() => {
-    if (!pendingShopifySkus || manualShopifyBusy || inventoryBusy) return;
-    const skus = pendingShopifySkus.split(",");
+    if (!inventoryHydrated || !libraryShopifySkus) return;
     const controller = new AbortController();
-    const started = Date.now();
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      if (controller.signal.aborted) return;
-      if (Date.now() - started >= 300_000) {
-        automaticShopifyQueue.current.expire(Date.now());
-        setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-        setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(skus.filter((sku) => current[sku]?.status !== "ready" && current[sku]?.status !== "blocked")
-          .map((sku) => [sku, pendingShopifyLink(sku, "Automatic linking is still pending. Your QR is saved; retry the Shopify link before scanning in POS.")])) }));
+    let reading = false;
+    async function refreshLibraryLinks() {
+      if (controller.signal.aborted || document.visibilityState === "hidden" || reading) return;
+      reading = true;
+      try {
+        const links = await readCurrentShopifyLinks(libraryShopifySkus.split(","), controller.signal, "summary");
+        if (!controller.signal.aborted) {
+          automaticShopifyQueue.current.grant(links, Date.now());
+          updateAutomaticRecoverySkus();
+        }
+      } catch { /* A failed summary cannot authorize a link or replace a live confirmation. */ }
+      finally { reading = false; }
+    }
+    void refreshLibraryLinks();
+    const refresh = () => void refreshLibraryLinks();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [inventoryHydrated, libraryShopifySkus, readCurrentShopifyLinks, updateAutomaticRecoverySkus]);
+
+  useEffect(() => {
+    if (!selectedShopifySkus || manualShopifyBusy || inventoryBusy || busy) return;
+    const selected = selectedShopifySkus.split(",");
+    const controller = new AbortController();
+    let reading = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function verifySelectedLinks(force = false) {
+      if (controller.signal.aborted || document.visibilityState === "hidden" || reading) return;
+      if (automaticShopifyRequest.current || shopifyReadRequest.current) {
+        clearTimeout(timer);
+        timer = setTimeout(() => void verifySelectedLinks(force), 5_000);
         return;
       }
-      const sequence = ++shopifySequence.current;
-      try {
-        const links = await readShopifyLinks(skus, controller.signal);
-        if (!controller.signal.aborted && sequence === shopifySequence.current) {
-          setShopifyLinks((current) => ({ ...current, ...Object.fromEntries(links.map((link) => [link.sku, link])) }));
-          automaticShopifyQueue.current.observe(links);
-          setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-          const stillPending = skus.filter((sku) => !links.some((link) => link.sku === sku && !canAutomaticallyRecoverSkuLink(link)));
-          // Only a save or retry in this session grants permission to continue its pending work.
-          // Fresh library loads remain read-only, including their status polling.
-          if (stillPending.length === skus.length && !automaticShopifyRequest.current && !retryingShopify.current && !generating.current) {
-            const automatic = automaticShopifyQueue.current.take(stillPending, Date.now());
-            if (automatic.length) {
-              automaticShopifyRequest.current = true;
-              setAutomaticLinkingSkus(automatic);
-              try {
-                const completed = await linkSavedSkus(automatic, controller.signal);
-                if (!controller.signal.aborted && sequence === shopifySequence.current) {
-                  automaticShopifyQueue.current.observe(completed);
-                  updateShopifyLinks(completed);
-                }
-              } finally {
-                automaticShopifyRequest.current = false;
-                setAutomaticLinkingSkus([]);
-                setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-              }
-            } else setAutomaticRecoverySkus(automaticShopifyQueue.current.skus());
-          }
+      const skus = force ? selected : shopifyVerificationQueue.current.take(selected, Date.now());
+      if (!skus.length) {
+        // Keep the timer alive while a delayed verification is not due yet.
+        if (selected.some(sku => shopifyVerificationQueue.current.has(sku, Date.now()))) {
+          clearTimeout(timer);
+          timer = setTimeout(() => void verifySelectedLinks(), 5_000);
         }
-      } catch { /* A temporary read failure does not discard the saved QR or mark it ready. */ }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), Date.now() - started < 60_000 ? 5_000 : 15_000);
+        return;
+      }
+      reading = true;
+      shopifyReadRequest.current = true;
+      try {
+        // Stored links are deliberately not POS-ready until the selected labels pass this live check.
+        const links = await readCurrentShopifyLinks(skus, controller.signal);
+        if (!controller.signal.aborted) {
+          shopifyVerificationQueue.current.observe(links, Date.now());
+          automaticShopifyQueue.current.grant(links, Date.now());
+          updateAutomaticRecoverySkus();
+        }
+      } catch (caught) {
+        if (!controller.signal.aborted) {
+          const unavailable = skus.map(sku => ({ sku, status: "pending" as const, verificationPending: true,
+            message: caught instanceof Error ? caught.message : "Shopify POS status could not be verified. It will be checked again automatically." }));
+          shopifyVerificationQueue.current.observe(unavailable, Date.now());
+          // Keep any known Shopify mapping, but failed verification must not claim POS readiness.
+          setShopifyLinks(current => ({ ...current, ...Object.fromEntries(unavailable.map(link => [link.sku, {
+            ...current[link.sku], ...link, priceCents: undefined, availableQuantity: undefined,
+          }])) }));
+        }
+      } finally {
+        reading = false;
+        shopifyReadRequest.current = false;
+        clearTimeout(timer);
+        if (!controller.signal.aborted && selected.some(sku => shopifyVerificationQueue.current.has(sku, Date.now()))) {
+          timer = setTimeout(() => void verifySelectedLinks(), 5_000);
+        }
+      }
     }
-    timer = setTimeout(() => void poll(), 5_000);
+    void verifySelectedLinks(true);
+    const refresh = () => void verifySelectedLinks(true);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [selectedShopifySkus, manualShopifyBusy, inventoryBusy, busy, readCurrentShopifyLinks, updateAutomaticRecoverySkus]);
+
+  useEffect(() => {
+    if (manualShopifyBusy || inventoryBusy || busy) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let working = false;
+    async function recoverLinks() {
+      if (controller.signal.aborted || working) return;
+      working = true;
+      try {
+        automaticShopifyQueue.current.expire(Date.now());
+        updateAutomaticRecoverySkus();
+        if (document.visibilityState === "hidden" || automaticShopifyRequest.current || shopifyReadRequest.current
+          || retryingShopify.current || generating.current) return;
+        const automatic = automaticShopifyQueue.current.take(automaticShopifyQueue.current.skus(), Date.now());
+        if (!automatic.length) return;
+        automaticShopifyRequest.current = true;
+        try {
+          const links = await readCurrentShopifyLinks(automatic, controller.signal);
+          automaticShopifyQueue.current.grant(links, Date.now());
+          const recoverable = links.filter(canAutomaticallyRecoverSkuLink).map((link) => link.sku);
+          // A completed card must not hold up the pending cards beside it.
+          if (!controller.signal.aborted && !document.hidden && recoverable.length) {
+            setAutomaticLinkingSkus(recoverable);
+            const completed = await linkSavedSkus(recoverable, controller.signal);
+            if (!controller.signal.aborted) updateShopifyLinks(completed);
+          }
+        } catch { /* The journal keeps this QR and its original receipt safe for the next bounded attempt. */ }
+        finally {
+          automaticShopifyRequest.current = false;
+          setAutomaticLinkingSkus([]);
+          if (!controller.signal.aborted) updateAutomaticRecoverySkus();
+        }
+      } finally {
+        working = false;
+        if (!controller.signal.aborted) timer = setTimeout(() => void recoverLinks(), 5_000);
+      }
+    }
+    timer = setTimeout(() => void recoverLinks(), 5_000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [pendingShopifySkus, manualShopifyBusy, inventoryBusy, updateShopifyLinks]);
+  }, [manualShopifyBusy, inventoryBusy, busy, readCurrentShopifyLinks, updateShopifyLinks, updateAutomaticRecoverySkus]);
 
   async function retryShopifyLink(sku: string) {
     if (retryingShopify.current || automaticShopifyRequest.current || busy || inventoryBusy) return;
+    const verificationOnly = shopifyLinks[sku]?.verificationPending === true;
     retryingShopify.current = true;
-    shopifySequence.current += 1;
+    shopifyLinkVersions.current.set(sku, (shopifyLinkVersions.current.get(sku) ?? 0) + 1);
     setLinkingSkus([sku]);
     setError("");
     try {
-      const [link] = await linkSavedSkus([sku]);
-      updateShopifyLinks([link]);
-      queueAutomaticLinks([link]);
+      if (verificationOnly) {
+        const links = await readCurrentShopifyLinks([sku]);
+        shopifyVerificationQueue.current.observe(links, Date.now());
+        automaticShopifyQueue.current.grant(links, Date.now());
+        updateAutomaticRecoverySkus();
+      } else {
+        const [link] = await linkSavedSkus([sku]);
+        updateShopifyLinks([link]);
+        queueAutomaticLinks([link]);
+      }
       setMessage({ text: `${sku} is saved in Defy.`, skus: [sku] });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Shopify could not be linked. Retry with this same SKU.";
-      updateShopifyLinks([pendingShopifyLink(sku, message)]);
-      queueAutomaticLinks([pendingShopifyLink(sku, message)]);
+      if (verificationOnly) {
+        setError(message);
+      } else {
+        updateShopifyLinks([pendingShopifyLink(sku, message)]);
+        queueAutomaticLinks([pendingShopifyLink(sku, message)]);
+      }
       setMessage({ text: `${sku} is saved in Defy.`, skus: [sku] });
     } finally {
       retryingShopify.current = false;
@@ -434,7 +523,6 @@ export default function SkuLabelsClient() {
       [...storedLabels, ...storedPending].forEach((label) => excluded.add(label.sku));
       const sku = existing?.sku ?? draft?.sku ?? generateSkuBatch(1, excluded, normalizeSkuPrefix(prefix))[0];
       generated.current.add(sku);
-      shopifySequence.current += 1;
       setLinkingSkus([sku]);
       const candidate: Label = { sku, name: card.name, inventory: {
         ...EMPTY_SKU_INVENTORY_DRAFT, game: card.game, setName: card.setName, cardNumber: card.cardNumber,
@@ -642,7 +730,7 @@ export default function SkuLabelsClient() {
             <label>Card name {index + 1}<input disabled={inventoryBusy || busy || pdfBusy || savedSkus.has(label.sku)} maxLength={240} value={label.name} placeholder="Add a card name" onChange={(event) => saveBatch(labels.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />{savedSkus.has(label.sku) && <small>Saved card · edit its name in Inventory.</small>}</label>
             <button className="secondary-button" onClick={() => void copySkus([label.sku])} aria-label={`Copy SKU ${label.sku}`}>Copy SKU</button>
             {!savedSkus.has(label.sku) && <button className="secondary-button sku-remove-draft" disabled={inventoryBusy || busy || pdfBusy || shopifyBusy} aria-label={`Remove draft ${label.sku}`} onClick={() => saveBatch(labels.filter((item) => item.sku !== label.sku))}>Remove draft</button>}
-            <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} saved={savedSkus.has(label.sku)} busy={allLinkingSkus.includes(label.sku) || inventoryBusy} disabled={busy || inventoryBusy || pdfBusy || shopifyBusy} onRetry={(sku) => void retryShopifyLink(sku)} />
+            <ShopifyLinkStatus sku={label.sku} link={shopifyLinks[label.sku]} selected saved={savedSkus.has(label.sku)} busy={allLinkingSkus.includes(label.sku) || inventoryBusy} disabled={busy || inventoryBusy || pdfBusy || shopifyBusy} onRetry={(sku) => void retryShopifyLink(sku)} />
             {shopifyLinks[label.sku]?.manualPriceAllowed && savedProducts.filter(product => product.sku === label.sku).map(product =>
               <SkuManualPrice key={JSON.stringify([product.sku, product.name, product.game, product.setName, product.cardNumber,
                 product.condition, product.finish, product.tcgplayerId])} product={product} disabled={busy || inventoryBusy || pdfBusy || shopifyBusy}
@@ -650,7 +738,7 @@ export default function SkuLabelsClient() {
           </article>)}</div>
         </section>}
         {automaticRecoverySkus.length > 0 && <p className="sku-print-help" role="status">Automatic recovery is checking {automaticRecoverySkus.length} saved card{automaticRecoverySkus.length === 1 ? "" : "s"}. A verified match and price will link to Shopify with the same QR. Cards that still need review will stay saved.</p>}
-        <SkuInventoryPanel labels={labels} products={savedProducts} disabled={busy || pdfBusy || inventoryBusy || shopifyBusy} canPrint={canPrint} shopifyLinks={shopifyLinks} linkingSkus={allLinkingSkus} onRetryShopify={(sku) => void retryShopifyLink(sku)} onSavingChange={setInventoryBusy} onLoadingChange={setInventoryLoading} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} onDraftChange={(sku, inventory) => saveBatch(labels.map((label) => label.sku === sku ? { ...label, inventory } : label))}
+        <SkuInventoryPanel labels={labels} products={savedProducts} disabled={busy || pdfBusy || inventoryBusy || shopifyBusy} canPrint={canPrint} shopifyLinks={displayShopifyLinks} linkingSkus={allLinkingSkus} onRetryShopify={(sku) => void retryShopifyLink(sku)} onSavingChange={setInventoryBusy} onLoadingChange={setInventoryLoading} onInventoryLoaded={inventoryLoaded} onSaved={savedForPrint} onLoad={loadSavedLabel} onDraftChange={(sku, inventory) => saveBatch(labels.map((label) => label.sku === sku ? { ...label, inventory } : label))}
           stockControls={<SkuStockPanel cards={labels.filter((label) => savedSkus.has(label.sku))} links={shopifyLinks}
             disabled={!ready || generatingBusy || lookupBusy || inventoryBusy || inventoryLoading || pdfBusy || shopifyBusy}
             onReceived={stockReceived} onRefresh={refreshStock} onBusyChange={setStockBusy} />} />

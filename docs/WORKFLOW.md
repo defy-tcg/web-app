@@ -270,8 +270,14 @@ and retirement, even if their pricing source later changes.
 Manual drafts are kept in browser storage. Saved labels are loaded from the shared
 inventory database and can be reprinted from another signed-in device. Each card
 shows whether Shopify POS is ready, pending, or blocked, with a retry action that
-keeps the original QR. Saving starts a background attempt; nightly reconciliation
-recovers unfinished links within the current Vercel Hobby cron limits. Production
+keeps the original QR. Saving starts a background attempt. Opening or returning to
+SKU labels also resumes recoverable saved cards in bounded, serialized batches.
+Library discovery reads saved journals; only selected labels receive full live
+readiness checks, so status polling does not overwhelm Shopify or relink completed
+cards. Supported catalog omissions require fresh, exact-ID source verification
+and the selected Scrydex finish's exact marketplace ID and positive USD quote.
+Nightly reconciliation resumes its durable cursor within the current Vercel Hobby
+cron limits, skipping completed and review-only cards. Production
 activation additionally requires the approved Shopify app release granting
 `write_publications`; a Git deployment alone does not grant that permission.
 Physical printing still uses the browser print dialog or downloaded 38 × 13 mm PDF;

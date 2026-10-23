@@ -10,8 +10,11 @@ export const maxDuration = 300;
 export async function GET(request: Request) {
   if (!(await getAuthorizedSession())) return Response.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const skus = skuLinkRequestSkus(new URL(request.url).searchParams.get("skus")?.split(","));
-    return Response.json({ links: await readSavedSkuLinks(skus) }, { headers: { "Cache-Control": "private, no-store" } });
+    const params = new URL(request.url).searchParams;
+    const skus = skuLinkRequestSkus(params.get("skus")?.split(","));
+    const verification = params.get("verification") ?? "live";
+    if (!["summary", "live"].includes(verification)) throw new SkuLabelInventoryError(400, "Choose summary or live Shopify verification.");
+    return Response.json({ links: await readSavedSkuLinks(skus, { verifyLive: verification === "live" }) }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof SkuLabelInventoryError ? error.message : "Shopify link status is unavailable. Your saved QR codes are safe." },
       { status: error instanceof SkuLabelInventoryError ? error.status : 503 });

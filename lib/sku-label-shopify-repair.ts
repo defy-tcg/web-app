@@ -2,15 +2,17 @@ import { randomUUID } from "node:crypto";
 import { loadSkuLabelProducts } from "./sku-label-inventory-storage.ts";
 import { getSkuLabelShopifyStatuses } from "./sku-label-shopify.ts";
 import { linkSavedSkuProduct } from "./sku-label-shopify-service.ts";
+import { canAutomaticallyRecoverSkuLink } from "./sku-label-link-recovery.ts";
 import { createShopifyGraphQL, ShopifySinglesAdapter } from "./singles/shopify.ts";
 import type { Snapshot } from "./singles/intake.ts";
 
 const KEY = "qr_shopify_repair_v1";
+const PAGE_SIZE = 12;
 type RepairState = { version: 1; afterId: number; lease: { token: string; until: number } | null };
 export interface SkuRepairDependencies {
   read(): Promise<Snapshot<RepairState>>;
   cas(snapshot: Snapshot<RepairState>, value: RepairState): Promise<boolean>;
-  page(afterId: number): Promise<{ id: number; ready: boolean; link: () => Promise<void> }[]>;
+  page(afterId: number): Promise<{ id: number; recoverable: boolean; link: () => Promise<void> }[]>;
   now(): number;
 }
 
@@ -36,10 +38,12 @@ export async function runSkuRepairPage(deps: SkuRepairDependencies) {
     while (deps.now() - started < 170_000 && checked < 1000 && attempted < 12) {
       const page = await deps.page(state.afterId);
       if (!page.length) { state.afterId = 0; complete = true; break; }
-      if (page.length > 100 || page.some((row, i) => !Number.isSafeInteger(row.id) || row.id <= (i ? page[i - 1].id : state.afterId))) throw new Error("Invalid QR repair page.");
+      if (page.length > PAGE_SIZE || page.some((row, i) => !Number.isSafeInteger(row.id) || row.id <= (i ? page[i - 1].id : state.afterId) || typeof row.recoverable !== "boolean")) throw new Error("Invalid QR repair page.");
       for (const row of page) {
-        if (deps.now() - started >= 170_000 || attempted >= 12) break;
-        if (!row.ready) { await row.link(); attempted++; }
+        if (checked >= 1000 || (row.recoverable && (deps.now() - started >= 170_000 || attempted >= 12))) break;
+        if (row.recoverable) { await row.link(); attempted++; }
+        // Read-only/review rows may still advance after discovery consumed the
+        // work budget. Never spend the next run scanning that same prefix again.
         state.afterId = row.id;
         checked++;
         await checkpoint(false);
@@ -61,10 +65,10 @@ export async function repairSavedSkuLinks() {
     cas: (snapshot, state) => journal.cas(KEY, snapshot, state),
     now: client.clock,
     page: async afterId => {
-      const products = await loadSkuLabelProducts({ afterId });
-      const statuses = await getSkuLabelShopifyStatuses(products, client);
+      const products = await loadSkuLabelProducts({ afterId, limit: PAGE_SIZE });
+      const statuses = await getSkuLabelShopifyStatuses(products, client, { verifyLive: false });
       return products.map(product => ({ id: product.id,
-        ready: statuses.some(status => status.sku === product.sku && status.status === "ready"),
+        recoverable: statuses.some(status => status.sku === product.sku && canAutomaticallyRecoverSkuLink(status)),
         link: async () => { await linkSavedSkuProduct(product, client); },
       }));
     },
