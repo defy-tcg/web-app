@@ -56,6 +56,12 @@ must still supply the matching full translated identity, coherent printing
 metadata, exact selected-finish marketplace ID, condition, and positive raw USD
 quote. Search is bounded to one complete page. The saved identity is retained.
 Known special-printing rules remain stricter and cannot be bypassed by this path.
+For source-verified catalog cards, a leading **Pokemon/Pokémon** brand word can
+be omitted from Scrydex's otherwise identical set title. Early Japanese sets can
+also use a provider ID's internal set ordinal alongside a printed **No.** Pokédex
+number. Recovery verifies that ordinal against the set size, the printed number's
+consistency, and the exact selected variant's TCGplayer ID; the saved blank
+collector number and original set name remain unchanged.
 
 Temporary failures, available catalog corrections, and confirmed sales-channel
 repairs can finish automatically. Missing trustworthy prices, ambiguous matches,

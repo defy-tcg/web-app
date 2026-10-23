@@ -412,14 +412,33 @@ function verifiedUnnumberedPokemonPrinting(product: ScrydexProduct, candidate: O
     && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!)));
 }
 
-function coherentCatalogNumber(candidate: ObjectValue, expansion: ObjectValue) {
+function coherentCatalogNumber(candidate: ObjectValue, expansion: ObjectValue, allowJapaneseOrdinal = false) {
   if (candidate.number === null && candidate.printed_number === null) return expansion.printed_total === null;
   const number = numberKey(candidate.number), printed = numberKey(candidate.printed_number);
-  if (!number || !printed || numberKey(text(candidate.id).slice(text(expansion.id).length + 1)) !== number) return false;
+  const suffix = numberKey(text(candidate.id).slice(text(expansion.id).length + 1));
+  // Early Japanese sets use an internal set ordinal in the provider ID, while
+  // the physical card prints a Pokédex number (e.g. base2_ja-43 / No.018).
+  // Only an independently verified absent catalog number permits this shape.
+  const japaneseOrdinal = allowJapaneseOrdinal && /^\d+$/.test(suffix)
+    && Number.isSafeInteger(Number(suffix)) && Number(suffix) > 0 && Number(suffix) <= Number(expansion.total)
+    && /^\d+$/.test(number) && Number.isSafeInteger(Number(number)) && Number(number) > 0
+    && /^no\.\d+$/.test(printed) && numberKey(printed.slice(3)) === number;
+  if (!number || !printed || (suffix !== number && !japaneseOrdinal)) return false;
   if (printed === number || (/^no\.\d+$/.test(printed) && numberKey(printed.slice(3)) === number)) return true;
   const parts = printed.split("/");
   return parts.length === 2 && parts[0] === number && /^\d+$/.test(parts[1])
     && Number.isSafeInteger(Number(parts[1])) && Number(parts[1]) > 0 && Number(parts[1]) === expansion.printed_total;
+}
+
+function catalogPokemonSetKey(value: unknown) {
+  // TCGplayer includes the Pokémon brand on some set titles that Scrydex omits.
+  // Remove one leading brand token only; edition and remaining title stay exact.
+  return identity(value).replace(/^pok[eé]mon (?=\S)/, "");
+}
+
+function catalogPokemonSetLabels(value: string) {
+  const full = value.normalize("NFKC").trim();
+  return [...new Set([full, full.replace(/^pok[eé]mon\s+(?=\S)/i, "")])];
 }
 
 /** Independent source evidence may bridge labels, never contradict a reviewed exception. */
@@ -438,8 +457,8 @@ function verifiedCatalogCandidate(product: ScrydexProduct, candidate: ObjectValu
     && (printedTotal === null || (typeof printedTotal === "number" && Number.isSafeInteger(printedTotal) && printedTotal > 0 && printedTotal <= total))
     && (language === "Japanese" ? japanese(candidate) : english(candidate))
     && identity(candidateName(candidate, "pokemon", language)) === identity(product.name)
-    && identity(language === "Japanese" ? translatedName(expansion) : expansion.name) === identity(product.setName)
-    && coherentCatalogNumber(candidate, expansion)
+    && catalogPokemonSetKey(language === "Japanese" ? translatedName(expansion) : expansion.name) === catalogPokemonSetKey(product.setName)
+    && coherentCatalogNumber(candidate, expansion, language === "Japanese" && scrydexCatalogProofHasAbsentNumber(product, catalogProof))
     && (text(product.cardNumber) || scrydexCatalogProofHasAbsentNumber(product, catalogProof))
     && array(candidate.variants).map(object).some(variant => marketplaceId(variant, product.tcgplayerId!));
 }
@@ -678,7 +697,7 @@ export async function resolveScrydexPrice(product: ScrydexProduct, options: { fe
     // Translated-name indexes can be incomplete. The complete set retrieval is
     // bounded to one page; the selector verifies the full source identity and
     // chosen variant's marketplace ID even when retrieval returns siblings.
-    ? [`((expansion.translation.en.name:${queryLiteral(product.setName)} OR expansion.name:${queryLiteral(product.setName)}) AND language_code:${spec.language === "Japanese" ? "JA" : "EN"})`]
+    ? [`((${catalogPokemonSetLabels(product.setName).flatMap(name => ["expansion.translation.en.name", "expansion.name"].map(field => `${field}:${queryLiteral(name)}`)).join(" OR ")}) AND language_code:${spec.language === "Japanese" ? "JA" : "EN"})`]
     : spec.language === "Japanese"
     ? japaneseNumberException
       ? [`(!name:${queryLiteral(japaneseNumberException.nativeName)} AND number:${queryLiteral(japaneseNumberException.number)} AND expansion.id:${queryLiteral(japaneseNumberException.expansion.id)} AND language_code:JA)`]
