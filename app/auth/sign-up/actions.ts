@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { nativeReturnTo } from "@/lib/auth/return-to";
 import { auth } from "@/lib/auth/server";
 import { isAllowedEmail } from "@/lib/auth/authorization";
 import type { AuthFormState } from "../sign-in/actions";
@@ -17,5 +18,5 @@ export async function signUp(
   if (password.length < 8) return { error: "Use at least 8 characters for your password." };
   const { error } = await auth.signUp.email({ name, email, password });
   if (error) return { error: error.message || "Account creation failed." };
-  redirect("/");
+  redirect(nativeReturnTo(formData.get("returnTo")));
 }

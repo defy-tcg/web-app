@@ -1,6 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      { source: "/native-warehouse/:path*", headers: [
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "Cache-Control", value: "private, no-store" },
+      ] },
+    ];
+  },
   outputFileTracingIncludes: { "/api/warehouse-companion": ["./lib/warehouse/vision/runtime/package.json", "./lib/warehouse/vision/runtime/node_modules/**/*"], "/api/warehouse/scanner-download": ["./companion/**"], "/api/warehouse": ["./lib/warehouse/vision/runtime/package.json", "./lib/warehouse/vision/runtime/node_modules/**/*"] },
   images: {
     remotePatterns: [

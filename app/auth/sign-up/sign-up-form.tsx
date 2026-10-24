@@ -6,7 +6,7 @@ import { useActionState } from "react";
 import ThemeToggle from "@/app/theme-toggle";
 import { signUp } from "./actions";
 
-export default function SignUpForm() {
+export default function SignUpForm({ returnTo = "/" }: { returnTo?: string }) {
   const [state, action, pending] = useActionState(signUp, null);
 
   return (
@@ -28,6 +28,7 @@ export default function SignUpForm() {
           Only approved Defy owner emails can register.
         </p>
         <form action={action}>
+          <input type="hidden" name="returnTo" value={returnTo} />
           <label>
             Name
             <input
@@ -64,7 +65,7 @@ export default function SignUpForm() {
           </button>
         </form>
         <p className="auth-switch">
-          Already registered? <Link href="/auth/sign-in">Sign in</Link>
+          Already registered? <Link href={returnTo === "/" ? "/auth/sign-in" : `/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`}>Sign in</Link>
         </p>
       </section>
     </main>

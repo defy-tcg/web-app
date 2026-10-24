@@ -6,7 +6,7 @@ import { useActionState } from "react";
 import ThemeToggle from "@/app/theme-toggle";
 import { signIn } from "./actions";
 
-export default function SignInForm() {
+export default function SignInForm({ returnTo = "/" }: { returnTo?: string }) {
   const [state, action, pending] = useActionState(signIn, null);
 
   return (
@@ -28,6 +28,7 @@ export default function SignInForm() {
           Sign in to manage inventory, checkout, revenue, and pricing.
         </p>
         <form action={action}>
+          <input type="hidden" name="returnTo" value={returnTo} />
           <label>
             Email
             <input
@@ -54,7 +55,7 @@ export default function SignInForm() {
           </button>
         </form>
         <p className="auth-switch">
-          First time here? <Link href="/auth/sign-up">Create your account</Link>
+          First time here? <Link href={returnTo === "/" ? "/auth/sign-up" : `/auth/sign-up?returnTo=${encodeURIComponent(returnTo)}`}>Create your account</Link>
         </p>
       </section>
     </main>

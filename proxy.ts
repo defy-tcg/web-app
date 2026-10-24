@@ -6,9 +6,11 @@ export default auth.middleware({
 
 export const config = {
   matcher: [
+    // Native Warehouse has a separate identity-only PKCE/device flow; its exact
+    // browser pages handle their own session check to preserve the sign-in return path.
     // Shopify endpoints authenticate with HMAC, the cron secret, or a POS JWT.
     // Only the fixed, read-only customer buylist and stock arrival dates are public.
     // Keep every other inventory and integration endpoint behind Neon Auth.
-    "/((?!api/auth|api/warehouse-companion$|api/public/buylist$|api/public/restocks$|api/shopify/webhooks$|api/shopify/sync/drain$|api/shopify/pricing/cron$|api/sku-labels/shopify/cron$|api/shopify/pos/pricing$|api/shopify/pos/sealed-catalog$|api/shopify/pos/sealed-pricing$|auth|_next/static|_next/image|favicon.ico|favicon.svg).*)",
+    "/((?!api/auth|api/warehouse-companion$|api/native-warehouse$|native-warehouse(?:/authorize)?$|api/public/buylist$|api/public/restocks$|api/shopify/webhooks$|api/shopify/sync/drain$|api/shopify/pricing/cron$|api/sku-labels/shopify/cron$|api/shopify/pos/pricing$|api/shopify/pos/sealed-catalog$|api/shopify/pos/sealed-pricing$|auth|_next/static|_next/image|favicon.ico|favicon.svg).*)",
   ],
 };

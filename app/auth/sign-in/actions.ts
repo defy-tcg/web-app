@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { nativeReturnTo } from "@/lib/auth/return-to";
 import { auth } from "@/lib/auth/server";
 import { isAllowedEmail } from "@/lib/auth/authorization";
 
@@ -16,5 +17,5 @@ export async function signIn(
   if (!isAllowedEmail(email)) return { error: "This email is not authorized for Defy." };
   const { error } = await auth.signIn.email({ email, password });
   if (error) return { error: error.message || "Sign-in failed." };
-  redirect("/");
+  redirect(nativeReturnTo(formData.get("returnTo")));
 }
