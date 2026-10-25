@@ -1,25 +1,9 @@
 import { auth } from "./server";
+import { activeAccount, activeEmail } from "./accounts";
 
-const DEFAULT_ALLOWED_EMAILS = [
-  "nottandao@gmail.com",
-  "setchasertcg@gmail.com",
-];
-
-function allowedEmails() {
-  return new Set(
-    (process.env.AUTHORIZED_EMAILS ?? DEFAULT_ALLOWED_EMAILS.join(","))
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-export function isAllowedEmail(email: string | null | undefined) {
-  return Boolean(email && allowedEmails().has(email.trim().toLowerCase()));
-}
-
+export const isAllowedEmail = activeEmail;
 export async function getAuthorizedSession() {
   const { data: session } = await auth.getSession();
-  if (!session?.user || !isAllowedEmail(session.user.email)) return null;
+  if (!session?.user || !await activeAccount(session.user.id, session.user.email)) return null;
   return session;
 }

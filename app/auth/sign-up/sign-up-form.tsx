@@ -25,7 +25,7 @@ export default function SignUpForm({ returnTo = "/" }: { returnTo?: string }) {
         <p className="eyebrow">PRIVATE OWNER ACCESS</p>
         <h1>Create your account</h1>
         <p className="auth-copy">
-          Only approved Defy owner emails can register.
+          New accounts stay inactive until an admin approves the email request.
         </p>
         <form action={action}>
           <input type="hidden" name="returnTo" value={returnTo} />

@@ -1,3 +1,4 @@
+import { activeAccount } from '../auth/accounts.ts';
 import { neon } from '@neondatabase/serverless';
 import { issueScannerKey, matchesScannerKey, parseScannerKey, scannerId, SCANNER_TOKEN_DAYS } from './scanner-policy.ts';
 import { initializeWarehouse } from './store.ts';
@@ -28,9 +29,9 @@ export async function revokeScannerDevice(owner:string,id:string) {
   scannerId(id);await initializeScannerDevices();const sql=db();
   await sql`UPDATE rift_warehouse.scanner_devices SET revoked_at=now() WHERE id=${id}::uuid AND owner_id=${owner}`;
 }
-export async function authenticateScanner(header:string|null,allowed:(email:string)=>boolean):Promise<ScannerDevice|null> {
+export async function authenticateScanner(header:string|null,allowed:(email:string)=>boolean|Promise<boolean>):Promise<ScannerDevice|null> {
   const parsed=parseScannerKey(header);if(!parsed)return null;
   await initializeScannerDevices();const sql=db();const rows=await sql`SELECT * FROM rift_warehouse.scanner_devices WHERE id=${parsed.id}::uuid AND revoked_at IS NULL AND expires_at>now()`;
-  const device=rows[0];if(!device||!allowed(String(device.owner_email))||!matchesScannerKey(parsed.token,String(device.token_hash)))return null;
+  const device=rows[0];if(!device||!await allowed(String(device.owner_email))||!await activeAccount(String(device.owner_id),String(device.owner_email))||!matchesScannerKey(parsed.token,String(device.token_hash)))return null;
   return {id:String(device.id),name:String(device.name),owner_id:String(device.owner_id),owner_email:String(device.owner_email),expires_at:String(device.expires_at),revoked_at:null,created_at:String(device.created_at)};
 }

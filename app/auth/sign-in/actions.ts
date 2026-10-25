@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { nativeReturnTo } from "@/lib/auth/return-to";
 import { auth } from "@/lib/auth/server";
-import { isAllowedEmail } from "@/lib/auth/authorization";
+import { activeAccount, requestAccountApproval } from "@/lib/auth/accounts";
 
 export type AuthFormState = { error: string } | null;
 
@@ -14,8 +14,11 @@ export async function signIn(
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
 
-  if (!isAllowedEmail(email)) return { error: "This email is not authorized for Defy." };
-  const { error } = await auth.signIn.email({ email, password });
+  const { data, error } = await auth.signIn.email({ email, password });
   if (error) return { error: error.message || "Sign-in failed." };
+  if (!data?.user?.id || !await activeAccount(data.user.id, email)) {
+    if (data?.user?.id) { try { await requestAccountApproval(data.user.id, email); } catch { /* Remain inactive if email is unavailable. */ } }
+    return { error: "Your account is inactive until an admin approves it by email." };
+  }
   redirect(nativeReturnTo(formData.get("returnTo")));
 }

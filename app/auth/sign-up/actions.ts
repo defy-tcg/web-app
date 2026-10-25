@@ -1,9 +1,7 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { nativeReturnTo } from "@/lib/auth/return-to";
 import { auth } from "@/lib/auth/server";
-import { isAllowedEmail } from "@/lib/auth/authorization";
+import { requestAccountApproval } from "@/lib/auth/accounts";
 import type { AuthFormState } from "../sign-in/actions";
 
 export async function signUp(
@@ -14,9 +12,12 @@ export async function signUp(
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
 
-  if (!isAllowedEmail(email)) return { error: "This email is not authorized for Defy." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !name || name.length > 128) return { error: "Enter a valid name and email." };
   if (password.length < 8) return { error: "Use at least 8 characters for your password." };
-  const { error } = await auth.signUp.email({ name, email, password });
+  const { data, error } = await auth.signUp.email({ name, email, password });
   if (error) return { error: error.message || "Account creation failed." };
-  redirect(nativeReturnTo(formData.get("returnTo")));
+  if (!data?.user?.id) return { error: "Account creation could not be confirmed." };
+  try { await requestAccountApproval(data.user.id, email); }
+  catch (error) { return { error: error instanceof Error && error.message.startsWith("Your account is inactive.") ? error.message : "Your account is inactive. Contact an admin for approval." }; }
+  return { error: "Your account is inactive until an admin approves it by email. You can sign in after approval." };
 }

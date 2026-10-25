@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import { isAllowedEmail } from '../auth/authorization.ts';
+import { activeAccount } from '../auth/accounts.ts';
 import { NativeError, DEVICE_DAYS, MAX_DEVICES, accountFromRow, createRequest, issueNativeToken, matchesChallenge, matchesNativeToken, parseNativeBearer, requestID, startPayload, type NativeAccount, type NativeSession } from './policy.ts';
 
 // Native identity grants live alongside the existing account directory. They do
@@ -58,7 +58,7 @@ async function currentAccount(owner: string): Promise<NativeAccount | null> {
   const sql = db();
   const rows = await sql`SELECT id::text AS owner_id,email,name AS account_name,banned
     FROM neon_auth."user" WHERE id::text=${owner}`;
-  return rows.length ? accountFromRow(rows[0], isAllowedEmail) : null;
+  return rows.length && await activeAccount(owner, String(rows[0].email)) ? accountFromRow(rows[0], () => true) : null;
 }
 export async function startNativeRequest(challenge: string, name: string, rate: string) {
   await initializeNativeAuth();
@@ -104,7 +104,7 @@ export async function exchangeNativeRequest(id: string, verifier: string, rate: 
       UPDATE defy_native_auth.requests SET consumed_at=now()
       WHERE id=${id}::uuid AND owner_id=${owner} AND challenge=${String(request.challenge)}
         AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at>now()
-        AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text=${owner} AND u.email=${account.email} AND COALESCE(u.banned,false)=false)
+        AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text=${owner} AND u.email=${account.email} AND COALESCE(u.banned,false)=false AND EXISTS(SELECT 1 FROM defy_accounts.directory d WHERE d.user_id=u.id::text AND d.email=lower(u.email) AND d.status='ACTIVE'))
         AND (SELECT count(*) FROM defy_native_auth.devices WHERE owner_id=${owner} AND revoked_at IS NULL AND expires_at>now())<${MAX_DEVICES}
       RETURNING name
     ) INSERT INTO defy_native_auth.devices(id,owner_id,name,token_hash,expires_at)
@@ -123,7 +123,7 @@ export async function authenticateNative(header: string): Promise<NativeSession 
     WHERE d.id=${parsed.id}::uuid AND d.revoked_at IS NULL AND d.expires_at>now()`;
   const row = rows[0];
   if (!row || !matchesNativeToken(parsed.token, String(row.token_hash))) return null;
-  const account = accountFromRow(row, isAllowedEmail); if (!account) return null;
+  const account = await activeAccount(String(row.owner_id), String(row.email)) ? accountFromRow(row, () => true) : null; if (!account) return null;
   return { account, device: { id: String(row.id), name: String(row.name), expiresAt: new Date(String(row.expires_at)).toISOString() }, validatedAt: new Date().toISOString() };
 }
 export async function revokeNativeDevice(id: string, owner: string): Promise<void> {
@@ -158,7 +158,7 @@ export async function approveNativeRequest(id: string, code: string, owner: stri
         AND (owner_id IS NULL OR owner_id=${owner})
         AND (SELECT count(*) FROM defy_native_auth.devices WHERE owner_id=${owner} AND revoked_at IS NULL AND expires_at>now())
           +(SELECT count(*) FROM defy_native_auth.requests WHERE owner_id=${owner} AND id<>${id}::uuid AND consumed_at IS NULL AND expires_at>now())<${MAX_DEVICES}
-        AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text=${owner} AND u.email=${account.email} AND COALESCE(u.banned,false)=false)
+        AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text=${owner} AND u.email=${account.email} AND COALESCE(u.banned,false)=false AND EXISTS(SELECT 1 FROM defy_accounts.directory d WHERE d.user_id=u.id::text AND d.email=lower(u.email) AND d.status='ACTIVE'))
       RETURNING id`,
   ]);
   if (!result[1].length) throw new NativeError(409, 'This request expired, belongs to another account, or the account has ten active connections.');

@@ -1,15 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import StoreOS from "./store-client";
-import { auth } from "@/lib/auth/server";
-import { isAllowedEmail } from "@/lib/auth/authorization";
+import { getAuthorizedSession } from "@/lib/auth/authorization";
 
 export const dynamic = "force-dynamic";
 
 export default async function StorePage() {
-  const { data: session } = await auth.getSession();
+  const session = await getAuthorizedSession();
   if (!session?.user) redirect("/auth/sign-in");
-  if (!isAllowedEmail(session.user.email)) redirect("/auth/unauthorized");
   return <>
     <StoreOS />
     <nav aria-label="Operating system switcher" className="print:hidden" style={{ position: "fixed", right: 20, bottom: 20, zIndex: 35 }}>

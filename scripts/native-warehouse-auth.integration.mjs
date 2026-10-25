@@ -52,6 +52,7 @@ try {
   });
   await sql`INSERT INTO neon_auth."user" (id,name,email,"emailVerified",banned) VALUES (${owner}::uuid,'Native auth test fixture',${email},true,false),(${other}::uuid,'Native auth test fixture',${otherEmail},true,false)`;
   fixtures = true;
+  await sql`INSERT INTO defy_accounts.directory(user_id,email,role,status) VALUES(${owner},${email},'STAFF','ACTIVE'),(${other},${otherEmail},'STAFF','ACTIVE')`;
   let pending;
   await check('pending request and wrong proof', async () => {
     pending = await start();
@@ -98,9 +99,9 @@ try {
     assert.equal((await store.authenticateNative(header(profileGrant))).account.name, 'Updated test name');
   });
   await check('email policy changes revoke access without credential migration', async () => {
-    process.env.AUTHORIZED_EMAILS = otherEmail;
+    await sql`UPDATE defy_accounts.directory SET status='DISABLED' WHERE user_id=${owner}`;
     assert.equal(await store.authenticateNative(header(profileGrant)), null);
-    process.env.AUTHORIZED_EMAILS = `${email},${otherEmail}`;
+    await sql`UPDATE defy_accounts.directory SET status='ACTIVE' WHERE user_id=${owner}`;
     await sql`UPDATE neon_auth."user" SET email=${`unauthorized-${tag}@example.com`} WHERE id=${owner}::uuid`;
     assert.equal(await store.authenticateNative(header(profileGrant)), null);
     await sql`UPDATE neon_auth."user" SET email=${email} WHERE id=${owner}::uuid`;
@@ -186,6 +187,7 @@ try {
       await sql`DELETE FROM defy_native_auth.devices WHERE owner_id IN (${owner},${other})`;
       await sql`DELETE FROM defy_native_auth.rate_limits WHERE key LIKE ${`approve:${owner}:%`} OR key LIKE ${`approve:${other}:%`}`;
     }
+    if (fixtures) await sql`DELETE FROM defy_accounts.directory WHERE user_id IN (${owner},${other})`;
     if (fixtures) await sql`DELETE FROM neon_auth."user" WHERE id IN (${owner}::uuid,${other}::uuid)`;
     process.stdout.write('CLEANUP synthetic fixture rows removed; existing accounts untouched\n');
   } catch { failed = true; process.stderr.write('Fixture cleanup failed; discard the isolated test branch.\n'); }
