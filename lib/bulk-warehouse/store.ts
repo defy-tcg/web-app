@@ -116,7 +116,13 @@ export async function readBulkSales(limit = 1000) {
   const sql = database();
   try {
     const results = await sql.transaction([
-      sql`SELECT data FROM defy_bulk.sales ORDER BY sold_at DESC,id DESC LIMIT ${limit+1}`,
+      // Keep exact native copy sets in the immutable stored receipt, but omit
+      // them before Neon serializes reporting rows. Two valid 50,000-copy
+      // orders would otherwise duplicate megabytes of audit IDs in /api/store.
+      sql`SELECT (s.data-'nativeOrderSnapshot'-'items') || jsonb_build_object('items',
+        COALESCE((SELECT jsonb_agg(CASE WHEN item->>'aggregate'='true' THEN item-'copyIds' ELSE item END ORDER BY position)
+          FROM jsonb_array_elements(s.data->'items') WITH ORDINALITY AS lines(item,position)), '[]'::jsonb)) AS data
+        FROM defy_bulk.sales s ORDER BY sold_at DESC,id DESC LIMIT ${limit+1}`,
       sql`SELECT count(*)::int AS count FROM defy_bulk.unpriced_native_orders`,
     ], { isolationLevel: 'RepeatableRead', readOnly: true });
     const rows = results[0];

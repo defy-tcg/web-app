@@ -463,7 +463,10 @@ try {
     assert.equal(lines[0].unitCostCents, null);
     assert.equal(lines[0].lineSubtotalCents, 1001);
     assert.equal(lines[0].lineCostCents, 401);
-    assert.deepEqual(lines[0].copyIds, manualData.copyIds);
+    assert.equal('copyIds' in lines[0], false, 'reports do not need the stored exact-copy audit array');
+    const stored = (await sql`SELECT data->'items'->0->'copyIds' AS copies FROM defy_bulk.sales
+      WHERE warehouse_id=${warehouseId}::uuid AND id=${recordedAmount.saleId}`)[0];
+    assert.deepEqual(stored.copies, manualData.copyIds);
     assert.deepEqual(await physicalState(), before);
     assert.equal((await readNativeOrderForSale({ warehouseId, orderId: 'manual-amount-order' })).financialStatus, 'recorded');
   });
@@ -520,10 +523,48 @@ try {
     await sync(payload([orderDeletion(ack + 1, 'manual-amount-order')]));
     const after = (await readBulkSales()).sales.find(sale => sale.id === recordedAmount.saleId);
     assert.deepEqual(after, before);
-    assert.deepEqual(after.nativeOrderSnapshot.copyIds, manualData.copyIds);
-    assert.equal(after.nativeOrderSnapshot.status, 'shipped');
+    assert.equal('nativeOrderSnapshot' in after, false, 'reports omit the stored audit snapshot');
+    const stored = (await sql`SELECT data->'nativeOrderSnapshot' AS snapshot FROM defy_bulk.sales
+      WHERE warehouse_id=${warehouseId}::uuid AND id=${recordedAmount.saleId}`)[0];
+    assert.deepEqual(stored.snapshot.copyIds, manualData.copyIds);
+    assert.equal(stored.snapshot.status, 'shipped');
     assert.equal((await recordNativeOrderSale(actor, amountWinner)).status, 'applied', 'a saved receipt survives later native deletion');
     assert.equal((await fixtureSales()).length, 7);
+  });
+
+  await check('two 50,000-copy orders produce compact reports while their exact stored audits remain intact', async () => {
+    const copyIds = Array.from({ length: 50_000 }, (_, index) => String(index + 1).padStart(20, '0'));
+    const saleIds = [];
+    for (const suffix of ['one', 'two']) {
+      const orderId = `compact-report-${suffix}`;
+      const data = orderData(copyIds, { reference: `Large native report fixture ${suffix}` });
+      // Each real native sync batch is byte-bounded; send these large orders
+      // separately instead of inventing one oversized multi-order request.
+      await sync(payload([orderEvent(ack + 1, orderId, data)]));
+      const recorded = await recordNativeOrderSale(actor, orderAmount(orderId, data));
+      assert.equal(recorded.status, 'applied');
+      saleIds.push(recorded.saleId);
+    }
+    const auditRows = () => sql`WITH expected AS (SELECT ${JSON.stringify(copyIds)}::jsonb AS copies)
+      SELECT s.id,md5(s.data::text) AS "auditHash",
+        s.data->'nativeOrderSnapshot'->'copyIds'=expected.copies AS "snapshotExact",
+        s.data->'items'->0->'copyIds'=expected.copies AS "itemExact"
+      FROM defy_bulk.sales s CROSS JOIN expected
+      WHERE s.warehouse_id=${warehouseId}::uuid AND s.native_order_id IN ('compact-report-one','compact-report-two')
+      ORDER BY s.id`;
+    const storedBefore = await auditRows();
+    assert.equal(storedBefore.length, 2);
+    assert.ok(storedBefore.every(row => row.snapshotExact && row.itemExact));
+    const report = await readBulkSales();
+    const sales = report.sales.filter(sale => saleIds.includes(sale.id));
+    const items = report.saleItems.filter(item => saleIds.includes(item.saleId));
+    assert.equal(sales.length, 2);
+    assert.equal(items.length, 2);
+    assert.ok(sales.every(sale => !('nativeOrderSnapshot' in sale) && sale.itemsCount === 50_000 && sale.totalCents === 1009));
+    assert.ok(items.every(item => !('copyIds' in item) && item.aggregate && item.quantity === 50_000 && item.lineSubtotalCents === 1001));
+    assert.ok(Buffer.byteLength(JSON.stringify({ sales, items })) < 12_000,
+      'report size stays bounded by financial fields, not the underlying physical copy count');
+    assert.deepEqual(await auditRows(), storedBefore, 'reporting leaves both complete immutable sale receipts untouched');
   });
 } catch (error) {
   failed = true;
