@@ -119,7 +119,7 @@ test('native exchange surfaces expired and consumed requests without replaying s
   }
 });
 test('session requires a native bearer credential and does not accept cookies or scanner keys', async () => {
-  for (const headers of [{}, { Cookie: 'auth_session=test' }, { Authorization: 'Bearer rwsc_' + token.slice(4) }]) {
+  for (const headers of [{}, { Cookie: 'auth_session=test' }, { Authorization: 'Bearer rwsc_' + token.slice(4) }] as Record<string, string>[]) {
     const h = harness(); const response = await h.handle(new Request(url + '?action=session', { headers }));
     assert.equal(response.status, 401); assert.equal(h.calls.length, 0);
   }
@@ -145,7 +145,7 @@ test('native sign-out revokes only the authenticated device and account', async 
   const attack = harness(); assert.equal((await attack.handle(request('revoke', { id: 'different-device' }, { Authorization: 'Bearer ' + token }))).status, 400); assert.equal(attack.calls.length, 0);
 });
 test('browser origins and methods cannot cross the native identity boundary', async () => {
-  for (const headers of [{ Origin: 'https://evil.test' }, { Origin: 'null' }, { 'Sec-Fetch-Site': 'cross-site' }]) {
+  for (const headers of [{ Origin: 'https://evil.test' }, { Origin: 'null' }, { 'Sec-Fetch-Site': 'cross-site' }] as Record<string, string>[]) {
     const h = harness(); assert.equal((await h.handle(request('start', { challenge }, headers))).status, 403); assert.equal(h.calls.length, 0);
   }
   assert.throws(() => rejectCrossSite(request('start', { challenge }), true));

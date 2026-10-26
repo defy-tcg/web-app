@@ -20,6 +20,13 @@ import TcgplayerSalesImportModal, {
 } from "./tcgplayer-sales-import-modal";
 import ThemeToggle from "./theme-toggle";
 import RiftboundSwiss from "./riftbound-swiss";
+import BulkWarehousePanel from "./bulk-warehouse-panel";
+import {
+  filterSalesByInventorySource,
+  INVENTORY_SOURCE_LABELS,
+  type InventorySource,
+  type InventorySourceFilter,
+} from "@/lib/reports/inventory-source";
 
 type Product = {
   id: number;
@@ -58,6 +65,8 @@ type Sale = {
   itemsCount: number;
   note: string;
   soldAt: string;
+  inventorySource?: InventorySource;
+  costIncomplete?: boolean;
 };
 type SaleItem = {
   id: string;
@@ -66,8 +75,14 @@ type SaleItem = {
   productName: string;
   sku: string;
   quantity: number;
-  unitPriceCents: number;
-  unitCostCents: number;
+  unitPriceCents: number | null;
+  unitCostCents: number | null;
+  lineSubtotalCents?: number;
+  lineCostCents?: number;
+  aggregate?: boolean;
+  inventorySource?: InventorySource;
+  discountCents?: number;
+  taxCents?: number;
 };
 type Expense = {
   id: string;
@@ -90,6 +105,19 @@ type StoreEvent = {
   otherCostCents: number;
   status: string;
   note: string;
+};
+type ReportingCoverage = {
+  legacyHasMore?: boolean;
+  bulkHasMore?: boolean;
+  unpricedNativeOrders?: number;
+};
+type StoreReportData = {
+  sales?: Sale[];
+  saleItems?: SaleItem[];
+  expenses?: Expense[];
+  events?: StoreEvent[];
+  reporting?: ReportingCoverage;
+  error?: string;
 };
 type View =
   | "overview"
@@ -479,12 +507,16 @@ export default function StoreOS() {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [events, setEvents] = useState<StoreEvent[]>([]);
+  const [reportingCoverage, setReportingCoverage] = useState<ReportingCoverage>({});
+  const [reportRefreshError, setReportRefreshError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [csvText, setCsvText] = useState("");
   const [query, setQuery] = useState("");
   const [range, setRange] = useState("30");
+  const [salesSource, setSalesSource] = useState<InventorySourceFilter>("all");
+  const [inventorySection, setInventorySection] = useState<InventorySource>("store");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [saleSearch, setSaleSearch] = useState("");
   const [customName, setCustomName] = useState("");
@@ -528,9 +560,11 @@ export default function StoreOS() {
   const scannerInput = useRef<HTMLInputElement>(null);
   const sheetSyncBusy = useRef(false);
   const priceSyncBusy = useRef(false);
+  const reportRequestVersion = useRef(0);
 
   async function loadAll() {
     setLoading(true);
+    const reportVersion = ++reportRequestVersion.current;
     try {
       const [inventoryResponse, storeResponse] = await Promise.all([
         fetch("/api/inventory", { cache: "no-store" }),
@@ -540,22 +574,20 @@ export default function StoreOS() {
         products?: Product[];
         error?: string;
       };
-      const store = (await storeResponse.json()) as {
-        sales?: Sale[];
-        saleItems?: SaleItem[];
-        expenses?: Expense[];
-        events?: StoreEvent[];
-        error?: string;
-      };
+      const store = (await storeResponse.json()) as StoreReportData;
       if (!inventoryResponse.ok)
         throw new Error(inventory.error || "Could not load inventory");
       if (!storeResponse.ok)
         throw new Error(store.error || "Could not load store reporting");
       setProducts(inventory.products || []);
-      setSales(store.sales || []);
-      setSaleItems(store.saleItems || []);
-      setExpenses(store.expenses || []);
-      setEvents(store.events || []);
+      if (reportVersion === reportRequestVersion.current) {
+        setSales(store.sales || []);
+        setSaleItems(store.saleItems || []);
+        setExpenses(store.expenses || []);
+        setEvents(store.events || []);
+        setReportingCoverage(store.reporting || {});
+        setReportRefreshError("");
+      }
       setError("");
     } catch (caught) {
       setError(
@@ -628,6 +660,51 @@ export default function StoreOS() {
     return () => window.clearTimeout(task);
   }, []);
   useEffect(() => {
+    let stopped = false;
+    let pending = false;
+    let refreshAgain = false;
+    const controller = new AbortController();
+    async function refreshReporting() {
+      if (stopped || document.visibilityState === "hidden") return;
+      if (pending) { refreshAgain = true; return; }
+      pending = true;
+      const version = ++reportRequestVersion.current;
+      try {
+        const response = await fetch("/api/store", { cache: "no-store", signal: controller.signal });
+        const data = await response.json() as StoreReportData;
+        if (!response.ok) throw new Error(data.error || "Sales could not be refreshed.");
+        if (!stopped && version === reportRequestVersion.current) {
+          setSales(data.sales || []);
+          setSaleItems(data.saleItems || []);
+          setExpenses(data.expenses || []);
+          setEvents(data.events || []);
+          setReportingCoverage(data.reporting || {});
+          setReportRefreshError("");
+        }
+      } catch (caught) {
+        if (!stopped && version === reportRequestVersion.current) {
+          setReportRefreshError(caught instanceof Error ? caught.message : "Sales could not be refreshed.");
+        }
+      } finally {
+        pending = false;
+        if (refreshAgain && !stopped) { refreshAgain = false; void refreshReporting(); }
+      }
+    }
+    const refresh = () => { void refreshReporting(); };
+    const interval = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("defy-bulk-warehouse-updated", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      stopped = true;
+      controller.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("defy-bulk-warehouse-updated", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+  useEffect(() => {
     const firstSync = window.setTimeout(
       () => void syncMasterSheet(false),
       2500,
@@ -685,7 +762,7 @@ export default function StoreOS() {
       range === "all" ? null : new Date(anchorTime - Number(range) * 86400000),
     [range, anchorTime],
   );
-  const filteredSales = useMemo(
+  const periodSales = useMemo(
     () => {
       if (!startDate) return sales;
       const selectedStartKey = localCalendarKey(startDate);
@@ -701,6 +778,15 @@ export default function StoreOS() {
       });
     },
     [sales, startDate, anchorTime],
+  );
+  const sourceReport = useMemo(
+    () => filterSalesByInventorySource(periodSales, saleItems, salesSource),
+    [periodSales, saleItems, salesSource],
+  );
+  const filteredSales = sourceReport.sales;
+  const chartSourceSales = useMemo(
+    () => filterSalesByInventorySource(sales, saleItems, salesSource).sales,
+    [sales, saleItems, salesSource],
   );
   const filteredExpenses = useMemo(
     () =>
@@ -758,9 +844,19 @@ export default function StoreOS() {
         .length,
     };
   }, [filteredSales, filteredExpenses, products]);
-  const profitIncomplete = filteredSales.some(
+  const summaryProfitIncomplete = filteredSales.some(
     (sale) => parseTcgSummaryRange(sale.saleNumber) !== null,
   );
+  const unknownCostSales = filteredSales.filter(sale => sale.costIncomplete).length;
+  const profitIncomplete = summaryProfitIncomplete || unknownCostSales > 0 || sourceReport.excludedMixedSales > 0;
+  const profitIncompleteReason = summaryProfitIncomplete ? "TCG costs and fees missing"
+    : unknownCostSales ? "Some acquisition costs are unknown" : "Source breakdown incomplete";
+  const historyCapped = Boolean(reportingCoverage.legacyHasMore || reportingCoverage.bulkHasMore);
+  const unpricedNativeOrders = reportingCoverage.unpricedNativeOrders ?? 0;
+  const aggregateOrderSales = new Set(sourceReport.saleItems.filter(item => item.aggregate).map(item => item.saleId)).size;
+  const sourceFiltered = salesSource !== "all";
+  const netProfitAvailable = !profitIncomplete && !sourceFiltered;
+  const netProfitText = sourceFiltered ? "Not allocated" : profitIncomplete ? "Incomplete" : dollars(metrics.net);
 
   const chartDays = useMemo(() => {
     const result = Array.from({ length: 7 }, (_, index) => {
@@ -774,7 +870,7 @@ export default function StoreOS() {
         expenses: 0,
       };
     });
-    for (const sale of sales) {
+    for (const sale of chartSourceSales) {
       const summaryRange = parseTcgSummaryRange(sale.saleNumber);
       if (summaryRange?.isMultiDay) continue;
       const key = new Date(sale.soldAt).toISOString().slice(0, 10);
@@ -787,7 +883,7 @@ export default function StoreOS() {
       if (target) target.expenses += expense.amountCents;
     }
     return result;
-  }, [sales, expenses]);
+  }, [chartSourceSales, expenses]);
   const chartMax = Math.max(
     1,
     ...chartDays.flatMap((item) => [item.revenue, item.expenses]),
@@ -815,22 +911,24 @@ export default function StoreOS() {
     const ids = new Set(filteredSales.map((item) => item.id));
     const map = new Map<
       string,
-      { name: string; quantity: number; revenue: number }
+      { key: string; name: string; quantity: number; revenue: number; inventorySource: InventorySource }
     >();
-    for (const item of saleItems) {
-      if (!ids.has(item.saleId)) continue;
-      const key = item.sku || item.productName;
+    for (const item of sourceReport.saleItems) {
+      if (!ids.has(item.saleId) || item.aggregate) continue;
+      const key = `${item.inventorySource}:${item.sku || item.productName}`;
       const current = map.get(key) || {
+        key,
         name: item.productName,
         quantity: 0,
         revenue: 0,
+        inventorySource: item.inventorySource,
       };
       current.quantity += item.quantity;
-      current.revenue += item.unitPriceCents * item.quantity;
+      current.revenue += item.revenueCents;
       map.set(key, current);
     }
     return [...map.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 6);
-  }, [filteredSales, saleItems]);
+  }, [filteredSales, sourceReport.saleItems]);
 
   const visibleProducts = useMemo(() => {
     const needle = query.toLowerCase();
@@ -1525,30 +1623,38 @@ export default function StoreOS() {
   }
 
   function exportReport() {
-    const incompleteProfit =
-      "Incomplete - TCGplayer summary excludes product costs and marketplace fees";
+    const incompleteProfit = `Incomplete - ${profitIncompleteReason}`;
     const rows = [
       "Metric,Value",
+      `Sales source,${INVENTORY_SOURCE_LABELS[salesSource]}`,
+      `Period,${range === "all" ? "All loaded history" : `${range} days`}`,
+      `History coverage,${historyCapped ? "Partial - older sales are outside the loaded report" : typeof reportingCoverage.legacyHasMore === "boolean" && typeof reportingCoverage.bulkHasMore === "boolean" ? "All available priced sales loaded" : "Loaded records only"}`,
       `Revenue,${(metrics.revenue / 100).toFixed(2)}`,
-      `COGS,${(metrics.cogs / 100).toFixed(2)}`,
+      `${unknownCostSales ? "Known COGS (incomplete)" : "COGS"},${(metrics.cogs / 100).toFixed(2)}`,
       `Gross profit,${
         profitIncomplete
           ? incompleteProfit
           : (metrics.gross / 100).toFixed(2)
       }`,
-      `Operating expenses,${(metrics.operating / 100).toFixed(2)}`,
+      `Operating expenses (all store operations),${(metrics.operating / 100).toFixed(2)}`,
       `Net profit,${
-        profitIncomplete ? incompleteProfit : (metrics.net / 100).toFixed(2)
+        sourceFiltered ? "Not allocated - shared operating expenses have no inventory-source allocation" : profitIncomplete ? incompleteProfit : (metrics.net / 100).toFixed(2)
       }`,
-      `Inventory cost,${(metrics.inventoryCost / 100).toFixed(2)}`,
-      `Inventory market,${(metrics.inventoryMarket / 100).toFixed(2)}`,
+      `Sales without an item breakdown,${sourceReport.unitemizedSales}`,
+      `Sales with unknown acquisition costs,${unknownCostSales}`,
+      `Orders recorded without per-card prices,${aggregateOrderSales}`,
+      `Unpriced Bulk Warehouse orders excluded (all history),${salesSource === "store" ? "Outside selected source" : unpricedNativeOrders}`,
+      `Sales with incomplete item details,${sourceReport.incompleteSales}`,
+      `Mixed sales excluded from source totals,${sourceReport.excludedMixedSales}`,
+      `Store inventory cost,${(metrics.inventoryCost / 100).toFixed(2)}`,
+      `Store inventory market,${(metrics.inventoryMarket / 100).toFixed(2)}`,
     ];
     const url = URL.createObjectURL(
       new Blob([rows.join("\n")], { type: "text/csv" }),
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `defy-store-report-${localDate()}.csv`;
+    link.download = `defy-store-report-${salesSource}-${localDate()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -1619,7 +1725,7 @@ export default function StoreOS() {
           <article className="kpi hero-kpi">
             <div>
               <span>Net revenue</span>
-              <b className="status-dot">Live</b>
+              <b className="status-dot">{historyCapped ? "Loaded history" : "Live"}</b>
             </div>
             <strong>{dollars(metrics.revenue)}</strong>
             <footer>
@@ -1638,7 +1744,7 @@ export default function StoreOS() {
             <footer>
               <span>
                 {profitIncomplete
-                  ? "TCG costs not included"
+                  ? profitIncompleteReason
                   : "After product cost"}
               </span>
               <em>
@@ -1649,29 +1755,31 @@ export default function StoreOS() {
             </footer>
           </article>
           <article
-            className={`kpi ${!profitIncomplete && metrics.net < 0 ? "loss-kpi" : ""}`}
+            className={`kpi ${netProfitAvailable && metrics.net < 0 ? "loss-kpi" : ""}`}
           >
             <div>
               <span>Net profit</span>
               <i>NP</i>
             </div>
             <strong>
-              {profitIncomplete ? "Incomplete" : dollars(metrics.net)}
+              {netProfitText}
             </strong>
             <footer>
               <span>
-                {profitIncomplete
-                  ? "TCG costs and fees missing"
+                {sourceFiltered
+                  ? "Shared expenses are not allocated"
+                  : profitIncomplete
+                  ? profitIncompleteReason
                   : "After operating expenses"}
               </span>
               <em>
-                {profitIncomplete ? "—" : `${metrics.margin.toFixed(1)}%`}
+                {netProfitAvailable ? `${metrics.margin.toFixed(1)}%` : "—"}
               </em>
             </footer>
           </article>
           <article className="kpi">
             <div>
-              <span>Inventory market</span>
+              <span>Store inventory market</span>
               <i>▦</i>
             </div>
             <strong>{dollars(metrics.inventoryMarket)}</strong>
@@ -1681,13 +1789,13 @@ export default function StoreOS() {
             </footer>
           </article>
         </section>
-        {profitIncomplete && <ProfitIncompleteNotice />}
+        {summaryProfitIncomplete && <ProfitIncompleteNotice />}
         <section className="dashboard-grid">
           <article className="panel revenue-panel">
             <header>
               <div>
                 <h2>7-day cash picture</h2>
-                <p>Sales revenue vs. operating expenses</p>
+                <p>{INVENTORY_SOURCE_LABELS[salesSource]} revenue vs. all store operating expenses</p>
               </div>
               <div className="legend">
                 <span>
@@ -1740,17 +1848,17 @@ export default function StoreOS() {
                 <strong>{dollars(metrics.revenue)}</strong>
               </div>
               <div>
-                <span>− Cost of goods</span>
+                <span>{unknownCostSales ? "− Known cost of goods" : "− Cost of goods"}</span>
                 <strong>{dollars(metrics.cogs)}</strong>
               </div>
               <div>
-                <span>− Operating expenses</span>
+                <span>{sourceFiltered ? "Shared operating expenses" : "− Operating expenses"}</span>
                 <strong>{dollars(metrics.operating)}</strong>
               </div>
               <div className="profit-total">
                 <span>= Net profit</span>
                 <strong>
-                  {profitIncomplete ? "Incomplete" : dollars(metrics.net)}
+                  {netProfitText}
                 </strong>
               </div>
             </div>
@@ -1767,9 +1875,9 @@ export default function StoreOS() {
                 View all →
               </button>
             </header>
-            {sales.length ? (
+            {filteredSales.length ? (
               <div className="compact-list">
-                {sales.slice(0, 5).map((sale) => (
+                {filteredSales.slice(0, 5).map((sale) => (
                   <div key={sale.id}>
                     <span className="round-icon">
                       {sale.channel.slice(0, 1)}
@@ -1834,13 +1942,14 @@ export default function StoreOS() {
                 <span>
                   <i
                     className={
-                      !profitIncomplete && metrics.margin >= 10
+                      netProfitAvailable && metrics.margin >= 10
                         ? "good"
                         : "warn"
                     }
                   />
-                  {profitIncomplete
-                    ? "Profit incomplete"
+                  {sourceFiltered
+                    ? "Review source gross profit"
+                    : profitIncomplete ? "Profit incomplete"
                     : `${metrics.margin.toFixed(1)}% net margin`}
                 </span>
                 <b>Analyze →</b>
@@ -2164,7 +2273,8 @@ export default function StoreOS() {
         <header>
           <div>
             <h2>Sales ledger</h2>
-            <p>{visibleSales.length} transactions in this period</p>
+            <p>{visibleSales.length} transactions in this period · {INVENTORY_SOURCE_LABELS[salesSource]}</p>
+            {sourceFiltered && <p>Mixed orders show only the selected inventory source’s items and amounts.</p>}
           </div>
           <div className="header-actions">
             <button
@@ -2186,6 +2296,7 @@ export default function StoreOS() {
                   <th>Sale</th>
                   <th>Date</th>
                   <th>Channel</th>
+                  <th>Inventory source</th>
                   <th>Payment</th>
                   <th>Items</th>
                   <th>Revenue</th>
@@ -2198,6 +2309,7 @@ export default function StoreOS() {
                   const isSummary = Boolean(
                     parseTcgSummaryRange(sale.saleNumber),
                   );
+                  const incompleteCost = isSummary || sale.costIncomplete;
                   return (
                     <tr key={sale.id}>
                       <td>
@@ -2207,6 +2319,13 @@ export default function StoreOS() {
                       <td>{day(sale.soldAt)}</td>
                       <td>
                         <span className="tag">{sale.channel}</span>
+                      </td>
+                      <td>
+                        <span className="tag">{sale.sourceScope === "mixed"
+                          ? sourceFiltered ? INVENTORY_SOURCE_LABELS[salesSource] : "Mixed inventory"
+                          : sale.sourceScope === "unclassified" ? "Unclassified" : INVENTORY_SOURCE_LABELS[sale.sourceScope]}</span>
+                        {sale.sourceScope === "mixed" && sourceFiltered && <small>Part of a mixed order</small>}
+                        {sale.sourceBreakdown !== "complete" && <small>{sale.sourceBreakdown === "unitemized" ? "No item breakdown" : "Incomplete item details"}</small>}
                       </td>
                       <td>{sale.paymentMethod}</td>
                       <td>
@@ -2221,10 +2340,11 @@ export default function StoreOS() {
                       <td>
                         {isSummary
                           ? "Not provided"
+                          : sale.costIncomplete ? `Known ${dollars(sale.cogsCents)}`
                           : dollars(sale.cogsCents)}
                       </td>
-                      <td className={isSummary ? "" : "positive"}>
-                        {isSummary
+                      <td className={incompleteCost ? "" : "positive"}>
+                        {incompleteCost
                           ? "Incomplete"
                           : dollars(
                               sale.subtotalCents -
@@ -2251,6 +2371,26 @@ export default function StoreOS() {
   }
 
   function renderInventoryView() {
+    return (
+      <>
+        <fieldset className="inventory-game-filter">
+          <legend className="sr-only">Inventory section</legend>
+          <div className="inventory-game-filter-scroll">
+            {(["store", "bulk_warehouse"] as const).map(source => (
+              <label key={source}>
+                <input type="radio" name="inventory-section" value={source}
+                  checked={inventorySection === source} onChange={() => setInventorySection(source)} />
+                <span>{INVENTORY_SOURCE_LABELS[source]}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {inventorySection === "bulk_warehouse" ? <BulkWarehousePanel /> : renderStoreInventoryView()}
+      </>
+    );
+  }
+
+  function renderStoreInventoryView() {
     return (
       <section className="panel data-panel">
         <header>
@@ -2714,7 +2854,7 @@ export default function StoreOS() {
             </Link>
           </header>
         </section>
-        {profitIncomplete && <ProfitIncompleteNotice />}
+        {summaryProfitIncomplete && <ProfitIncompleteNotice />}
         <section className="report-summary">
           <article>
             <span>Revenue</span>
@@ -2722,18 +2862,18 @@ export default function StoreOS() {
           </article>
           <i>−</i>
           <article>
-            <span>COGS</span>
+            <span>{unknownCostSales ? "Known COGS" : "COGS"}</span>
             <strong>{dollars(metrics.cogs)}</strong>
           </article>
           <i>−</i>
           <article>
-            <span>Expenses</span>
+            <span>{sourceFiltered ? "Shared expenses" : "Expenses"}</span>
             <strong>{dollars(metrics.operating)}</strong>
           </article>
           <i>=</i>
           <article
             className={
-              profitIncomplete
+              !netProfitAvailable
                 ? "report-incomplete"
                 : metrics.net < 0
                   ? "report-loss"
@@ -2742,7 +2882,7 @@ export default function StoreOS() {
           >
             <span>Net profit</span>
             <strong>
-              {profitIncomplete ? "Incomplete" : dollars(metrics.net)}
+              {netProfitText}
             </strong>
           </article>
         </section>
@@ -2826,17 +2966,17 @@ export default function StoreOS() {
             <header>
               <div>
                 <h2>Top products</h2>
-                <p>Ranked by recorded sales revenue</p>
+                <p>Ranked by itemized revenue after discounts · {INVENTORY_SOURCE_LABELS[salesSource]}</p>
               </div>
             </header>
             {topProducts.length ? (
               <div className="top-list">
                 {topProducts.map((item, index) => (
-                  <div key={item.name}>
+                  <div key={item.key}>
                     <span>{index + 1}</span>
                     <p>
                       <strong>{item.name}</strong>
-                      <small>{item.quantity} units sold</small>
+                      <small>{item.quantity} units sold · {INVENTORY_SOURCE_LABELS[item.inventorySource]}</small>
                     </p>
                     <b>{dollars(item.revenue)}</b>
                   </div>
@@ -2851,8 +2991,8 @@ export default function StoreOS() {
           <article className="panel valuation-card">
             <header>
               <div>
-                <h2>Store asset snapshot</h2>
-                <p>Inventory value and potential upside</p>
+                <h2>Store inventory snapshot</h2>
+                <p>Current store catalog value. Bulk Warehouse stock is shown in its inventory section.</p>
               </div>
               <button className="text-action" onClick={exportReport}>
                 Export CSV ↓
@@ -3041,6 +3181,44 @@ export default function StoreOS() {
               ↻ Refresh
             </button>
           </div>
+          {(["overview", "sales", "reports"] as View[]).includes(view) && (
+            <section className="panel" aria-label="Sales inventory source">
+              <header>
+                <div>
+                  <h2>Sales source</h2>
+                  <p>Choose which inventory contributes to sales totals, charts, and exports.</p>
+                </div>
+              </header>
+              <fieldset className="inventory-game-filter">
+                <legend className="sr-only">Filter sales by inventory source</legend>
+                <div className="inventory-game-filter-scroll">
+                  {(["all", "store", "bulk_warehouse"] as const).map(source => (
+                    <label key={source}>
+                      <input type="radio" name="sales-source" value={source}
+                        checked={salesSource === source} onChange={() => setSalesSource(source)} />
+                      <span>{INVENTORY_SOURCE_LABELS[source]}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              {sourceFiltered && <p className="tcg-import-info">Revenue and product costs follow this selection. Operating expenses are shared across the store, so net profit is available under All inventory.</p>}
+              {unknownCostSales > 0 && <p className="tcg-import-info" role="status">Acquisition costs are unknown for some items in {unknownCostSales} sales. Revenue is included and COGS shows only known costs; profit is incomplete for those sales.</p>}
+              {historyCapped && <p className="tcg-import-info" role="status">Older {reportingCoverage.legacyHasMore && reportingCoverage.bulkHasMore ? "Store inventory and Bulk Warehouse" : reportingCoverage.bulkHasMore ? "Bulk Warehouse" : "Store inventory"} sales are outside this loaded report. Totals, date filters, and exports cover the loaded records only.</p>}
+              {salesSource !== "store" && unpricedNativeOrders > 0 && <p className="tcg-import-info" role="status">{unpricedNativeOrders} shipped native warehouse orders have no linked sale amount and are excluded from revenue. This count covers all warehouse history; order creation dates are not treated as sale dates. Review these orders in Bulk Warehouse.</p>}
+              {aggregateOrderSales > 0 && <p className="tcg-import-info">{aggregateOrderSales} native order totals are included without individual card prices. Product rankings omit these aggregate orders.</p>}
+              {reportRefreshError && <p className="error-banner" role="status">Sales refresh needs attention: {reportRefreshError} Previously loaded figures remain visible. Refresh to retry.</p>}
+              {sourceReport.unitemizedSales + sourceReport.incompleteSales > 0 && (
+                <p className="tcg-import-info" role="status">
+                  {sourceReport.unitemizedSales + sourceReport.incompleteSales} sales lack a complete item breakdown. Their recorded totals are included; product rankings use complete itemized sales. Legacy sales without a recorded source remain under Store inventory.
+                </p>
+              )}
+              {sourceReport.excludedMixedSales > 0 && (
+                <p className="error-banner" role="status">
+                  {sourceReport.excludedMixedSales} mixed or unclassified sales could not be separated by inventory source and are excluded from these totals. Select All inventory to include their recorded totals, or refresh to reload their item details.
+                </p>
+              )}
+            </section>
+          )}
           {error && (
             <div className="error-banner">
               <span>{error}</span>

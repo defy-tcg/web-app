@@ -4839,3 +4839,230 @@ code {
     transition: none;
   }
 }
+
+/* Bulk Warehouse: isolated from the original store-inventory table. */
+.bulk-warehouse {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  color: var(--ink);
+}
+.bulk-warehouse :where(h2, h3, p) { margin: 0; }
+.bulk-warehouse :where(button, input, select, textarea, summary, a, [tabindex]):focus-visible {
+  outline: 3px solid var(--green2);
+  outline-offset: 3px;
+}
+.bulk-warehouse .bw-heading,
+.bulk-warehouse .bw-selection,
+.bulk-warehouse .bw-composer > header,
+.bulk-warehouse .bw-composer > footer,
+.bulk-warehouse .bw-pagination,
+.bulk-warehouse .bw-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.bulk-warehouse .bw-heading { align-items: flex-start; }
+.bulk-warehouse .bw-eyebrow {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .13em;
+}
+.bulk-warehouse h2 { font-size: 26px; font-weight: 750; letter-spacing: -.035em; }
+.bulk-warehouse h3 { font-size: 16px; font-weight: 750; }
+.bulk-warehouse .bw-heading p:not(.bw-eyebrow),
+.bulk-warehouse .bw-selection p,
+.bulk-warehouse .bw-composer header p,
+.bulk-warehouse .bw-composer footer p,
+.bulk-warehouse .bw-activity header p {
+  max-width: 690px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.bulk-warehouse .bw-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease;
+}
+.bulk-warehouse .bw-button:hover:not(:disabled) { background: var(--surface-inset); border-color: var(--muted); }
+.bulk-warehouse .bw-button-primary { border-color: var(--green2); background: var(--green); color: #172009; }
+.bulk-warehouse .bw-button-primary:hover:not(:disabled) { background: var(--green2); border-color: var(--green2); }
+.bulk-warehouse .bw-button-subtle { background: transparent; }
+.bulk-warehouse .bw-button:disabled { cursor: not-allowed; opacity: .45; }
+.bulk-warehouse .bw-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.bulk-warehouse .bw-summary > div { padding: 18px 22px; }
+.bulk-warehouse .bw-summary > div + div { border-left: 1px solid var(--line); }
+.bulk-warehouse .bw-summary span { display: block; color: var(--muted); font-size: 11px; }
+.bulk-warehouse .bw-summary strong { display: block; margin-top: 5px; font-size: 27px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.bulk-warehouse .bw-connections { padding: 14px 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 12px; }
+.bulk-warehouse .bw-connections > summary { cursor: pointer; font-weight: 650; }
+.bulk-warehouse .bw-connections > summary span + span { margin-left: 10px; color: var(--muted); font-size: 11px; font-weight: 450; }
+.bulk-warehouse .bw-connections ul { margin: 10px 0 14px; padding: 0; list-style: none; }
+.bulk-warehouse .bw-connections li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.bulk-warehouse .bw-connections li small { display: block; margin-top: 4px; color: var(--muted); }
+.bulk-warehouse .bw-connections li > span { color: var(--muted); font-size: 11px; text-align: right; }
+.bulk-warehouse .bw-connections time { display: block; margin-top: 4px; color: var(--ink); }
+.bulk-warehouse .bw-connections > p { margin: 12px 0; line-height: 1.6; }
+.bulk-warehouse .bw-connections a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.bulk-warehouse .bw-guidance { padding: 0 2px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.bulk-warehouse .bw-guidance strong { color: var(--ink); font-weight: 650; }
+.bulk-warehouse .bw-alert,
+.bulk-warehouse .bw-retry { padding: 15px 17px; border: 1px solid color-mix(in srgb, var(--green2) 50%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--green2) 8%, var(--surface)); color: var(--ink); font-size: 12px; line-height: 1.65; }
+.bulk-warehouse .bw-alert-error { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); background: color-mix(in srgb, var(--red) 7%, var(--surface)); }
+.bulk-warehouse .bw-retry { border-color: color-mix(in srgb, var(--orange) 45%, var(--line)); background: color-mix(in srgb, var(--orange) 7%, var(--surface)); }
+.bulk-warehouse .bw-retry p { margin-top: 5px; }
+.bulk-warehouse .bw-retry details { margin-top: 8px; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-retry details summary { cursor: pointer; }
+.bulk-warehouse .bw-retry details code { display: block; margin-top: 7px; }
+.bulk-warehouse .bw-filters { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(170px, .45fr) minmax(150px, .4fr); gap: 12px; align-items: start; }
+.bulk-warehouse label { display: grid; gap: 7px; font-size: 11px; font-weight: 650; }
+.bulk-warehouse :where(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 450;
+}
+.bulk-warehouse textarea { resize: vertical; }
+.bulk-warehouse input::placeholder,
+.bulk-warehouse textarea::placeholder { color: var(--muted); opacity: 1; }
+.bulk-warehouse :where(input, select, textarea):disabled { opacity: .6; cursor: not-allowed; }
+.bulk-warehouse .bw-search > span { display: flex; gap: 7px; }
+.bulk-warehouse .bw-selection { flex-wrap: wrap; padding: 15px 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.bulk-warehouse .bw-selection > div > strong { font-size: 12px; }
+.bulk-warehouse .bw-selection p { margin-top: 3px; font-size: 11px; }
+.bulk-warehouse .bw-selection-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+.bulk-warehouse .bw-composer { padding: 20px; border: 1px solid var(--green2); border-radius: 14px; background: var(--surface); box-shadow: 0 7px 25px var(--shadow); }
+.bulk-warehouse .bw-composer > header { align-items: flex-start; }
+.bulk-warehouse .bw-composer fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.bulk-warehouse .bw-copy-review { margin: 16px 0; padding: 11px 13px; border-radius: 9px; background: var(--surface-muted); font-size: 12px; }
+.bulk-warehouse .bw-copy-review summary { cursor: pointer; font-weight: 650; }
+.bulk-warehouse .bw-copy-review ul { max-height: 230px; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.bulk-warehouse .bw-copy-review li { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); }
+.bulk-warehouse .bw-copy-review code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-form-help { margin: 16px 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.bulk-warehouse .bw-sale-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; align-items: start; }
+.bulk-warehouse label small { color: var(--muted); font-size: 10px; font-weight: 450; line-height: 1.5; }
+.bulk-warehouse .bw-note { margin-top: 16px; }
+.bulk-warehouse .bw-composer > footer { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.bulk-warehouse .bw-composer > footer strong { font-size: 16px; }
+.bulk-warehouse .bw-inventory { min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.bulk-warehouse .bw-scroll-hint { display: none; }
+.bulk-warehouse .bw-table-scroll { width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.bulk-warehouse .bw-table { width: 100%; min-width: 1050px; border-collapse: collapse; text-align: left; font-size: 12px; }
+.bulk-warehouse .bw-table thead { background: var(--surface-muted); }
+.bulk-warehouse .bw-table th,
+.bulk-warehouse .bw-table td { padding: 14px 12px; vertical-align: middle; border-bottom: 1px solid var(--line); }
+.bulk-warehouse .bw-table thead th { padding-block: 12px; color: var(--muted); font-size: 10px; font-weight: 650; white-space: nowrap; }
+.bulk-warehouse .bw-table tr:last-child td,
+.bulk-warehouse .bw-table tr:last-child th { border-bottom: 0; }
+.bulk-warehouse .bw-table tbody tr:hover { background: var(--surface-hover); }
+.bulk-warehouse .bw-table .bw-row-selected,
+.bulk-warehouse .bw-table .bw-row-selected:hover { background: color-mix(in srgb, var(--green2) 8%, var(--surface)); }
+.bulk-warehouse .bw-table td:first-child { width: 44px; padding-inline: 15px 8px; }
+.bulk-warehouse .bw-table input[type="checkbox"] { width: 19px; height: 19px; margin: 0; accent-color: #619e14; cursor: pointer; }
+.bulk-warehouse .bw-table input[type="checkbox"]:disabled { cursor: not-allowed; }
+.bulk-warehouse .bw-table td > strong { font-size: 11px; font-weight: 650; }
+.bulk-warehouse .bw-table td > strong,
+.bulk-warehouse .bw-table td > small,
+.bulk-warehouse .bw-table td > code { display: block; }
+.bulk-warehouse .bw-table small { margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 450; line-height: 1.5; }
+.bulk-warehouse .bw-card { display: flex; gap: 12px; align-items: center; min-width: 230px; max-width: 330px; }
+.bulk-warehouse .bw-card img { flex: 0 0 auto; width: 42px; height: 59px; border-radius: 4px; object-fit: contain; background: var(--surface-inset); }
+.bulk-warehouse .bw-card-placeholder { display: grid; flex: 0 0 auto; place-items: center; width: 42px; height: 59px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-inset); color: var(--muted); }
+.bulk-warehouse .bw-card strong,
+.bulk-warehouse .bw-card a { display: inline-block; color: var(--ink); font-size: 12px; font-weight: 650; line-height: 1.5; text-decoration: none; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-card a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.bulk-warehouse .bw-card small { display: block; }
+.bulk-warehouse .bw-copy-id { min-width: 145px; max-width: 190px; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-copy-id code { margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.bulk-warehouse .bw-location { min-width: 120px; max-width: 190px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bulk-warehouse .bw-status { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; font-size: 10px; font-weight: 650; line-height: 1.35; white-space: nowrap; }
+.bulk-warehouse .bw-status-available { background: color-mix(in srgb, var(--green2) 13%, var(--surface)); border-color: color-mix(in srgb, var(--green2) 38%, var(--line)); }
+.bulk-warehouse .bw-status-pending { background: color-mix(in srgb, var(--orange) 11%, var(--surface)); border-color: color-mix(in srgb, var(--orange) 32%, var(--line)); }
+.bulk-warehouse .bw-status-unavailable { background: var(--surface-inset); color: var(--muted); }
+.bulk-warehouse .bw-pagination { padding: 14px 17px; border-top: 1px solid var(--line); }
+.bulk-warehouse .bw-pagination p { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.bulk-warehouse .bw-pagination > div { display: flex; gap: 8px; }
+.bulk-warehouse .bw-empty { padding: 48px 25px; color: var(--muted); font-size: 12px; line-height: 1.7; text-align: center; }
+.bulk-warehouse .bw-empty h3 { color: var(--ink); margin-bottom: 8px; }
+.bulk-warehouse .bw-activity { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.bulk-warehouse .bw-activity > header { padding: 18px 20px; }
+.bulk-warehouse .bw-activity ul { max-height: 440px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.bulk-warehouse .bw-activity li { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--line); }
+.bulk-warehouse .bw-activity li > div { min-width: 0; }
+.bulk-warehouse .bw-activity li strong { font-size: 12px; font-weight: 650; }
+.bulk-warehouse .bw-activity li p { margin-top: 5px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-activity li small { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.bulk-warehouse .bw-activity li code { font-size: 9px; }
+.bulk-warehouse .bw-activity-empty { padding: 4px 20px 20px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.bulk-warehouse .bw-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media screen and (max-width: 1100px) {
+  .bulk-warehouse .bw-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bulk-warehouse .bw-search { grid-column: 1 / -1; }
+  .bulk-warehouse .bw-sale-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media screen and (max-width: 600px) {
+  .bulk-warehouse { gap: 14px; }
+  .bulk-warehouse .bw-heading { flex-wrap: wrap; gap: 12px; }
+  .bulk-warehouse h2 { font-size: 23px; }
+  .bulk-warehouse .bw-summary > div { padding: 15px 12px; }
+  .bulk-warehouse .bw-summary span { font-size: 10px; line-height: 1.4; }
+  .bulk-warehouse .bw-summary strong { font-size: 23px; }
+  .bulk-warehouse .bw-button { min-height: 44px; }
+  .bulk-warehouse :where(input:not([type="checkbox"]), select, textarea) { min-height: 44px; font-size: 16px; }
+  .bulk-warehouse .bw-filters { gap: 12px 9px; }
+  .bulk-warehouse .bw-selection { padding: 14px; }
+  .bulk-warehouse .bw-selection-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .bulk-warehouse .bw-composer { padding: 16px; }
+  .bulk-warehouse .bw-scroll-hint { display: block; padding: 12px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.6; }
+  .bulk-warehouse .bw-sale-fields { grid-template-columns: minmax(0, 1fr); }
+  .bulk-warehouse .bw-composer > footer,
+  .bulk-warehouse .bw-retry,
+  .bulk-warehouse .bw-pagination { flex-wrap: wrap; }
+  .bulk-warehouse .bw-composer > footer > .bw-button,
+  .bulk-warehouse .bw-retry > .bw-button { width: 100%; }
+  .bulk-warehouse .bw-pagination > div { width: 100%; }
+  .bulk-warehouse .bw-pagination .bw-button { flex: 1; }
+  .bulk-warehouse .bw-connections li { align-items: flex-start; }
+  .bulk-warehouse .bw-connections li > div { min-width: 0; overflow-wrap: anywhere; }
+  .bulk-warehouse .bw-connections li > span { flex: 0 0 125px; }
+  .bulk-warehouse .bw-activity > header,
+  .bulk-warehouse .bw-activity li { padding-inline: 15px; }
+  .bulk-warehouse .bw-activity li { gap: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bulk-warehouse .bw-button { transition: none; }
+}

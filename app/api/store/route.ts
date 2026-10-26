@@ -1,7 +1,8 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { expenses, inventoryMovements, products, saleItems, sales, storeEvents } from "../../../db/schema";
 import { getAuthorizedSession } from "@/lib/auth/authorization";
+import { readBulkSales } from "@/lib/bulk-warehouse/store";
 
 type SaleLineInput = {
   productId?: number | null;
@@ -31,13 +32,25 @@ export async function GET() {
   if (!(await getAuthorizedSession())) return Response.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const db = getDb();
-    const [saleRows, itemRows, expenseRows, eventRows] = await Promise.all([
-      db.select().from(sales).orderBy(desc(sales.soldAt)).limit(1000),
-      db.select().from(saleItems).orderBy(desc(saleItems.id)).limit(5000),
+    const [saleCandidates, expenseRows, eventRows, bulk] = await Promise.all([
+      db.select().from(sales).orderBy(desc(sales.soldAt), desc(sales.id)).limit(1001),
       db.select().from(expenses).orderBy(desc(expenses.expenseDate)).limit(1000),
       db.select().from(storeEvents).orderBy(desc(storeEvents.eventDate)).limit(500),
+      readBulkSales(),
     ]);
-    return Response.json({ sales: saleRows, saleItems: itemRows, expenses: expenseRows, events: eventRows });
+    // Load every child of the returned orders, rather than an unrelated random
+    // UUID-limited subset. Source filtering requires complete line breakdowns.
+    const saleRows = saleCandidates.slice(0, 1000);
+    const itemRows = saleRows.length
+      ? await db.select().from(saleItems).where(inArray(saleItems.saleId, saleRows.map(row => row.id))).orderBy(saleItems.saleId, saleItems.id)
+      : [];
+    const mergedSales = [...saleRows.map(row => ({ ...row, inventorySource: "store" })), ...bulk.sales]
+      .sort((a, b) => String(b.soldAt).localeCompare(String(a.soldAt)) || String(b.id).localeCompare(String(a.id)));
+    return Response.json({ sales: mergedSales,
+      saleItems: [...itemRows.map(row => ({ ...row, inventorySource: "store" })), ...bulk.saleItems],
+      expenses: expenseRows, events: eventRows,
+      reporting: { legacyHasMore: saleCandidates.length > 1000, bulkHasMore: bulk.hasMore, unpricedNativeOrders: bulk.unpricedNativeOrders },
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not load store data";
     return Response.json({ error: message.includes("no such table") ? "Store reporting is initializing. Refresh in a moment." : message }, { status: 500 });
