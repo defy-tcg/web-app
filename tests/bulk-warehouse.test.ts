@@ -5,6 +5,8 @@ import { BULK_BODY_LIMIT, BULK_COMMAND_LIMIT, BULK_EVENT_LIMIT, BulkError, diges
 import { nativeOrderSaleHandler, nativeSyncHandler, webBulkHandler } from "../lib/bulk-warehouse/http.ts";
 import { inventoryQuery, translateBulkError } from "../lib/bulk-warehouse/store.ts";
 
+import { groupBulkCopies } from "../lib/bulk-warehouse/grouping.ts";
+
 const warehouseId = "11111111-1111-4111-a111-111111111111";
 const requestId = "22222222-2222-4222-a222-222222222222";
 const origin = "https://defy-store-os.example.test";
@@ -289,4 +291,28 @@ test("financial capture distinguishes body/actor conflicts from durable rejectio
     assert.equal(response.status, status);
     assert.doesNotMatch(await response.text(), /postgres|secret/);
   }
+});
+
+
+test("printing groups retain exact copies and exclude pending/unavailable from available counts", () => {
+  const rows = [
+    { warehouseId, copyId: "1", sequence: 1, data: copy(), pending: false },
+    { warehouseId, copyId: "2", sequence: 2, data: copy({ serial: "2", condition: "Played", location: "Box B", costCents: 20 }), pending: true },
+    { warehouseId, copyId: "3", sequence: 3, data: copy({ available: false, status: "quarantined" }), pending: false },
+  ];
+  const groups = groupBulkCopies(rows);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].available, 1);
+  assert.deepEqual(groups[0].copies, rows);
+  assert.equal(groups[0].copies[1], rows[1]);
+  assert.deepEqual(groupBulkCopies([]), []);
+});
+
+test("printing groups never combine different sets, finishes, languages, variants or warehouses", () => {
+  const base = { warehouseId, copyId: "1", sequence: 1, data: copy(), pending: false };
+  for (const field of ["masterId", "name", "setName", "cardNumber", "rarity", "finish", "language"] as const) {
+    assert.equal(groupBulkCopies([base, { ...base, copyId: "2", data: copy({ [field]: "Different" }) }]).length, 2, field);
+  }
+  assert.equal(groupBulkCopies([base, { ...base, warehouseId: requestId }]).length, 2);
+  assert.equal(groupBulkCopies([{ ...base, data: copy({ masterId: "" }) }, { ...base, copyId: "2", data: copy({ masterId: "" }) }]).length, 2);
 });

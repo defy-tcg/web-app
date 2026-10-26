@@ -5066,3 +5066,9 @@ code {
 @media (prefers-reduced-motion: reduce) {
   .bulk-warehouse .bw-button { transition: none; }
 }
+
+.bw-printing-group { border-bottom: 1px solid var(--border, #ddd); }
+.bw-printing-group > summary { cursor: pointer; padding: 16px; display: list-item; }
+.bw-printing-group > summary > span { display: inline-block; vertical-align: middle; margin-right: 24px; }
+.bw-printing-group > summary small { display: block; margin-top: 4px; }
+.bw-printing-group > summary:focus-visible { outline: 2px solid currentColor; outline-offset: -3px; }

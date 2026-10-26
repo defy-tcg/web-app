@@ -129,3 +129,15 @@ Official Shopify references:
 
 - [Features on all plans](https://help.shopify.com/en/manual/intro-to-shopify/pricing-plans/plans-features/features-on-all-plans)
 - [Shopify pricing](https://www.shopify.com/pricing)
+
+### Grouped inventory display
+
+Bulk Warehouse collapses matching printings into expandable rows. Identity includes
+warehouse, native master ID, name, set, collector number, rarity, finish, and
+language; conditions and physical locations stay on individual copies. A missing
+master ID keeps copies separate. Each row shows total and available copies;
+pending commands are excluded from available counts. Counts and groups apply to
+the matching copies on the current 100-copy page, preserving existing search,
+filters, pagination and exact-copy action limits. A printing can span pages.
+Expand a row to select copies and inspect serials, IDs, conditions, status,
+location and prices. This presentation change does not alter sync or native data.

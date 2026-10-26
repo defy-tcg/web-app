@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { groupBulkCopies } from "@/lib/bulk-warehouse/grouping";
 import Link from "next/link";
 import { startTransition, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { BulkCopy, CommandInput } from "@/lib/bulk-warehouse/model";
@@ -341,7 +342,7 @@ export default function BulkWarehousePanel() {
 
   return <section className="bulk-warehouse" aria-labelledby="bulk-warehouse-title">
     <header className="bw-heading">
-      <div><p className="bw-eyebrow">SCANNED CARD INVENTORY</p><h2 id="bulk-warehouse-title">Bulk Warehouse</h2><p>Each row is one physical card. Keep Warehouse Manager open to sync scans and confirm changes from Defy Store OS.</p></div>
+      <div><p className="bw-eyebrow">SCANNED CARD INVENTORY</p><h2 id="bulk-warehouse-title">Bulk Warehouse</h2><p>Expand a card printing to see its physical copies. Keep Warehouse Manager open to sync scans and confirm changes from Defy Store OS.</p></div>
       <button type="button" className="bw-button" disabled={loading || sending} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh inventory"}</button>
     </header>
 
@@ -406,9 +407,13 @@ export default function BulkWarehousePanel() {
     </form>}
 
     <div className="bw-inventory" aria-busy={loading}>
-      {current && copyRows.length > 0 && <p className="bw-scroll-hint">Swipe or scroll across the table for copy IDs, locations, and status.</p>}
+      {current && copyRows.length > 0 && <p className="bw-scroll-hint">Counts reflect matching copies on this page. Expand a printing for copy IDs, locations, and status.</p>}
       {loading && !current ? <div className="bw-empty" role="status">Loading warehouse copies…</div> : current && copyRows.length ? <div className="bw-table-scroll" tabIndex={0} role="region" aria-label="Warehouse copies; scroll horizontally for all columns">
-        <table className="bw-table"><thead><tr><th scope="col"><span className="bw-visually-hidden">Select copy</span></th><th scope="col">Card & printing</th><th scope="col">Physical copy</th><th scope="col">Condition & finish</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Price / cost</th></tr></thead><tbody>{copyRows.map(copy => {
+        {groupBulkCopies(copyRows).map(group => {
+          const card = group.copies[0].data;
+          return <details className="bw-printing-group" key={group.key}>
+            <summary><span><strong>{card.name}</strong><small>{[card.setName, card.cardNumber ? `#${card.cardNumber}` : "", card.rarity, card.finish || "Unknown finish", card.language || "Unknown language"].filter(Boolean).join(" · ")}</small></span><span>{count.format(group.copies.length)} total · {count.format(group.available)} available</span></summary>
+        <table className="bw-table"><thead><tr><th scope="col"><span className="bw-visually-hidden">Select copy</span></th><th scope="col">Card & printing</th><th scope="col">Physical copy</th><th scope="col">Condition & finish</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Price / cost</th></tr></thead><tbody>{group.copies.map(copy => {
           const link = tcgplayerLink(copy.data.tcgplayerUrl);
           const image = imageLink(copy.data.imageUrl);
           const otherWarehouse = Boolean(selectedWarehouse && selectedWarehouse !== copy.warehouseId);
@@ -423,6 +428,8 @@ export default function BulkWarehousePanel() {
             <td className="bw-money"><strong>{amount(copy.data.listPriceCents)}</strong><small>Cost: {amount(copy.data.costCents)}</small></td>
           </tr>;
         })}</tbody></table>
+          </details>;
+        })}
       </div> : current && !loadError ? <div className="bw-empty"><h3>{current.warehouses.length ? "No copies match these filters" : "Your warehouse inventory will appear here"}</h3><p>{current.warehouses.length ? "Try another game, availability filter, or search." : "Connect Warehouse Manager and sync your scanned cards to start."}</p></div> : null}
       {current && <footer className="bw-pagination"><p>{copyRows.length ? `${count.format((current.page - 1) * current.pageSize + 1)}–${count.format((current.page - 1) * current.pageSize + copyRows.length)} of ${count.format(current.total)} copies` : current.total ? `0 copies on this page · ${count.format(current.total)} matching copies` : "0 copies"} · Page {count.format(current.page)} of {count.format(totalPages)}</p><div><button type="button" className="bw-button" disabled={loading || sending || Boolean(draft) || current.page <= 1} onClick={() => changeFilters({ page: Math.max(1, filters.page - 1) })}>Previous</button><button type="button" className="bw-button" disabled={loading || sending || Boolean(draft) || current.page >= totalPages} onClick={() => changeFilters({ page: filters.page + 1 })}>Next</button></div></footer>}
     </div>
